@@ -24,6 +24,7 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{SparkSession, SQLContext}
 import org.apache.spark.sql.hive.{HiveExternalCatalog, HiveUtils}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
 /** A singleton object for the master program. The slaves should not access this. */
@@ -45,10 +46,17 @@ private[hive] object SparkSQLEnv extends Logging {
 
       sparkConf
         .setAppName(maybeAppName.getOrElse(s"SparkSQL::${Utils.localHostName()}"))
+        .set(SQLConf.DATETIME_JAVA8API_ENABLED, true)
+
 
       val sparkSession = SparkSession.builder.config(sparkConf).enableHiveSupport().getOrCreate()
       sparkContext = sparkSession.sparkContext
       sqlContext = sparkSession.sqlContext
+
+      // SPARK-29604: force initialization of the session state with the Spark class loader,
+      // instead of having it happen during the initialization of the Hive client (which may use a
+      // different class loader).
+      sparkSession.sessionState
 
       val metadataHive = sparkSession
         .sharedState.externalCatalog.unwrapped.asInstanceOf[HiveExternalCatalog].client

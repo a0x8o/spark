@@ -15,8 +15,6 @@
 # limitations under the License.
 #
 
-from __future__ import print_function
-
 import os
 import shutil
 import signal
@@ -27,6 +25,7 @@ from threading import RLock
 from tempfile import NamedTemporaryFile
 
 from py4j.protocol import Py4JError
+from py4j.java_gateway import is_instance_of
 
 from pyspark import accumulators
 from pyspark.accumulators import Accumulator
@@ -37,11 +36,12 @@ from pyspark.java_gateway import launch_gateway, local_connect_and_auth
 from pyspark.serializers import PickleSerializer, BatchedSerializer, UTF8Deserializer, \
     PairDeserializer, AutoBatchedSerializer, NoOpSerializer, ChunkedStream
 from pyspark.storagelevel import StorageLevel
-from pyspark.resourceinformation import ResourceInformation
+from pyspark.resource.information import ResourceInformation
 from pyspark.rdd import RDD, _load_from_socket, ignore_unicode_prefix
 from pyspark.traceback_utils import CallSite, first_spark_call
 from pyspark.status import StatusTracker
 from pyspark.profiler import ProfilerCollector, BasicProfiler
+from pyspark.util import _warn_pin_thread
 
 if sys.version > '3':
     xrange = range
@@ -210,12 +210,12 @@ class SparkContext(object):
         self.pythonExec = os.environ.get("PYSPARK_PYTHON", 'python')
         self.pythonVer = "%d.%d" % sys.version_info[:2]
 
-        if sys.version_info < (3, 0):
+        if sys.version_info < (3, 6):
             with warnings.catch_warnings():
                 warnings.simplefilter("once")
                 warnings.warn(
-                    "Support for Python 2 is deprecated as of Spark 3.0. "
-                    "See the plan for dropping Python 2 support at "
+                    "Support for Python 2 and Python 3 prior to version 3.6 is deprecated as "
+                    "of Spark 3.0. See also the plan for dropping Python 2 support at "
                     "https://spark.apache.org/news/plan-for-dropping-python-2-support.html.",
                     DeprecationWarning)
 
@@ -865,8 +865,21 @@ class SparkContext(object):
         first_jrdd_deserializer = rdds[0]._jrdd_deserializer
         if any(x._jrdd_deserializer != first_jrdd_deserializer for x in rdds):
             rdds = [x._reserialize() for x in rdds]
-        cls = SparkContext._jvm.org.apache.spark.api.java.JavaRDD
-        jrdds = SparkContext._gateway.new_array(cls, len(rdds))
+        gw = SparkContext._gateway
+        jvm = SparkContext._jvm
+        jrdd_cls = jvm.org.apache.spark.api.java.JavaRDD
+        jpair_rdd_cls = jvm.org.apache.spark.api.java.JavaPairRDD
+        jdouble_rdd_cls = jvm.org.apache.spark.api.java.JavaDoubleRDD
+        if is_instance_of(gw, rdds[0]._jrdd, jrdd_cls):
+            cls = jrdd_cls
+        elif is_instance_of(gw, rdds[0]._jrdd, jpair_rdd_cls):
+            cls = jpair_rdd_cls
+        elif is_instance_of(gw, rdds[0]._jrdd, jdouble_rdd_cls):
+            cls = jdouble_rdd_cls
+        else:
+            cls_name = rdds[0]._jrdd.getClass().getCanonicalName()
+            raise TypeError("Unsupported Java RDD class %s" % cls_name)
+        jrdds = gw.new_array(cls, len(rdds))
         for i in range(0, len(rdds)):
             jrdds[i] = rdds[i]._jrdd
         return RDD(self._jsc.union(jrdds), self, rdds[0]._jrdd_deserializer)
@@ -1009,14 +1022,42 @@ class SparkContext(object):
         in Thread.interrupt() being called on the job's executor threads. This is useful to help
         ensure that the tasks are actually stopped in a timely manner, but is off by default due
         to HDFS-1208, where HDFS may respond to Thread.interrupt() by marking nodes as dead.
+
+        .. note:: Currently, setting a group ID (set to local properties) with multiple threads
+            does not properly work. Internally threads on PVM and JVM are not synced, and JVM
+            thread can be reused for multiple threads on PVM, which fails to isolate local
+            properties for each thread on PVM.
+
+            To work around this, you can set `PYSPARK_PIN_THREAD` to
+            `'true'` (see SPARK-22340). However, note that it cannot inherit the local properties
+            from the parent thread although it isolates each thread on PVM and JVM with its own
+            local properties.
+
+            To work around this, you should manually copy and set the local
+            properties from the parent thread to the child thread when you create another thread.
         """
+        _warn_pin_thread("setJobGroup")
         self._jsc.setJobGroup(groupId, description, interruptOnCancel)
 
     def setLocalProperty(self, key, value):
         """
         Set a local property that affects jobs submitted from this thread, such as the
         Spark fair scheduler pool.
+
+        .. note:: Currently, setting a local property with multiple threads does not properly work.
+            Internally threads on PVM and JVM are not synced, and JVM thread
+            can be reused for multiple threads on PVM, which fails to isolate local properties
+            for each thread on PVM.
+
+            To work around this, you can set `PYSPARK_PIN_THREAD` to
+            `'true'` (see SPARK-22340). However, note that it cannot inherit the local properties
+            from the parent thread although it isolates each thread on PVM and JVM with its own
+            local properties.
+
+            To work around this, you should manually copy and set the local
+            properties from the parent thread to the child thread when you create another thread.
         """
+        _warn_pin_thread("setLocalProperty")
         self._jsc.setLocalProperty(key, value)
 
     def getLocalProperty(self, key):
@@ -1029,7 +1070,21 @@ class SparkContext(object):
     def setJobDescription(self, value):
         """
         Set a human readable description of the current job.
+
+        .. note:: Currently, setting a job description (set to local properties) with multiple
+            threads does not properly work. Internally threads on PVM and JVM are not synced,
+            and JVM thread can be reused for multiple threads on PVM, which fails to isolate
+            local properties for each thread on PVM.
+
+            To work around this, you can set `PYSPARK_PIN_THREAD` to
+            `'true'` (see SPARK-22340). However, note that it cannot inherit the local properties
+            from the parent thread although it isolates each thread on PVM and JVM with its own
+            local properties.
+
+            To work around this, you should manually copy and set the local
+            properties from the parent thread to the child thread when you create another thread.
         """
+        _warn_pin_thread("setJobDescription")
         self._jsc.setJobDescription(value)
 
     def sparkUser(self):

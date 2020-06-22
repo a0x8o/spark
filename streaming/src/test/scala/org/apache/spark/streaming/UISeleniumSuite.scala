@@ -63,7 +63,7 @@ class UISeleniumSuite
       .setMaster("local")
       .setAppName("test")
       .set(UI_ENABLED, true)
-    val ssc = new StreamingContext(conf, Seconds(1))
+    val ssc = new StreamingContext(conf, Milliseconds(100))
     assert(ssc.sc.ui.isDefined, "Spark UI is not started!")
     ssc
   }
@@ -104,7 +104,7 @@ class UISeleniumSuite
         find(cssSelector( """ul li a[href*="streaming"]""")) should not be (None)
       }
 
-      eventually(timeout(10.seconds), interval(50.milliseconds)) {
+      eventually(timeout(10.seconds), interval(500.milliseconds)) {
         // check whether streaming page exists
         go to (sparkUI.webUrl.stripSuffix("/") + "/streaming")
         val h3Text = findAll(cssSelector("h3")).map(_.text).toSeq
@@ -125,24 +125,47 @@ class UISeleniumSuite
 
         // Check batch tables
         val h4Text = findAll(cssSelector("h4")).map(_.text).toSeq
-        h4Text.exists(_.matches("Active Batches \\(\\d+\\)")) should be (true)
+        h4Text.exists(_.matches("Running Batches \\(\\d+\\)")) should be (true)
+        h4Text.exists(_.matches("Waiting Batches \\(\\d+\\)")) should be (true)
         h4Text.exists(_.matches("Completed Batches \\(last \\d+ out of \\d+\\)")) should be (true)
 
-        findAll(cssSelector("""#active-batches-table th""")).map(_.text).toSeq should be {
-          List("Batch Time", "Records", "Scheduling Delay (?)", "Processing Time (?)",
+        val arrow = 0x25BE.toChar
+        findAll(cssSelector("""#runningBatches-table th""")).map(_.text).toList should be {
+          List(s"Batch Time $arrow", "Records", "Scheduling Delay", "Processing Time",
             "Output Ops: Succeeded/Total", "Status")
         }
-        findAll(cssSelector("""#completed-batches-table th""")).map(_.text).toSeq should be {
-          List("Batch Time", "Records", "Scheduling Delay (?)", "Processing Time (?)",
-            "Total Delay (?)", "Output Ops: Succeeded/Total")
+        findAll(cssSelector("""#waitingBatches-table th""")).map(_.text).toList should be {
+          List(s"Batch Time $arrow", "Records", "Scheduling Delay", "Processing Time",
+            "Output Ops: Succeeded/Total", "Status")
+        }
+        findAll(cssSelector("""#completedBatches-table th""")).map(_.text).toList should be {
+          List(s"Batch Time $arrow", "Records", "Scheduling Delay", "Processing Time",
+            "Total Delay", "Output Ops: Succeeded/Total")
         }
 
-        val batchLinks =
-          findAll(cssSelector("""#completed-batches-table a""")).flatMap(_.attribute("href")).toSeq
+        val pageSize = 3
+        val pagedTablePath = "/streaming/?completedBatches.sort=Batch+Time" +
+          "&completedBatches.desc=true&completedBatches.page=1" +
+          s"&completedBatches.pageSize=$pageSize#completedBatches"
+
+        go to (sparkUI.webUrl.stripSuffix("/") + pagedTablePath)
+        val completedTableRows = findAll(cssSelector("""#completedBatches-table tr"""))
+          .map(_.text).toList
+        // header row + pagesize
+        completedTableRows.length should be (1 + pageSize)
+
+        val sortedBatchTimePath = "/streaming/?&completedBatches.sort=Batch+Time" +
+          "&completedBatches.desc=false&completedBatches.pageSize=3#completedBatches"
+
+        // sort batches in ascending order of batch time
+        go to (sparkUI.webUrl.stripSuffix("/") + sortedBatchTimePath)
+
+        val batchLinks = findAll(cssSelector("""#completedBatches-table td a"""))
+          .flatMap(_.attribute("href")).toSeq
         batchLinks.size should be >= 1
 
         // Check a normal batch page
-        go to (batchLinks.last) // Last should be the first batch, so it will have some jobs
+        go to (batchLinks.head) // Head is the first batch, so it will have some jobs
         val summaryText = findAll(cssSelector("li strong")).map(_.text).toSeq
         summaryText should contain ("Batch Duration:")
         summaryText should contain ("Input data size:")
@@ -151,8 +174,9 @@ class UISeleniumSuite
         summaryText should contain ("Total delay:")
 
         findAll(cssSelector("""#batch-job-table th""")).map(_.text).toSeq should be {
-          List("Output Op Id", "Description", "Output Op Duration", "Status", "Job Id",
-            "Job Duration", "Stages: Succeeded/Total", "Tasks (for all stages): Succeeded/Total",
+          List("Output Op Id", "Description", "Output Op Duration (?)", "Status", "Job Id",
+            "Job Duration (?)", "Stages: Succeeded/Total",
+            "Tasks (for all stages): Succeeded/Total",
             "Error")
         }
 
@@ -163,7 +187,7 @@ class UISeleniumSuite
 
         // Check job ids
         val jobIdCells = findAll(cssSelector( """#batch-job-table a""")).toSeq
-        jobIdCells.map(_.text) should be (List("0", "1", "2", "3"))
+        jobIdCells.map(_.text).filter(_.forall(_.isDigit)) should be (List("0", "1", "2", "3"))
 
         val jobLinks = jobIdCells.flatMap(_.attribute("href"))
         jobLinks.size should be (4)
