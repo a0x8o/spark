@@ -33,6 +33,8 @@ class TimestampFormatterSuite extends DatetimeFormatterSuite {
     TimestampFormatter(pattern, UTC, isParsing)
   }
 
+  override protected def useDateFormatter: Boolean = false
+
   test("parsing timestamps using time zones") {
     val localDate = "2018-12-02T10:11:12.001234"
     val expectedMicros = Map(
@@ -286,14 +288,14 @@ class TimestampFormatterSuite extends DatetimeFormatterSuite {
         withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> zoneId.getId) {
           withDefaultTimeZone(zoneId) {
             withClue(s"zoneId = ${zoneId.getId}") {
-              val formatters = LegacyDateFormats.values.map { legacyFormat =>
+              val formatters = LegacyDateFormats.values.toSeq.map { legacyFormat =>
                 TimestampFormatter(
                   TimestampFormatter.defaultPattern,
                   zoneId,
                   TimestampFormatter.defaultLocale,
                   legacyFormat,
                   isParsing = false)
-              }.toSeq :+ TimestampFormatter.getFractionFormatter(zoneId)
+              } :+ TimestampFormatter.getFractionFormatter(zoneId)
               formatters.foreach { formatter =>
                 assert(microsToInstant(formatter.parse("1000-01-01 01:02:03"))
                   .atZone(zoneId)

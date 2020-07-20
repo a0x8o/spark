@@ -200,6 +200,8 @@ class Analyzer(
   val postHocResolutionRules: Seq[Rule[LogicalPlan]] = Nil
 
   lazy val batches: Seq[Batch] = Seq(
+    Batch("Disable Hints", Once,
+      new ResolveHints.DisableHints(conf)),
     Batch("Hints", fixedPoint,
       new ResolveHints.ResolveJoinStrategyHints(conf),
       new ResolveHints.ResolveCoalesceHints(conf)),
@@ -256,7 +258,8 @@ class Analyzer(
     Batch("Nondeterministic", Once,
       PullOutNondeterministic),
     Batch("UDF", Once,
-      HandleNullInputsForUDF),
+      HandleNullInputsForUDF,
+      ResolveEncodersInUDF),
     Batch("UpdateNullability", Once,
       UpdateAttributeNullability),
     Batch("Subquery", Once,
@@ -788,9 +791,9 @@ class Analyzer(
                 // AggregateFunction's with the exception of First and Last in their default mode
                 // (which we handle) and possibly some Hive UDAF's.
                 case First(expr, _) =>
-                  First(ifExpr(expr), Literal(true))
+                  First(ifExpr(expr), true)
                 case Last(expr, _) =>
-                  Last(ifExpr(expr), Literal(true))
+                  Last(ifExpr(expr), true)
                 case a: AggregateFunction =>
                   a.withNewChildren(a.children.map(ifExpr))
               }.transform {
@@ -1047,14 +1050,12 @@ class Analyzer(
         val partCols = partitionColumnNames(r.table)
         validatePartitionSpec(partCols, i.partitionSpec)
 
-        val staticPartitions = i.partitionSpec.filter(_._2.isDefined).mapValues(_.get)
+        val staticPartitions = i.partitionSpec.filter(_._2.isDefined).mapValues(_.get).toMap
         val query = addStaticPartitionColumns(r, i.query, staticPartitions)
-        val dynamicPartitionOverwrite = partCols.size > staticPartitions.size &&
-          conf.partitionOverwriteMode == PartitionOverwriteMode.DYNAMIC
 
         if (!i.overwrite) {
           AppendData.byPosition(r, query)
-        } else if (dynamicPartitionOverwrite) {
+        } else if (conf.partitionOverwriteMode == PartitionOverwriteMode.DYNAMIC) {
           OverwritePartitionsDynamic.byPosition(r, query)
         } else {
           OverwriteByExpression.byPosition(r, query, staticDeleteExpression(r, staticPartitions))
@@ -2237,7 +2238,7 @@ class Analyzer(
               }
           }
           if (aggregateExpressions.nonEmpty) {
-            Some(aggregateExpressions, transformedAggregateFilter)
+            Some(aggregateExpressions.toSeq, transformedAggregateFilter)
           } else {
             None
           }
@@ -2676,7 +2677,7 @@ class Analyzer(
       val windowOps =
         groupedWindowExpressions.foldLeft(child) {
           case (last, ((partitionSpec, orderSpec, _), windowExpressions)) =>
-            Window(windowExpressions, partitionSpec, orderSpec, last)
+            Window(windowExpressions.toSeq, partitionSpec, orderSpec, last)
         }
 
       // Finally, we create a Project to output windowOps's output
@@ -2818,13 +2819,12 @@ class Analyzer(
 
       case p => p transformExpressionsUp {
 
-        case udf @ ScalaUDF(_, _, inputs, _, _, _, _)
-            if udf.inputPrimitives.contains(true) =>
+        case udf: ScalaUDF if udf.inputPrimitives.contains(true) =>
           // Otherwise, add special handling of null for fields that can't accept null.
           // The result of operations like this, when passed null, is generally to return null.
-          assert(udf.inputPrimitives.length == inputs.length)
+          assert(udf.inputPrimitives.length == udf.children.length)
 
-          val inputPrimitivesPair = udf.inputPrimitives.zip(inputs)
+          val inputPrimitivesPair = udf.inputPrimitives.zip(udf.children)
           val inputNullCheck = inputPrimitivesPair.collect {
             case (isPrimitive, input) if isPrimitive && input.nullable =>
               IsNull(input)
@@ -2848,6 +2848,40 @@ class Analyzer(
           } else {
             udf
           }
+      }
+    }
+  }
+
+  /**
+   * Resolve the encoders for the UDF by explicitly given the attributes. We give the
+   * attributes explicitly in order to handle the case where the data type of the input
+   * value is not the same with the internal schema of the encoder, which could cause
+   * data loss. For example, the encoder should not cast the input value to Decimal(38, 18)
+   * if the actual data type is Decimal(30, 0).
+   *
+   * The resolved encoders then will be used to deserialize the internal row to Scala value.
+   */
+  object ResolveEncodersInUDF extends Rule[LogicalPlan] {
+    override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsUp {
+      case p if !p.resolved => p // Skip unresolved nodes.
+
+      case p => p transformExpressionsUp {
+
+        case udf: ScalaUDF if udf.inputEncoders.nonEmpty =>
+          val boundEncoders = udf.inputEncoders.zipWithIndex.map { case (encOpt, i) =>
+            val dataType = udf.children(i).dataType
+            encOpt.map { enc =>
+              val attrs = if (enc.isSerializedAsStructForTopLevel) {
+                dataType.asInstanceOf[StructType].toAttributes
+              } else {
+                // the field name doesn't matter here, so we use
+                // a simple literal to avoid any overhead
+                new StructType().add("input", dataType).toAttributes
+              }
+              enc.resolveAndBind(attrs)
+            }
+          }
+          udf.copy(inputEncoders = boundEncoders)
       }
     }
   }
