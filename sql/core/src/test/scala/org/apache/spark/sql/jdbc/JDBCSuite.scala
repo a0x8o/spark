@@ -71,7 +71,8 @@ class JDBCSuite extends QueryTest
     }
   }
 
-  before {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
     Utils.classForName("org.h2.Driver")
     // Extra properties that will be specified for our database. We need these to test
     // usage of parameters from OPTIONS clause in queries.
@@ -273,8 +274,9 @@ class JDBCSuite extends QueryTest
     // Untested: IDENTITY, OTHER, UUID, ARRAY, and GEOMETRY types.
   }
 
-  after {
+  override def afterAll(): Unit = {
     conn.close()
+    super.afterAll()
   }
 
   // Check whether the tables are fetched in the expected degree of parallelism
@@ -1302,7 +1304,8 @@ class JDBCSuite extends QueryTest
     testJdbcOptions(new JDBCOptions(parameters))
     testJdbcOptions(new JDBCOptions(CaseInsensitiveMap(parameters)))
     // test add/remove key-value from the case-insensitive map
-    var modifiedParameters = CaseInsensitiveMap(Map.empty) ++ parameters
+    var modifiedParameters =
+      (CaseInsensitiveMap(Map.empty) ++ parameters).asInstanceOf[Map[String, String]]
     testJdbcOptions(new JDBCOptions(modifiedParameters))
     modifiedParameters -= "dbtable"
     assert(modifiedParameters.get("dbTAblE").isEmpty)
