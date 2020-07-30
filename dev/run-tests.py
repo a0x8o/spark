@@ -49,13 +49,12 @@ def determine_modules_for_files(filenames):
     ['pyspark-core', 'sql']
     >>> [x.name for x in determine_modules_for_files(["file_not_matched_by_any_subproject"])]
     ['root']
-    >>> [x.name for x in determine_modules_for_files( \
-            [".github/workflows/master.yml", "appveyor.yml"])]
+    >>> [x.name for x in determine_modules_for_files(["appveyor.yml"])]
     []
     """
     changed_modules = set()
     for filename in filenames:
-        if filename in (".github/workflows/master.yml", "appveyor.yml"):
+        if filename in ("appveyor.yml",):
             continue
         matched_at_least_one_module = False
         for module in modules.all_modules:
@@ -609,11 +608,14 @@ def main():
               " install one and retry.")
         sys.exit(2)
 
-    # install SparkR
-    if which("R"):
-        run_cmd([os.path.join(SPARK_HOME, "R", "install-dev.sh")])
-    else:
-        print("Cannot install SparkR as R was not found in PATH")
+    # Install SparkR
+    should_only_test_modules = opts.modules is not None
+    if not should_only_test_modules:
+        # If tests modules are specified, we will not run R linter.
+        if which("R"):
+            run_cmd([os.path.join(SPARK_HOME, "R", "install-dev.sh")])
+        else:
+            print("Cannot install SparkR as R was not found in PATH")
 
     if os.environ.get("AMPLAB_JENKINS"):
         # if we're on the Amplab Jenkins build servers setup variables
@@ -643,7 +645,6 @@ def main():
     changed_modules = None
     test_modules = None
     changed_files = None
-    should_only_test_modules = opts.modules is not None
     included_tags = []
     excluded_tags = []
     if should_only_test_modules:
