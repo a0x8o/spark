@@ -15,20 +15,27 @@
  * limitations under the License.
  */
 
-package org.apache.spark.status.api.v1.sql
+package org.apache.spark.sql.catalyst.util
 
-import javax.ws.rs.{Path, PathParam}
+object SQLOrderingUtil {
 
-import org.apache.spark.status.api.v1.ApiRequestContext
+  /**
+   * A special version of double comparison that follows SQL semantic:
+   *  1. NaN == NaN
+   *  2. NaN is greater than any non-NaN double
+   *  3. -0.0 == 0.0
+   */
+  def compareDoubles(x: Double, y: Double): Int = {
+    if (x == y) 0 else java.lang.Double.compare(x, y)
+  }
 
-@Path("/v1")
-private[v1] class ApiSqlRootResource extends ApiRequestContext {
-
-  @Path("applications/{appId}/sql")
-  def sqlList(@PathParam("appId") appId: String): Class[SqlResource] = classOf[SqlResource]
-
-  @Path("applications/{appId}/{attemptId}/sql")
-  def sqlList(
-      @PathParam("appId") appId: String,
-      @PathParam("attemptId") attemptId: String): Class[SqlResource] = classOf[SqlResource]
+  /**
+   * A special version of float comparison that follows SQL semantic:
+   *  1. NaN == NaN
+   *  2. NaN is greater than any non-NaN float
+   *  3. -0.0 == 0.0
+   */
+  def compareFloats(x: Float, y: Float): Int = {
+    if (x == y) 0 else java.lang.Float.compare(x, y)
+  }
 }
