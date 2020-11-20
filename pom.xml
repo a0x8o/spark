@@ -3260,7 +3260,7 @@
         </pluginManagement>
       </build>
     </profile>
-    
+
     <profile>
       <id>scala-2.13</id>
       <properties>
