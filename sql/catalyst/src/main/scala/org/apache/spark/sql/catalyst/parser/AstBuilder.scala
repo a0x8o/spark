@@ -3155,11 +3155,14 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
   }
 
   /**
-   * Create a [[DropViewStatement]] command.
+   * Create a [[DropView]] command.
    */
   override def visitDropView(ctx: DropViewContext): AnyRef = withOrigin(ctx) {
-    DropViewStatement(
-      visitMultipartIdentifier(ctx.multipartIdentifier()),
+    DropView(
+      UnresolvedView(
+        visitMultipartIdentifier(ctx.multipartIdentifier()),
+        "DROP VIEW",
+        Some("Please use DROP TABLE instead.")),
       ctx.EXISTS != null)
   }
 
@@ -3190,13 +3193,18 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
   }
 
   /**
-   * Create a [[ShowTableStatement]] command.
+   * Create a [[ShowTableExtended]] command.
    */
-  override def visitShowTable(ctx: ShowTableContext): LogicalPlan = withOrigin(ctx) {
-    ShowTableStatement(
-      Option(ctx.ns).map(visitMultipartIdentifier),
+  override def visitShowTableExtended(
+      ctx: ShowTableExtendedContext): LogicalPlan = withOrigin(ctx) {
+    val multiPart = Option(ctx.multipartIdentifier).map(visitMultipartIdentifier)
+    val partitionKeys = Option(ctx.partitionSpec).map { specCtx =>
+      UnresolvedPartitionSpec(visitNonOptionalPartitionSpec(specCtx), None)
+    }
+    ShowTableExtended(
+      UnresolvedNamespace(multiPart.getOrElse(Seq.empty[String])),
       string(ctx.pattern),
-      Option(ctx.partitionSpec).map(visitNonOptionalPartitionSpec))
+      partitionKeys)
   }
 
   /**
@@ -3834,7 +3842,7 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
   }
 
   /**
-   * Create a [[RenameTableStatement]] command.
+   * Create a [[RenameTable]] command.
    *
    * For example:
    * {{{
@@ -3843,10 +3851,14 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
    * }}}
    */
   override def visitRenameTable(ctx: RenameTableContext): LogicalPlan = withOrigin(ctx) {
-    RenameTableStatement(
-      visitMultipartIdentifier(ctx.from),
+    val isView = ctx.VIEW != null
+    val relationStr = if (isView) "VIEW" else "TABLE"
+    RenameTable(
+      UnresolvedTableOrView(
+        visitMultipartIdentifier(ctx.from),
+        s"ALTER $relationStr ... RENAME TO"),
       visitMultipartIdentifier(ctx.to),
-      ctx.VIEW != null)
+      isView)
   }
 
   /**
