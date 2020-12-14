@@ -14,26 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.deploy.k8s.submit
 
-import io.fabric8.kubernetes.client.KubernetesClient
+package org.apache.spark.sql.connector.expressions;
 
-import org.apache.spark.SparkConf
-import org.apache.spark.deploy.k8s._
-import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.annotation.Experimental;
 
-class KubernetesDriverBuilderSuite extends PodBuilderSuite {
+/**
+ * Represents a sort order in the public expression API.
+ *
+ * @since 3.2.0
+ */
+@Experimental
+public interface SortOrder extends Expression {
+  /**
+   * Returns the sort expression.
+   */
+  Expression expression();
 
-  override protected def templateFileConf: ConfigEntry[_] = {
-    Config.KUBERNETES_DRIVER_PODTEMPLATE_FILE
-  }
+  /**
+   * Returns the sort direction.
+   */
+  SortDirection direction();
 
-  override protected def userFeatureStepsConf: ConfigEntry[_] = {
-    Config.KUBERNETES_DRIVER_POD_FEATURE_STEPS
-  }
-
-  override protected def buildPod(sparkConf: SparkConf, client: KubernetesClient): SparkPod = {
-    val conf = KubernetesTestConf.createDriverConf(sparkConf = sparkConf)
-    new KubernetesDriverBuilder().buildFromFeatures(conf, client).pod
-  }
+  /**
+   * Returns the null ordering.
+   */
+  NullOrdering nullOrdering();
 }

@@ -14,26 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.deploy.k8s.submit
 
-import io.fabric8.kubernetes.client.KubernetesClient
+package org.apache.spark.sql.connector.distributions;
 
-import org.apache.spark.SparkConf
-import org.apache.spark.deploy.k8s._
-import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.annotation.Experimental;
 
-class KubernetesDriverBuilderSuite extends PodBuilderSuite {
-
-  override protected def templateFileConf: ConfigEntry[_] = {
-    Config.KUBERNETES_DRIVER_PODTEMPLATE_FILE
-  }
-
-  override protected def userFeatureStepsConf: ConfigEntry[_] = {
-    Config.KUBERNETES_DRIVER_POD_FEATURE_STEPS
-  }
-
-  override protected def buildPod(sparkConf: SparkConf, client: KubernetesClient): SparkPod = {
-    val conf = KubernetesTestConf.createDriverConf(sparkConf = sparkConf)
-    new KubernetesDriverBuilder().buildFromFeatures(conf, client).pod
-  }
-}
+/**
+ * A distribution where no promises are made about co-location of data.
+ *
+ * @since 3.2.0
+ */
+@Experimental
+public interface UnspecifiedDistribution extends Distribution {}
