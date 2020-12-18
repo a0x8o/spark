@@ -674,6 +674,13 @@ case class AlterTableDropPartition(
 }
 
 /**
+ * The logical plan of the ALTER TABLE ... RECOVER PARTITIONS command.
+ */
+case class AlterTableRecoverPartitions(child: LogicalPlan) extends Command {
+  override def children: Seq[LogicalPlan] = child :: Nil
+}
+
+/**
  * The logical plan of the LOAD DATA INTO TABLE command.
  */
 case class LoadData(
@@ -771,6 +778,17 @@ case class AlterViewUnsetProperties(
 }
 
 /**
+ * The logical plan of the ALTER TABLE ... SET [SERDE|SERDEPROPERTIES] command.
+ */
+case class AlterTableSerDeProperties(
+    child: LogicalPlan,
+    serdeClassName: Option[String],
+    serdeProperties: Option[Map[String, String]],
+    partitionSpec: Option[TablePartitionSpec]) extends Command {
+  override def children: Seq[LogicalPlan] = child :: Nil
+}
+
+/**
  * The logical plan of the CACHE TABLE command.
  */
 case class CacheTable(
@@ -787,3 +805,11 @@ case class CacheTableAsSelect(
     plan: LogicalPlan,
     isLazy: Boolean,
     options: Map[String, String]) extends Command
+
+/**
+ * The logical plan of the UNCACHE TABLE command.
+ */
+case class UncacheTable(
+    table: LogicalPlan,
+    ifExists: Boolean,
+    isTempView: Boolean = false) extends Command
