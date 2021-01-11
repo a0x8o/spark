@@ -485,6 +485,7 @@ case class AlterTableAddPartitionCommand(
       catalog.createPartitions(table.identifier, batch, ignoreIfExists = ifNotExists)
     }
 
+    sparkSession.catalog.refreshTable(table.identifier.quotedString)
     if (table.stats.nonEmpty) {
       if (sparkSession.sessionState.conf.autoSizeUpdateEnabled) {
         val addedSize = CommandUtils.calculateMultipleLocationSizes(sparkSession, table.identifier,
@@ -536,6 +537,7 @@ case class AlterTableRenamePartitionCommand(
 
     catalog.renamePartitions(
       tableName, Seq(normalizedOldPartition), Seq(normalizedNewPartition))
+    sparkSession.catalog.refreshTable(table.identifier.quotedString)
     Seq.empty[Row]
   }
 
