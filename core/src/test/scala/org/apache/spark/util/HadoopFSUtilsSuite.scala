@@ -15,24 +15,19 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.datasources.v2
+package org.apache.spark.util
 
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
+import org.apache.spark.SparkFunSuite
 
-case class RefreshTableExec(
-    catalog: TableCatalog,
-    ident: Identifier,
-    refreshCache: () => Unit) extends V2CommandExec {
-  override protected def run(): Seq[InternalRow] = {
-    catalog.invalidateTable(ident)
-
-    // Refresh all caches referencing the given table
-    refreshCache()
-
-    Seq.empty
+class HadoopFSUtilsSuite extends SparkFunSuite {
+  test("HadoopFSUtils - file filtering") {
+    assert(!HadoopFSUtils.shouldFilterOutPathName("abcd"))
+    assert(HadoopFSUtils.shouldFilterOutPathName(".ab"))
+    assert(HadoopFSUtils.shouldFilterOutPathName("_cd"))
+    assert(!HadoopFSUtils.shouldFilterOutPathName("_metadata"))
+    assert(!HadoopFSUtils.shouldFilterOutPathName("_common_metadata"))
+    assert(HadoopFSUtils.shouldFilterOutPathName("_ab_metadata"))
+    assert(HadoopFSUtils.shouldFilterOutPathName("_cd_common_metadata"))
+    assert(HadoopFSUtils.shouldFilterOutPathName("a._COPYING_"))
   }
-
-  override def output: Seq[Attribute] = Seq.empty
 }
