@@ -1210,12 +1210,12 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
    */
   private def mayApplyAliasPlan(tableAlias: TableAliasContext, plan: LogicalPlan): LogicalPlan = {
     if (tableAlias.strictIdentifier != null) {
-      val subquery = SubqueryAlias(tableAlias.strictIdentifier.getText, plan)
+      val alias = tableAlias.strictIdentifier.getText
       if (tableAlias.identifierList != null) {
         val columnNames = visitIdentifierList(tableAlias.identifierList)
-        UnresolvedSubqueryColumnAliases(columnNames, subquery)
+        SubqueryAlias(alias, UnresolvedSubqueryColumnAliases(columnNames, plan))
       } else {
-        subquery
+        SubqueryAlias(alias, plan)
       }
     } else {
       plan
@@ -3477,7 +3477,7 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
   }
 
   /**
-   * Parse [[AlterViewSetProperties]] or [[AlterTableSetPropertiesStatement]] commands.
+   * Parse [[AlterViewSetProperties]] or [[AlterTableSetProperties]] commands.
    *
    * For example:
    * {{{
@@ -3498,14 +3498,17 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
           relationTypeMismatchHint = alterViewTypeMismatchHint),
         cleanedTableProperties)
     } else {
-      AlterTableSetPropertiesStatement(
-        visitMultipartIdentifier(ctx.multipartIdentifier),
+      AlterTableSetProperties(
+        createUnresolvedTable(
+          ctx.multipartIdentifier,
+          "ALTER TABLE ... SET TBLPROPERTIES",
+          alterTableTypeMismatchHint),
         cleanedTableProperties)
     }
   }
 
   /**
-   * Parse [[AlterViewUnsetProperties]] or [[AlterTableUnsetPropertiesStatement]] commands.
+   * Parse [[AlterViewUnsetProperties]] or [[AlterTableUnsetProperties]] commands.
    *
    * For example:
    * {{{
@@ -3529,8 +3532,11 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
         cleanedProperties,
         ifExists)
     } else {
-      AlterTableUnsetPropertiesStatement(
-        visitMultipartIdentifier(ctx.multipartIdentifier),
+      AlterTableUnsetProperties(
+        createUnresolvedTable(
+          ctx.multipartIdentifier,
+          "ALTER TABLE ... UNSET TBLPROPERTIES",
+          alterTableTypeMismatchHint),
         cleanedProperties,
         ifExists)
     }
