@@ -2850,6 +2850,7 @@ object SQLConf {
       .createWithDefault(100)
 
   val LEGACY_ALLOW_HASH_ON_MAPTYPE = buildConf("spark.sql.legacy.allowHashOnMapType")
+    .internal()
     .doc("When set to true, hash expressions can be applied on elements of MapType. Otherwise, " +
       "an analysis exception will be thrown.")
     .version("3.0.0")
@@ -3145,7 +3146,9 @@ object SQLConf {
       DeprecatedConfig(AVRO_REBASE_MODE_IN_WRITE.alternatives.head, "3.2",
         s"Use '${AVRO_REBASE_MODE_IN_WRITE.key}' instead."),
       DeprecatedConfig(AVRO_REBASE_MODE_IN_READ.alternatives.head, "3.2",
-        s"Use '${AVRO_REBASE_MODE_IN_READ.key}' instead.")
+        s"Use '${AVRO_REBASE_MODE_IN_READ.key}' instead."),
+      DeprecatedConfig(LEGACY_REPLACE_DATABRICKS_SPARK_AVRO_ENABLED.key, "3.2",
+        """Use `.format("avro")` in `DataFrameWriter` or `DataFrameReader` instead.""")
     )
 
     Map(configs.map { cfg => cfg.key -> cfg } : _*)
