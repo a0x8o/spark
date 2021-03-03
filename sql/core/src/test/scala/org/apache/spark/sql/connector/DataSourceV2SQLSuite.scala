@@ -2607,6 +2607,27 @@ class DataSourceV2SQLSuite
     }
   }
 
+  test("SPARK-34555: Resolve DataFrame metadata column") {
+    val tbl = s"${catalogAndNamespace}table"
+    withTable(tbl) {
+      sql(s"CREATE TABLE $tbl (id bigint, data string) USING $v2Format " +
+        "PARTITIONED BY (bucket(4, id), id)")
+      sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+      val table = spark.table(tbl)
+      val dfQuery = table.select(
+        table.col("id"),
+        table.col("data"),
+        table.col("index"),
+        table.col("_partition")
+      )
+
+      checkAnswer(
+        dfQuery,
+        Seq(Row(1, "a", 0, "3/1"), Row(2, "b", 0, "0/2"), Row(3, "c", 0, "1/3"))
+      )
+    }
+  }
+
   test("SPARK-34561: drop/add columns to a dataset of `DESCRIBE TABLE`") {
     val tbl = s"${catalogAndNamespace}tbl"
     withTable(tbl) {
@@ -2627,6 +2648,25 @@ class DataSourceV2SQLSuite
       assert(noCommentDataset.schema === expectedSchema)
       val isNullDataset = noCommentDataset
         .withColumn("is_null", noCommentDataset("col_name").isNull)
+      assert(isNullDataset.schema === expectedSchema.add("is_null", BooleanType, false))
+    }
+  }
+
+  test("SPARK-34576: drop/add columns to a dataset of `DESCRIBE COLUMN`") {
+    val tbl = s"${catalogAndNamespace}tbl"
+    withTable(tbl) {
+      sql(s"CREATE TABLE $tbl (c0 INT) USING $v2Format")
+      val description = sql(s"DESCRIBE TABLE $tbl c0")
+      val noCommentDataset = description.drop("info_value")
+      val expectedSchema = new StructType()
+        .add(
+          name = "info_name",
+          dataType = StringType,
+          nullable = false,
+          metadata = new MetadataBuilder().putString("comment", "name of the column info").build())
+      assert(noCommentDataset.schema === expectedSchema)
+      val isNullDataset = noCommentDataset
+        .withColumn("is_null", noCommentDataset("info_name").isNull)
       assert(isNullDataset.schema === expectedSchema.add("is_null", BooleanType, false))
     }
   }
