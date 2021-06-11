@@ -90,6 +90,11 @@ private class ShuffleStatus(
   val mapStatuses = new Array[MapStatus](numPartitions)
 
   /**
+   * Keep the previous deleted MapStatus for recovery.
+   */
+  val mapStatusesDeleted = new Array[MapStatus](numPartitions)
+
+  /**
    * MergeStatus for each shuffle partition when push-based shuffle is enabled. The index of the
    * array is the shuffle partition id (reduce id). Each value in the array is the MergeStatus for
    * a shuffle partition, or null if not available. When push-based shuffle is enabled, this array
@@ -154,14 +159,25 @@ private class ShuffleStatus(
    */
   def updateMapOutput(mapId: Long, bmAddress: BlockManagerId): Unit = withWriteLock {
     try {
-      val mapStatusOpt = mapStatuses.find(_.mapId == mapId)
+      val mapStatusOpt = mapStatuses.find(x => x != null && x.mapId == mapId)
       mapStatusOpt match {
         case Some(mapStatus) =>
           logInfo(s"Updating map output for ${mapId} to ${bmAddress}")
           mapStatus.updateLocation(bmAddress)
           invalidateSerializedMapOutputStatusCache()
         case None =>
-          logWarning(s"Asked to update map output ${mapId} for untracked map status.")
+          val index = mapStatusesDeleted.indexWhere(x => x != null && x.mapId == mapId)
+          if (index >= 0 && mapStatuses(index) == null) {
+            val mapStatus = mapStatusesDeleted(index)
+            mapStatus.updateLocation(bmAddress)
+            mapStatuses(index) = mapStatus
+            _numAvailableMapOutputs += 1
+            invalidateSerializedMapOutputStatusCache()
+            mapStatusesDeleted(index) = null
+            logInfo(s"Recover ${mapStatus.mapId} ${mapStatus.location}")
+          } else {
+            logWarning(s"Asked to update map output ${mapId} for untracked map status.")
+          }
       }
     } catch {
       case e: java.lang.NullPointerException =>
@@ -178,6 +194,7 @@ private class ShuffleStatus(
     logDebug(s"Removing existing map output ${mapIndex} ${bmAddress}")
     if (mapStatuses(mapIndex) != null && mapStatuses(mapIndex).location == bmAddress) {
       _numAvailableMapOutputs -= 1
+      mapStatusesDeleted(mapIndex) = mapStatuses(mapIndex)
       mapStatuses(mapIndex) = null
       invalidateSerializedMapOutputStatusCache()
     }
@@ -235,6 +252,7 @@ private class ShuffleStatus(
     for (mapIndex <- mapStatuses.indices) {
       if (mapStatuses(mapIndex) != null && f(mapStatuses(mapIndex).location)) {
         _numAvailableMapOutputs -= 1
+        mapStatusesDeleted(mapIndex) = mapStatuses(mapIndex)
         mapStatuses(mapIndex) = null
         invalidateSerializedMapOutputStatusCache()
       }
@@ -1290,7 +1308,7 @@ private[spark] object MapOutputTracker extends Logging {
   private val DIRECT = 0
   private val BROADCAST = 1
 
-  private val SHUFFLE_PUSH_MAP_ID = -1
+  val SHUFFLE_PUSH_MAP_ID = -1
 
   // Serialize an array of map/merge output locations into an efficient byte format so that we can
   // send it to reduce tasks. We do this by compressing the serialized bytes using Zstd. They will
