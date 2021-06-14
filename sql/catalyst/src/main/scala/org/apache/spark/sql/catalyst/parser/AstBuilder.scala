@@ -2357,8 +2357,14 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
         Literal(calendarInterval.months, YearMonthIntervalType)
       } else {
         assert(calendarInterval.months == 0)
+        val strToFieldIndex = DayTimeIntervalType.dayTimeFields.map(i =>
+          DayTimeIntervalType.fieldToString(i) -> i).toMap
+        val fromUnit =
+          ctx.errorCapturingUnitToUnitInterval.body.from.getText.toLowerCase(Locale.ROOT)
         val micros = IntervalUtils.getDuration(calendarInterval, TimeUnit.MICROSECONDS)
-        Literal(micros, DayTimeIntervalType)
+        val start = strToFieldIndex(fromUnit)
+        val end = strToFieldIndex(toUnit)
+        Literal(micros, DayTimeIntervalType(start, end))
       }
     } else {
       Literal(calendarInterval, CalendarIntervalType)
@@ -2513,7 +2519,15 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
   }
 
   override def visitDayTimeIntervalDataType(ctx: DayTimeIntervalDataTypeContext): DataType = {
-    DayTimeIntervalType
+    val strToFieldIndex =
+      DayTimeIntervalType.dayTimeFields.map(i => DayTimeIntervalType.fieldToString(i) -> i).toMap
+    val start = strToFieldIndex(ctx.from.getText.toLowerCase(Locale.ROOT))
+    val end = if (ctx.to != null ) {
+      strToFieldIndex(ctx.to.getText.toLowerCase(Locale.ROOT))
+    } else {
+      start
+    }
+    DayTimeIntervalType(start, end)
   }
 
   /**
