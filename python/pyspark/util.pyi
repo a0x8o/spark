@@ -15,21 +15,15 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-
-from typing import Any, Tuple
-from pyspark._typing import F
 
 import threading
+from typing import Callable
 
-def print_exec(stream: Any) -> None: ...
-
-class VersionUtils:
+class VersionUtils(object):
     @staticmethod
-    def majorMinorVersion(sparkVersion: str) -> Tuple[int, int]: ...
+    def majorMinorVersion(sparkVersion: str): ...
 
-def fail_on_stopiteration(f: F) -> F: ...
+def inheritable_thread_target(f: Callable) -> Callable: ...
 
 class InheritableThread(threading.Thread):
-    def __init__(self, target: Any, *args: Any, **kwargs: Any): ...
-    def __del__(self) -> None: ...
+    pass
