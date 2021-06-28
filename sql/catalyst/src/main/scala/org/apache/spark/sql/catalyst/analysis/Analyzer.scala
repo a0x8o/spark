@@ -44,7 +44,7 @@ import org.apache.spark.sql.catalyst.trees.TreePattern._
 import org.apache.spark.sql.catalyst.util.{toPrettySQL, CharVarcharUtils}
 import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-import org.apache.spark.sql.connector.catalog.TableChange.{AddColumn, After, ColumnChange, ColumnPosition, DeleteColumn, RenameColumn, UpdateColumnComment, UpdateColumnNullability, UpdateColumnPosition, UpdateColumnType}
+import org.apache.spark.sql.connector.catalog.TableChange.{AddColumn, After, ColumnChange, ColumnPosition, DeleteColumn, UpdateColumnComment, UpdateColumnNullability, UpdateColumnPosition, UpdateColumnType}
 import org.apache.spark.sql.connector.catalog.functions.{AggregateFunction => V2AggregateFunction, BoundFunction, ScalarFunction}
 import org.apache.spark.sql.connector.catalog.functions.ScalarFunction.MAGIC_METHOD_NAME
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
@@ -357,8 +357,10 @@ class Analyzer(override val catalogManager: CatalogManager)
           case (_: DayTimeIntervalType, DateType) => TimeAdd(Cast(r, TimestampType), l)
           case (DateType, _: YearMonthIntervalType) => DateAddYMInterval(l, r)
           case (_: YearMonthIntervalType, DateType) => DateAddYMInterval(r, l)
-          case (TimestampType, _: YearMonthIntervalType) => TimestampAddYMInterval(l, r)
-          case (_: YearMonthIntervalType, TimestampType) => TimestampAddYMInterval(r, l)
+          case (TimestampType | TimestampWithoutTZType, _: YearMonthIntervalType) =>
+            TimestampAddYMInterval(l, r)
+          case (_: YearMonthIntervalType, TimestampType | TimestampWithoutTZType) =>
+            TimestampAddYMInterval(r, l)
           case (CalendarIntervalType, CalendarIntervalType) |
                (_: DayTimeIntervalType, _: DayTimeIntervalType) => a
           case (DateType, CalendarIntervalType) => DateAddInterval(l, r, ansiEnabled = f)
@@ -376,7 +378,7 @@ class Analyzer(override val catalogManager: CatalogManager)
             DatetimeSub(l, r, TimeAdd(Cast(l, TimestampType), UnaryMinus(r, f)))
           case (DateType, _: YearMonthIntervalType) =>
             DatetimeSub(l, r, DateAddYMInterval(l, UnaryMinus(r, f)))
-          case (TimestampType, _: YearMonthIntervalType) =>
+          case (TimestampType | TimestampWithoutTZType, _: YearMonthIntervalType) =>
             DatetimeSub(l, r, TimestampAddYMInterval(l, UnaryMinus(r, f)))
           case (CalendarIntervalType, CalendarIntervalType) |
                (_: DayTimeIntervalType, _: DayTimeIntervalType) => s
@@ -3657,12 +3659,6 @@ class Analyzer(override val catalogManager: CatalogManager)
               schema,
               comment.fieldNames(),
               TableChange.updateColumnComment(_, comment.newComment())).orElse(Some(comment))
-
-          case rename: RenameColumn =>
-            resolveFieldNames(
-              schema,
-              rename.fieldNames(),
-              TableChange.renameColumn(_, rename.newName())).orElse(Some(rename))
 
           case delete: DeleteColumn =>
             resolveFieldNames(schema, delete.fieldNames(), TableChange.deleteColumn)
