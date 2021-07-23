@@ -111,7 +111,6 @@ in Spark. These can be accessed by ``Index.spark.<function/property>``.
 .. autosummary::
    :toctree: api/
 
-   Index.spark.data_type
    Index.spark.column
    Index.spark.transform
 
@@ -175,8 +174,12 @@ Categorical components
    CategoricalIndex.codes
    CategoricalIndex.categories
    CategoricalIndex.ordered
+   CategoricalIndex.add_categories
+   CategoricalIndex.remove_categories
+   CategoricalIndex.remove_unused_categories
    CategoricalIndex.as_ordered
    CategoricalIndex.as_unordered
+   CategoricalIndex.rename_categories
 
 .. _api.multiindex:
 
