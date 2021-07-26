@@ -15,19 +15,21 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.connector.read;
+package org.apache.spark.sql.execution.adaptive
 
-import org.apache.spark.annotation.Evolving;
+import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.exchange.ShuffleOrigin
 
 /**
- * An interface for building the {@link Scan}. Implementations can mixin SupportsPushDownXYZ
- * interfaces to do operator pushdown, and keep the operator pushdown result in the returned
- * {@link Scan}. When pushing down operators, Spark pushes down filters first, then pushes down
- * aggregates or applies column pruning.
- *
- * @since 3.0.0
+ * Adaptive Query Execution rule that may create [[AQEShuffleReadExec]] on top of query stages.
  */
-@Evolving
-public interface ScanBuilder {
-  Scan build();
+trait AQEShuffleReadRule extends Rule[SparkPlan] {
+
+  /**
+   * Returns the list of [[ShuffleOrigin]]s supported by this rule.
+   */
+  def supportedShuffleOrigins: Seq[ShuffleOrigin]
+
+  def mayAddExtraShuffles: Boolean = false
 }
