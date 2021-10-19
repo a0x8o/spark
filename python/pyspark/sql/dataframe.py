@@ -90,7 +90,7 @@ class DataFrame(PandasMapOpsMixin, PandasConversionMixin):
     def __init__(self, jdf: JavaObject, sql_ctx: "SQLContext"):
         self._jdf = jdf
         self.sql_ctx = sql_ctx
-        self._sc = cast(
+        self._sc: SparkContext = cast(
             SparkContext,
             sql_ctx and sql_ctx._sc  # type: ignore[attr-defined]
         )
@@ -310,7 +310,8 @@ class DataFrame(PandasMapOpsMixin, PandasConversionMixin):
         """
         if self._schema is None:
             try:
-                self._schema = _parse_datatype_json_string(self._jdf.schema().json())
+                self._schema = cast(
+                    StructType, _parse_datatype_json_string(self._jdf.schema().json()))
             except Exception as e:
                 raise ValueError(
                     "Unable to parse datatype from schema. %s" % e) from e
