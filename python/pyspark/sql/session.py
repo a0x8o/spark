@@ -276,7 +276,7 @@ class SparkSession(SparkConversionMixin):
                         sc = SparkContext.getOrCreate(sparkConf)
                     # Do not update `SparkConf` for existing `SparkContext`, as it's shared
                     # by all sessions.
-                    session = SparkSession(sc)
+                    session = SparkSession(sc, options=self._options)
                 for key, value in self._options.items():
                     session._jsparkSession.sessionState().conf().setConfString(key, value)
                 return session
@@ -287,7 +287,12 @@ class SparkSession(SparkConversionMixin):
     _instantiatedSession: ClassVar[Optional["SparkSession"]] = None
     _activeSession: ClassVar[Optional["SparkSession"]] = None
 
-    def __init__(self, sparkContext: SparkContext, jsparkSession: Optional[JavaObject] = None):
+    def __init__(
+        self,
+        sparkContext: SparkContext,
+        jsparkSession: Optional[JavaObject] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ):
         from pyspark.sql.context import SQLContext
 
         self._sc = sparkContext
@@ -301,6 +306,9 @@ class SparkSession(SparkConversionMixin):
                 jsparkSession = self._jvm.SparkSession.getDefaultSession().get()
             else:
                 jsparkSession = self._jvm.SparkSession(self._jsc.sc())
+                if options is not None:
+                    for key, value in options.items():
+                        jsparkSession.sharedState().conf().set(key, value)
         self._jsparkSession = jsparkSession
         self._jwrapped = self._jsparkSession.sqlContext()
         self._wrapped = SQLContext(self._sc, self, self._jwrapped)
@@ -776,9 +784,7 @@ class SparkSession(SparkConversionMixin):
             a :class:`pyspark.sql.types.DataType` or a datatype string or a list of
             column names, default is None.  The data type string format equals to
             :class:`pyspark.sql.types.DataType.simpleString`, except that top level struct type can
-            omit the ``struct<>`` and atomic types use ``typeName()`` as their format, e.g. use
-            ``byte`` instead of ``tinyint`` for :class:`pyspark.sql.types.ByteType`.
-            We can also use ``int`` as a short name for :class:`pyspark.sql.types.IntegerType`.
+            omit the ``struct<>``.
         samplingRatio : float, optional
             the sample ratio of rows used for inferring
         verifySchema : bool, optional
