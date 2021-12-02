@@ -948,7 +948,7 @@ object QueryExecutionErrors {
   def cannotMergeDecimalTypesWithIncompatibleScaleError(
       leftScale: Int, rightScale: Int): Throwable = {
     new SparkException("Failed to merge decimal types with incompatible " +
-      s"scala $leftScale and $rightScale")
+      s"scale $leftScale and $rightScale")
   }
 
   def cannotMergeIncompatibleDataTypesError(left: DataType, right: DataType): Throwable = {
@@ -1032,6 +1032,13 @@ object QueryExecutionErrors {
       s"Cannot parse field name ${parser.getCurrentName}, " +
         s"field value ${parser.getText}, " +
         s"[$token] as target spark data type [$dataType].")
+  }
+
+  def cannotParseStringAsDataTypeError(pattern: String, value: String, dataType: DataType)
+  : Throwable = {
+    new RuntimeException(
+      s"Cannot parse field value ${value} for pattern ${pattern} " +
+        s"as target spark data type [$dataType].")
   }
 
   def failToParseEmptyStringForDataTypeError(dataType: DataType): Throwable = {
@@ -1894,4 +1901,3 @@ object QueryExecutionErrors {
     new RuntimeException("Unable to convert timestamp of Orc to data type 'timestamp_ntz'")
   }
 }
-
