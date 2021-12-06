@@ -408,8 +408,11 @@ object FunctionRegistry {
     expression[Divide]("/"),
     expression[IntegralDivide]("div"),
     expression[Remainder]("%"),
+
+    // "try_*" function which always return Null instead of runtime error.
     expression[TryAdd]("try_add"),
     expression[TryDivide]("try_divide"),
+    expression[TryElementAt]("try_element_at"),
 
     // aggregate functions
     expression[HyperLogLogPlusPlus]("approx_count_distinct"),
@@ -579,6 +582,7 @@ object FunctionRegistry {
     expression[UnixSeconds]("unix_seconds"),
     expression[UnixMillis]("unix_millis"),
     expression[UnixMicros]("unix_micros"),
+    expression[ConvertTimezone]("convert_timezone"),
 
     // collection functions
     expression[CreateArray]("array"),
