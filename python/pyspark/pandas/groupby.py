@@ -21,7 +21,7 @@ A wrapper for GroupedData to behave similar to pandas GroupBy.
 
 from abc import ABCMeta, abstractmethod
 import inspect
-from collections import OrderedDict, defaultdict, namedtuple
+from collections import defaultdict, namedtuple
 from distutils.version import LooseVersion
 from functools import partial
 from itertools import product
@@ -288,7 +288,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         else:
             agg_cols = [col.name for col in self._agg_columns]
-            func_or_funcs = OrderedDict([(col, func_or_funcs) for col in agg_cols])
+            func_or_funcs = {col: func_or_funcs for col in agg_cols}
 
         psdf: DataFrame = DataFrame(
             GroupBy._spark_groupby(self._psdf, func_or_funcs, self._groupkeys)
@@ -2994,8 +2994,8 @@ class SeriesGroupBy(GroupBy[Series]):
         else:
             return psser.copy()
 
-    def _cleanup_and_return(self, pdf: pd.DataFrame) -> Series:
-        return first_series(pdf).rename().rename(self._psser.name)
+    def _cleanup_and_return(self, psdf: DataFrame) -> Series:
+        return first_series(psdf).rename().rename(self._psser.name)
 
     def agg(self, *args: Any, **kwargs: Any) -> None:
         return MissingPandasLikeSeriesGroupBy.agg(self, *args, **kwargs)
