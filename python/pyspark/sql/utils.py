@@ -27,6 +27,7 @@ from py4j.java_gateway import (  # type: ignore[import]
 from py4j.protocol import Py4JJavaError  # type: ignore[import]
 
 from pyspark import SparkContext
+from pyspark.find_spark_home import _find_spark_home
 
 if TYPE_CHECKING:
     from pyspark.sql.context import SQLContext
@@ -52,11 +53,7 @@ class CapturedException(Exception):
         self.stackTrace = (
             stackTrace
             if stackTrace is not None
-            else (
-                SparkContext._jvm.org.apache.spark.util.Utils.exceptionString(  # type: ignore[attr-defined]
-                    origin
-                )
-            )
+            else (SparkContext._jvm.org.apache.spark.util.Utils.exceptionString(origin))
         )
         self.cause = convert_exception(cause) if cause is not None else None
         if self.cause is None and origin is not None and origin.getCause() is not None:
@@ -245,12 +242,7 @@ def require_test_compiled() -> None:
     import os
     import glob
 
-    try:
-        spark_home = os.environ["SPARK_HOME"]
-    except KeyError:
-        raise RuntimeError("SPARK_HOME is not defined in environment")
-
-    test_class_path = os.path.join(spark_home, "sql", "core", "target", "*", "test-classes")
+    test_class_path = os.path.join(_find_spark_home(), "sql", "core", "target", "*", "test-classes")
     paths = glob.glob(test_class_path)
 
     if len(paths) == 0:
