@@ -44,14 +44,14 @@ from typing import (
 import warnings
 
 import pandas as pd
-from pandas.api.types import is_hashable, is_list_like
+from pandas.api.types import is_hashable, is_list_like  # type: ignore[attr-defined]
 
 if LooseVersion(pd.__version__) >= LooseVersion("1.3.0"):
-    from pandas.core.common import _builtin_table
+    from pandas.core.common import _builtin_table  # type: ignore[attr-defined]
 else:
     from pandas.core.base import SelectionMixin
 
-    _builtin_table = SelectionMixin._builtin_table
+    _builtin_table = SelectionMixin._builtin_table  # type: ignore[attr-defined]
 
 from pyspark.sql import Column, DataFrame as SparkDataFrame, Window, functions as F
 from pyspark.sql.types import (
@@ -314,7 +314,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         if relabeling:
             psdf = psdf[order]
-            psdf.columns = columns
+            psdf.columns = columns  # type: ignore[assignment]
         return psdf
 
     agg = aggregate
@@ -2356,12 +2356,16 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         Name: value1, dtype: int64
         """
         if dropna:
-            stat_function = lambda col: F.countDistinct(col)
+
+            def stat_function(col: Column) -> Column:
+                return F.countDistinct(col)
+
         else:
-            stat_function = lambda col: (
-                F.countDistinct(col)
-                + F.when(F.count(F.when(col.isNull(), 1).otherwise(None)) >= 1, 1).otherwise(0)
-            )
+
+            def stat_function(col: Column) -> Column:
+                return F.countDistinct(col) + F.when(
+                    F.count(F.when(col.isNull(), 1).otherwise(None)) >= 1, 1
+                ).otherwise(0)
 
         return self._reduce_for_stat_function(stat_function, only_numeric=False)
 
@@ -2563,7 +2567,9 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
                 "accuracy must be an integer; however, got [%s]" % type(accuracy).__name__
             )
 
-        stat_function = lambda col: F.percentile_approx(col, 0.5, accuracy)
+        def stat_function(col: Column) -> Column:
+            return F.percentile_approx(col, 0.5, accuracy)
+
         return self._reduce_for_stat_function(stat_function, only_numeric=numeric_only)
 
     def _reduce_for_stat_function(
@@ -3011,10 +3017,7 @@ class SeriesGroupBy(GroupBy[Series]):
     # TODO: add keep parameter
     def nsmallest(self, n: int = 5) -> Series:
         """
-        Return the first n rows ordered by columns in ascending order in group.
-
-        Return the first n rows with the smallest values in columns, in ascending order.
-        The columns that are not specified are returned as well, but not used for ordering.
+        Return the smallest `n` elements.
 
         Parameters
         ----------
