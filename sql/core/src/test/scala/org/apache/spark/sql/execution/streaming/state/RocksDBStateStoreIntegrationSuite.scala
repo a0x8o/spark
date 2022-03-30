@@ -27,9 +27,7 @@ import org.apache.spark.sql.execution.streaming.{MemoryStream, StreamingQueryWra
 import org.apache.spark.sql.functions.count
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming._
-import org.apache.spark.tags.ExtendedRocksDBTest
 
-@ExtendedRocksDBTest
 class RocksDBStateStoreIntegrationSuite extends StreamTest {
   import testImplicits._
 
@@ -67,7 +65,7 @@ class RocksDBStateStoreIntegrationSuite extends StreamTest {
         val inputData = MemoryStream[Int]
 
         val query = inputData.toDS().toDF("value")
-          .select('value)
+          .select(Symbol("value"))
           .groupBy($"value")
           .agg(count("*"))
           .writeStream
@@ -119,7 +117,7 @@ class RocksDBStateStoreIntegrationSuite extends StreamTest {
 
         def startQuery(): StreamingQuery = {
           inputData.toDS().toDF("value")
-            .select('value)
+            .select(Symbol("value"))
             .groupBy($"value")
             .agg(count("*"))
             .writeStream
@@ -156,7 +154,7 @@ class RocksDBStateStoreIntegrationSuite extends StreamTest {
       SQLConf.STATE_STORE_ROCKSDB_FORMAT_VERSION.key -> "100") {
       val inputData = MemoryStream[Int]
       val query = inputData.toDS().toDF("value")
-        .select('value)
+        .select(Symbol("value"))
         .groupBy($"value")
         .agg(count("*"))
         .writeStream
@@ -179,7 +177,7 @@ class RocksDBStateStoreIntegrationSuite extends StreamTest {
         val inputData = MemoryStream[Int]
 
         val query = inputData.toDS().toDF("value")
-          .select('value)
+          .select(Symbol("value"))
           .groupBy($"value")
           .agg(count("*"))
           .writeStream

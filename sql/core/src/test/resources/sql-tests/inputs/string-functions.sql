@@ -27,6 +27,18 @@ select right("abcd", -2), right("abcd", 0), right("abcd", 'a');
 SELECT split('aa1cc2ee3', '[1-9]+');
 SELECT split('aa1cc2ee3', '[1-9]+', 2);
 
+-- split_part function
+SELECT split_part('11.12.13', '.', 2);
+SELECT split_part('11.12.13', '.', -1);
+SELECT split_part('11.12.13', '.', -3);
+SELECT split_part('11.12.13', '', 1);
+SELECT split_part('11ab12ab13', 'ab', 1);
+SELECT split_part('11.12.13', '.', 0);
+SELECT split_part('11.12.13', '.', 4);
+SELECT split_part('11.12.13', '.', 5);
+SELECT split_part('11.12.13', '.', -5);
+SELECT split_part(null, '.', 1);
+
 -- substring function
 SELECT substr('Spark SQL', 5);
 SELECT substr('Spark SQL', -3);
@@ -125,6 +137,25 @@ SELECT endswith('Spark SQL', 'Spa');
 SELECT endswith(null, 'Spark');
 SELECT endswith('Spark', null);
 SELECT endswith(null, null);
+
+SELECT contains(x'537061726b2053514c', x'537061726b');
+SELECT contains(x'', x'');
+SELECT contains(x'537061726b2053514c', null);
+SELECT contains(12, '1');
+SELECT contains(true, 'ru');
+SELECT contains(x'12', 12);
+SELECT contains(true, false);
+
+SELECT startswith(x'537061726b2053514c', x'537061726b');
+SELECT startswith(x'537061726b2053514c', x'');
+SELECT startswith(x'', x'');
+SELECT startswith(x'537061726b2053514c', null);
+
+SELECT endswith(x'537061726b2053514c', x'53516c');
+SELECT endsWith(x'537061726b2053514c', x'537061726b');
+SELECT endsWith(x'537061726b2053514c', x'');
+SELECT endsWith(x'', x'');
+SELECT endsWith(x'537061726b2053514c', null);
 
 -- to_number
 select to_number('454', '000');
