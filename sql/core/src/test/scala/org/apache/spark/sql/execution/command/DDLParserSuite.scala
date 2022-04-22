@@ -200,21 +200,6 @@ class DDLParserSuite extends AnalysisTest with SharedSparkSession {
     assert(parsed.isInstanceOf[Project])
   }
 
-  test("duplicate keys in table properties") {
-    val e = intercept[ParseException] {
-      parser.parsePlan("ALTER TABLE dbx.tab1 SET TBLPROPERTIES ('key1' = '1', 'key1' = '2')")
-    }.getMessage
-    assert(e.contains("Found duplicate keys 'key1'"))
-  }
-
-  test("duplicate columns in partition specs") {
-    val e = intercept[ParseException] {
-      parser.parsePlan(
-        "ALTER TABLE dbx.tab1 PARTITION (a='1', a='2') RENAME TO PARTITION (a='100', a='200')")
-    }.getMessage
-    assert(e.contains("Found duplicate keys 'a'"))
-  }
-
   test("unsupported operations") {
     intercept[ParseException] {
       parser.parsePlan(
@@ -484,9 +469,9 @@ class DDLParserSuite extends AnalysisTest with SharedSparkSession {
       DropFunctionCommand(Seq("a").asFunctionIdentifier, true, true))
 
     intercept("DROP TEMPORARY FUNCTION a.b",
-      "DROP TEMPORARY FUNCTION requires a single part name")
+      "\"DROP TEMPORARY FUNCTION\" requires a single part name")
     intercept("DROP TEMPORARY FUNCTION IF EXISTS a.b",
-      "DROP TEMPORARY FUNCTION requires a single part name")
+      "\"DROP TEMPORARY FUNCTION\" requires a single part name")
   }
 
   test("SPARK-32374: create temporary view with properties not allowed") {

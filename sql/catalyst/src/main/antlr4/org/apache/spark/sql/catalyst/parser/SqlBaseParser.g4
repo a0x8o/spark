@@ -439,6 +439,7 @@ queryOrganization
       (SORT BY sort+=sortItem (COMMA sort+=sortItem)*)?
       windowClause?
       (LIMIT (ALL | limit=expression))?
+      (OFFSET offset=expression)?
     ;
 
 multiInsertQueryBody
@@ -845,7 +846,7 @@ primaryExpression
        FROM srcStr=valueExpression RIGHT_PAREN                                                 #trim
     | OVERLAY LEFT_PAREN input=valueExpression PLACING replace=valueExpression
       FROM position=valueExpression (FOR length=valueExpression)? RIGHT_PAREN                  #overlay
-    | PERCENTILE_CONT LEFT_PAREN percentage=valueExpression RIGHT_PAREN
+    | name=(PERCENTILE_CONT | PERCENTILE_DISC) LEFT_PAREN percentage=valueExpression RIGHT_PAREN
       WITHIN GROUP LEFT_PAREN ORDER BY sortItem RIGHT_PAREN ( OVER windowSpec)?                #percentile
     ;
 
@@ -1450,6 +1451,7 @@ nonReserved
     | NULL
     | NULLS
     | OF
+    | OFFSET
     | ONLY
     | OPTION
     | OPTIONS
@@ -1466,6 +1468,7 @@ nonReserved
     | PARTITIONED
     | PARTITIONS
     | PERCENTILE_CONT
+    | PERCENTILE_DISC
     | PERCENTLIT
     | PIVOT
     | PLACING

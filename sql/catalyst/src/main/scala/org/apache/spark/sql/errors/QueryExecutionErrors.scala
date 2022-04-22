@@ -91,7 +91,7 @@ object QueryExecutionErrors extends QueryErrorsBase {
 
   def castingCauseOverflowError(t: Any, dataType: DataType): ArithmeticException = {
     new SparkArithmeticException(errorClass = "CAST_CAUSES_OVERFLOW",
-      messageParameters = Array(toSQLValue(t), dataType.catalogString, SQLConf.ANSI_ENABLED.key))
+      messageParameters = Array(toSQLValue(t), toSQLType(dataType), SQLConf.ANSI_ENABLED.key))
   }
 
   def cannotChangeDecimalPrecisionError(
@@ -112,10 +112,12 @@ object QueryExecutionErrors extends QueryErrorsBase {
   }
 
   def invalidInputSyntaxForNumericError(
+      to: DataType,
       s: UTF8String,
       errorContext: String): NumberFormatException = {
-    new SparkNumberFormatException(errorClass = "INVALID_INPUT_SYNTAX_FOR_NUMERIC_TYPE",
-      messageParameters = Array(toSQLValue(s, StringType), SQLConf.ANSI_ENABLED.key, errorContext))
+    new SparkNumberFormatException(errorClass = "INVALID_SYNTAX_FOR_CAST",
+      messageParameters = Array(toSQLType(to), toSQLValue(s, StringType),
+        SQLConf.ANSI_ENABLED.key, errorContext))
   }
 
   def cannotCastFromNullTypeError(to: DataType): Throwable = {
@@ -150,7 +152,7 @@ object QueryExecutionErrors extends QueryErrorsBase {
   }
 
   def invalidArrayIndexError(index: Int, numElements: Int): ArrayIndexOutOfBoundsException = {
-    invalidArrayIndexErrorInternal(index, numElements, SQLConf.ANSI_STRICT_INDEX_OPERATOR.key)
+    invalidArrayIndexErrorInternal(index, numElements, SQLConf.ANSI_ENABLED.key)
   }
 
   def invalidInputIndexError(index: Int, numElements: Int): ArrayIndexOutOfBoundsException = {
@@ -174,17 +176,9 @@ object QueryExecutionErrors extends QueryErrorsBase {
         Array(toSQLValue(index), toSQLValue(numElements), SQLConf.ANSI_ENABLED.key))
   }
 
-  def mapKeyNotExistError(
-      key: Any,
-      isElementAtFunction: Boolean,
-      context: String): NoSuchElementException = {
-    if (isElementAtFunction) {
-      new SparkNoSuchElementException(errorClass = "MAP_KEY_DOES_NOT_EXIST_IN_ELEMENT_AT",
-        messageParameters = Array(toSQLValue(key), SQLConf.ANSI_ENABLED.key, context))
-    } else {
-      new SparkNoSuchElementException(errorClass = "MAP_KEY_DOES_NOT_EXIST",
-        messageParameters = Array(toSQLValue(key), SQLConf.ANSI_STRICT_INDEX_OPERATOR.key, context))
-    }
+  def mapKeyNotExistError(key: Any, context: String): NoSuchElementException = {
+    new SparkNoSuchElementException(errorClass = "MAP_KEY_DOES_NOT_EXIST",
+      messageParameters = Array(toSQLValue(key), SQLConf.ANSI_ENABLED.key, context))
   }
 
   def invalidFractionOfSecondError(): DateTimeException = {
@@ -244,8 +238,7 @@ object QueryExecutionErrors extends QueryErrorsBase {
     new SparkRuntimeException(
       errorClass = "UNSUPPORTED_FEATURE",
       messageParameters = Array(
-        s"pivoting by the value '${v.toString}' of the column data type" +
-        s" '${dataType.catalogString}'."))
+        s"pivoting by the value '${v.toString}' of the column data type ${toSQLType(dataType)}."))
   }
 
   def noDefaultForDataTypeError(dataType: DataType): RuntimeException = {
@@ -1012,8 +1005,14 @@ object QueryExecutionErrors extends QueryErrorsBase {
   }
 
   def cannotCastToDateTimeError(value: Any, to: DataType, errorContext: String): Throwable = {
-    new DateTimeException(s"Cannot cast $value to $to. To return NULL instead, use 'try_cast'. " +
-      s"If necessary set ${SQLConf.ANSI_ENABLED.key} to false to bypass this error." + errorContext)
+    val valueString = if (value.isInstanceOf[UTF8String]) {
+      toSQLValue(value, StringType)
+    } else {
+      toSQLValue(value)
+    }
+    new DateTimeException(s"Invalid input syntax for type ${toSQLType(to)}: $valueString. " +
+      s"To return NULL instead, use 'try_cast'. If necessary set ${SQLConf.ANSI_ENABLED.key} " +
+      s"to false to bypass this error." + errorContext)
   }
 
   def registeringStreamingQueryListenerError(e: Exception): Throwable = {
@@ -1608,8 +1607,8 @@ object QueryExecutionErrors extends QueryErrorsBase {
     new SparkUnsupportedOperationException(
       errorClass = "UNSUPPORTED_OPERATION",
       messageParameters = Array(
-        s"${TimestampType.catalogString} must supply timeZoneId parameter " +
-          s"while converting to ArrowType")
+        s"${toSQLType(TimestampType)} must supply timeZoneId parameter " +
+          s"while converting to the arrow timestamp type.")
     )
   }
 
@@ -1885,21 +1884,23 @@ object QueryExecutionErrors extends QueryErrorsBase {
   def repeatedPivotsUnsupportedError(): Throwable = {
     new SparkUnsupportedOperationException(
       errorClass = "UNSUPPORTED_FEATURE",
-      messageParameters = Array("Repeated pivots."))
+      messageParameters = Array(s"Repeated ${toSQLStmt("pivot")}s."))
   }
 
   def pivotNotAfterGroupByUnsupportedError(): Throwable = {
     new SparkUnsupportedOperationException(
       errorClass = "UNSUPPORTED_FEATURE",
-      messageParameters = Array("Pivot not after a groupBy."))
+      messageParameters = Array(s"${toSQLStmt("pivot")} not after a ${toSQLStmt("group by")}."))
   }
+
+  private val aesFuncName = toSQLId("aes_encrypt") + "/" + toSQLId("aes_decrypt")
 
   def invalidAesKeyLengthError(actualLength: Int): RuntimeException = {
     new SparkRuntimeException(
       errorClass = "INVALID_PARAMETER_VALUE",
       messageParameters = Array(
         "key",
-        "the aes_encrypt/aes_decrypt function",
+        s"the $aesFuncName function",
         s"expects a binary value with 16, 24 or 32 bytes, but got ${actualLength.toString} bytes."))
   }
 
@@ -1907,7 +1908,7 @@ object QueryExecutionErrors extends QueryErrorsBase {
     new SparkRuntimeException(
       errorClass = "UNSUPPORTED_FEATURE",
       messageParameters = Array(
-        s"AES-$mode with the padding $padding by the aes_encrypt/aes_decrypt function."))
+        s"AES-$mode with the padding $padding by the $aesFuncName function."))
   }
 
   def aesCryptoError(detailMessage: String): RuntimeException = {
@@ -1915,7 +1916,7 @@ object QueryExecutionErrors extends QueryErrorsBase {
       errorClass = "INVALID_PARAMETER_VALUE",
       messageParameters = Array(
         "expr, key",
-        "the aes_encrypt/aes_decrypt function",
+        s"the $aesFuncName function",
         s"Detail message: $detailMessage"))
   }
 
@@ -1926,14 +1927,17 @@ object QueryExecutionErrors extends QueryErrorsBase {
   def cannotConvertOrcTimestampToTimestampNTZError(): Throwable = {
     new SparkUnsupportedOperationException(
       errorClass = "UNSUPPORTED_OPERATION",
-      messageParameters = Array("Unable to convert timestamp of Orc to data type 'timestamp_ntz'"))
+      messageParameters = Array(
+        s"Unable to convert ${toSQLType(TimestampType)} of Orc to " +
+        s"data type ${toSQLType(TimestampNTZType)}."))
   }
 
   def cannotConvertOrcTimestampNTZToTimestampLTZError(): Throwable = {
     new SparkUnsupportedOperationException(
       errorClass = "UNSUPPORTED_OPERATION",
-      messageParameters =
-        Array("Unable to convert timestamp ntz of Orc to data type 'timestamp_ltz'"))
+      messageParameters = Array(
+        s"Unable to convert ${toSQLType(TimestampNTZType)} of Orc to " +
+        s"data type ${toSQLType(TimestampType)}."))
   }
 
   def writePartitionExceedConfigSizeWhenDynamicPartitionError(
