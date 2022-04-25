@@ -22,7 +22,7 @@ import org.apache.spark.sql.api.java.{UDF1, UDF2, UDF23Test}
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions.{grouping, grouping_id, sum, udf}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{IntegerType, StringType}
+import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructField, StructType}
 
 case class StringLongClass(a: String, b: Long)
 
@@ -227,7 +227,7 @@ class QueryCompilationErrorsSuite
         "2. use Java UDF APIs, e.g. `udf(new UDF1[String, Integer] { " +
         "override def call(s: String): Integer = s.length() }, IntegerType)`, " +
         "if input types are all non primitive\n" +
-        s"3. set ${SQLConf.LEGACY_ALLOW_UNTYPED_SCALA_UDF.key} to true and " +
+        s"""3. set "${SQLConf.LEGACY_ALLOW_UNTYPED_SCALA_UDF.key}" to true and """ +
         s"use this API with caution")
   }
 
@@ -379,6 +379,35 @@ class QueryCompilationErrorsSuite
             s"on the view: `$viewName`")
       }
     }
+  }
+
+  test("SECOND_FUNCTION_ARGUMENT_NOT_INTEGER: " +
+    "the second argument of 'date_add' function needs to be an integer") {
+    withSQLConf(SQLConf.ANSI_ENABLED.key -> "false") {
+      checkErrorClass(
+        exception = intercept[AnalysisException] {
+          sql("select date_add('1982-08-15', 'x')").collect()
+        },
+        errorClass = "SECOND_FUNCTION_ARGUMENT_NOT_INTEGER",
+        msg = "The second argument of 'date_add' function needs to be an integer.",
+        sqlState = Some("22023"))
+    }
+  }
+
+  test("INVALID_JSON_SCHEMA_MAPTYPE: " +
+    "Parse JSON rows can only contain StringType as a key type for a MapType.") {
+    val schema = StructType(
+      StructField("map", MapType(IntegerType, IntegerType, true), false) :: Nil)
+
+    checkErrorClass(
+      exception = intercept[AnalysisException] {
+        spark.read.schema(schema).json(spark.emptyDataset[String])
+      },
+      errorClass = "INVALID_JSON_SCHEMA_MAPTYPE",
+      msg = "Input schema " +
+        "StructType(StructField(map,MapType(IntegerType,IntegerType,true),false)) " +
+        "can only contain StringType as a key type for a MapType."
+    )
   }
 }
 
