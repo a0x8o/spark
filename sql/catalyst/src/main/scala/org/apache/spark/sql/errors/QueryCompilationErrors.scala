@@ -66,10 +66,11 @@ object QueryCompilationErrors extends QueryErrorsBase {
       messageParameters = Array(sizeLimit.toString))
   }
 
-  def illegalSubstringError(subject: String, illegalContent: String): Throwable = {
+  def zeroArgumentIndexError(): Throwable = {
     new AnalysisException(
-      errorClass = "ILLEGAL_SUBSTRING",
-      messageParameters = Array(subject, illegalContent))
+      errorClass = "INVALID_PARAMETER_VALUE",
+      messageParameters = Array(
+        "strfmt", toSQLId("format_string"), "expects %1$, %2$ and so on, but got %0$."))
   }
 
   def unorderablePivotColError(pivotCol: Expression): Throwable = {
@@ -1941,7 +1942,7 @@ object QueryCompilationErrors extends QueryErrorsBase {
       path: Path,
       e: Throwable): Throwable = {
     new AnalysisException(s"Failed to truncate table $tableIdentWithDB when " +
-        s"removing data of the path: $path because of ${e.toString}")
+        s"removing data of the path: $path because of ${e.toString}", cause = Some(e))
   }
 
   def descPartitionNotAllowedOnTempView(table: String): Throwable = {
