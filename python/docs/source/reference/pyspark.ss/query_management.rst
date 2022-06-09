@@ -16,22 +16,30 @@
     under the License.
 
 
-=============
-API Reference
-=============
+================
+Query Management
+================
 
-This page lists an overview of all public PySpark modules, classes, functions and methods.
+.. currentmodule:: pyspark.sql.streaming
 
-Pandas API on Spark follows the API specifications of latest pandas release.
+.. autosummary::
+    :toctree: api/
 
-.. toctree::
-   :maxdepth: 2
-
-   pyspark.sql/index
-   pyspark.pandas/index
-   pyspark.ss/index
-   pyspark.ml
-   pyspark.streaming
-   pyspark.mllib
-   pyspark
-   pyspark.resource
+    StreamingQuery.awaitTermination
+    StreamingQuery.exception
+    StreamingQuery.explain
+    StreamingQuery.id
+    StreamingQuery.isActive
+    StreamingQuery.lastProgress
+    StreamingQuery.name
+    StreamingQuery.processAllAvailable
+    StreamingQuery.recentProgress
+    StreamingQuery.runId
+    StreamingQuery.status
+    StreamingQuery.stop
+    StreamingQueryManager.active
+    StreamingQueryManager.addListener
+    StreamingQueryManager.awaitAnyTermination
+    StreamingQueryManager.get
+    StreamingQueryManager.removeListener
+    StreamingQueryManager.resetTerminated
