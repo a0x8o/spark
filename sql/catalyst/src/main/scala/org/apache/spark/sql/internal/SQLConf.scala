@@ -2557,8 +2557,9 @@ object SQLConf {
     buildConf("spark.sql.execution.arrow.pyspark.enabled")
       .doc("When true, make use of Apache Arrow for columnar data transfers in PySpark. " +
         "This optimization applies to: " +
-        "1. pyspark.sql.DataFrame.toPandas " +
+        "1. pyspark.sql.DataFrame.toPandas. " +
         "2. pyspark.sql.SparkSession.createDataFrame when its input is a Pandas DataFrame " +
+        "or a NumPy ndarray. " +
         "The following data types are unsupported: " +
         "ArrayType of TimestampType, and nested StructType.")
       .version("3.0.0")
@@ -2574,6 +2575,18 @@ object SQLConf {
       .version("3.2.0")
       .booleanConf
       .createWithDefault(false)
+
+  val ARROW_LOCAL_RELATION_THRESHOLD =
+    buildConf("spark.sql.execution.arrow.localRelationThreshold")
+      .doc(
+        "When converting Arrow batches to Spark DataFrame, local collections are used in the " +
+          "driver side if the byte size of Arrow batches is smaller than this threshold. " +
+          "Otherwise, the Arrow batches are sent and deserialized to Spark internal rows " +
+          "in the executors.")
+      .version("3.4.0")
+      .bytesConf(ByteUnit.BYTE)
+      .checkValue(_ >= 0, "This value must be equal to or greater than 0.")
+      .createWithDefaultString("48MB")
 
   val PYSPARK_JVM_STACKTRACE_ENABLED =
     buildConf("spark.sql.pyspark.jvmStacktrace.enabled")
@@ -4416,6 +4429,8 @@ class SQLConf extends Serializable with Logging {
   def rangeExchangeSampleSizePerPartition: Int = getConf(RANGE_EXCHANGE_SAMPLE_SIZE_PER_PARTITION)
 
   def arrowPySparkEnabled: Boolean = getConf(ARROW_PYSPARK_EXECUTION_ENABLED)
+
+  def arrowLocalRelationThreshold: Long = getConf(ARROW_LOCAL_RELATION_THRESHOLD)
 
   def arrowPySparkSelfDestructEnabled: Boolean = getConf(ARROW_PYSPARK_SELF_DESTRUCT_ENABLED)
 
