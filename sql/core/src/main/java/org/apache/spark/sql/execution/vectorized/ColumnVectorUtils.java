@@ -106,6 +106,61 @@ public class ColumnVectorUtils {
   }
 
   /**
+   * Populates the value of `row[fieldIdx]` into `ConstantColumnVector`.
+   */
+  public static void populate(ConstantColumnVector col, InternalRow row, int fieldIdx) {
+    DataType t = col.dataType();
+
+    if (row.isNullAt(fieldIdx)) {
+      col.setNull();
+    } else {
+      if (t == DataTypes.BooleanType) {
+        col.setBoolean(row.getBoolean(fieldIdx));
+      } else if (t == DataTypes.BinaryType) {
+        col.setBinary(row.getBinary(fieldIdx));
+      } else if (t == DataTypes.ByteType) {
+        col.setByte(row.getByte(fieldIdx));
+      } else if (t == DataTypes.ShortType) {
+        col.setShort(row.getShort(fieldIdx));
+      } else if (t == DataTypes.IntegerType) {
+        col.setInt(row.getInt(fieldIdx));
+      } else if (t == DataTypes.LongType) {
+        col.setLong(row.getLong(fieldIdx));
+      } else if (t == DataTypes.FloatType) {
+        col.setFloat(row.getFloat(fieldIdx));
+      } else if (t == DataTypes.DoubleType) {
+        col.setDouble(row.getDouble(fieldIdx));
+      } else if (t == DataTypes.StringType) {
+        UTF8String v = row.getUTF8String(fieldIdx);
+        col.setUtf8String(v);
+      } else if (t instanceof DecimalType) {
+        DecimalType dt = (DecimalType) t;
+        Decimal d = row.getDecimal(fieldIdx, dt.precision(), dt.scale());
+        if (dt.precision() <= Decimal.MAX_INT_DIGITS()) {
+          col.setInt((int)d.toUnscaledLong());
+        } else if (dt.precision() <= Decimal.MAX_LONG_DIGITS()) {
+          col.setLong(d.toUnscaledLong());
+        } else {
+          final BigInteger integer = d.toJavaBigDecimal().unscaledValue();
+          byte[] bytes = integer.toByteArray();
+          col.setBinary(bytes);
+        }
+      } else if (t instanceof CalendarIntervalType) {
+        // The value of `numRows` is irrelevant.
+        col.setCalendarInterval((CalendarInterval) row.get(fieldIdx, t));
+      } else if (t instanceof DateType || t instanceof YearMonthIntervalType) {
+        col.setInt(row.getInt(fieldIdx));
+      } else if (t instanceof TimestampType || t instanceof TimestampNTZType ||
+        t instanceof DayTimeIntervalType) {
+        col.setLong(row.getLong(fieldIdx));
+      } else {
+        throw new RuntimeException(String.format("DataType %s is not supported" +
+            " in column vectorized reader.", t.sql()));
+      }
+    }
+  }
+
+  /**
    * Returns the array data as the java primitive array.
    * For example, an array of IntegerType will return an int[].
    * Throws exceptions for unhandled schemas.
