@@ -924,6 +924,13 @@ class JDBCSuite extends QueryTest
     assert(derbyDialect.getJDBCType(BooleanType).map(_.databaseTypeDefinition).get == "BOOLEAN")
   }
 
+  test("SPARK-39604: DerbyDialect catalyst type mapping") {
+    val derbyDialect = JdbcDialects.get("jdbc:derby:db")
+    val metadata = new MetadataBuilder().putString("name", "test_column")
+    assert(derbyDialect.getCatalystType(java.sql.Types.REAL, "real",
+      0, metadata) == Some(FloatType))
+  }
+
   test("OracleDialect jdbc type mapping") {
     val oracleDialect = JdbcDialects.get("jdbc:oracle")
     val metadata = new MetadataBuilder().putString("name", "test_column").putLong("scale", -127)
@@ -1943,13 +1950,17 @@ class JDBCSuite extends QueryTest
             .option("dbtable", tableName)
             .save()
 
-          val res = spark.read.format("jdbc")
-            .option("inferTimestampNTZType", "true")
-            .option("url", urlWithUserAndPass)
-            .option("dbtable", tableName)
-            .load()
+          DateTimeTestUtils.outstandingZoneIds.foreach { zoneId =>
+            DateTimeTestUtils.withDefaultTimeZone(zoneId) {
+              val res = spark.read.format("jdbc")
+                .option("inferTimestampNTZType", "true")
+                .option("url", urlWithUserAndPass)
+                .option("dbtable", tableName)
+                .load()
 
-          checkAnswer(res, df)
+              checkAnswer(res, df)
+            }
+          }
         }
       }
     }
