@@ -2924,6 +2924,18 @@ object SQLConf {
       .stringConf
       .createWithDefault("csv,json,orc,parquet")
 
+  val ADD_MISSING_DEFAULT_COLUMN_VALUES_FOR_INSERTS_WITH_EXPLICIT_COLUMNS =
+    buildConf("spark.sql.defaultColumn.addMissingValuesForInsertsWithExplicitColumns")
+      .internal()
+      .doc("When true, allow INSERT INTO commands with explicit columns (such as " +
+        "INSERT INTO t(a, b)) to specify fewer columns than the target table; the analyzer will " +
+        "assign default values for remaining columns (either NULL, or otherwise the explicit " +
+        "DEFAULT value associated with the column from a previous command). Otherwise, if " +
+        "false, return an error.")
+      .version("3.4.0")
+      .booleanConf
+      .createWithDefault(true)
+
   val JSON_GENERATOR_WRITE_NULL_IF_WITH_DEFAULT_VALUE =
     buildConf("spark.sql.jsonGenerator.writeNullIfWithDefaultValue")
       .internal()
@@ -2936,17 +2948,6 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
-  val USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES =
-    buildConf("spark.sql.defaultColumn.useNullsForMissingDefaultValues")
-      .internal()
-      .doc("When true, and DEFAULT columns are enabled, allow column definitions lacking " +
-        "explicit default values to behave as if they had specified DEFAULT NULL instead. " +
-        "For example, this allows most INSERT INTO statements to specify only a prefix of the " +
-        "columns in the target table, and the remaining columns will receive NULL values.")
-      .version("3.4.0")
-      .booleanConf
-      .createWithDefault(false)
-
   val ENFORCE_RESERVED_KEYWORDS = buildConf("spark.sql.ansi.enforceReservedKeywords")
     .doc(s"When true and '${ANSI_ENABLED.key}' is true, the Spark SQL parser enforces the ANSI " +
       "reserved keywords and forbids SQL queries that use reserved keywords as alias names " +
@@ -2954,15 +2955,6 @@ object SQLConf {
     .version("3.3.0")
     .booleanConf
     .createWithDefault(false)
-
-  val ANSI_STRICT_INDEX_OPERATOR = buildConf("spark.sql.ansi.strictIndexOperator")
-    .internal()
-    .doc(s"When true and '${ANSI_ENABLED.key}' is true, accessing complex SQL types via [] " +
-      "operator will throw an exception if array index is out of bound, or map key does not " +
-      "exist. Otherwise, Spark will return a null result when accessing an invalid index.")
-    .version("3.3.0")
-    .booleanConf
-    .createWithDefault(true)
 
   val SORT_BEFORE_REPARTITION =
     buildConf("spark.sql.execution.sortBeforeRepartition")
@@ -3982,7 +3974,11 @@ object SQLConf {
       RemovedConfig("spark.sql.optimizer.planChangeLog.rules", "3.1.0", "",
         s"Please use `${PLAN_CHANGE_LOG_RULES.key}` instead."),
       RemovedConfig("spark.sql.optimizer.planChangeLog.batches", "3.1.0", "",
-        s"Please use `${PLAN_CHANGE_LOG_BATCHES.key}` instead.")
+        s"Please use `${PLAN_CHANGE_LOG_BATCHES.key}` instead."),
+      RemovedConfig("spark.sql.ansi.strictIndexOperator", "3.4.0", "true",
+        "This was an internal configuration. It is not needed anymore since Spark SQL always " +
+          "returns null when getting a map value with a non-existing key. See SPARK-40066 " +
+          "for more details.")
     )
 
     Map(configs.map { cfg => cfg.key -> cfg } : _*)
@@ -4535,15 +4531,13 @@ class SQLConf extends Serializable with Logging {
 
   def defaultColumnAllowedProviders: String = getConf(SQLConf.DEFAULT_COLUMN_ALLOWED_PROVIDERS)
 
+  def addMissingValuesForInsertsWithExplicitColumns: Boolean =
+    getConf(SQLConf.ADD_MISSING_DEFAULT_COLUMN_VALUES_FOR_INSERTS_WITH_EXPLICIT_COLUMNS)
+
   def jsonWriteNullIfWithDefaultValue: Boolean =
     getConf(JSON_GENERATOR_WRITE_NULL_IF_WITH_DEFAULT_VALUE)
 
-  def useNullsForMissingDefaultColumnValues: Boolean =
-    getConf(SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES)
-
   def enforceReservedKeywords: Boolean = ansiEnabled && getConf(ENFORCE_RESERVED_KEYWORDS)
-
-  def strictIndexOperator: Boolean = ansiEnabled && getConf(ANSI_STRICT_INDEX_OPERATOR)
 
   def timestampType: AtomicType = getConf(TIMESTAMP_TYPE) match {
     case "TIMESTAMP_LTZ" =>
