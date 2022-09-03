@@ -14,31 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.spark.deploy.k8s.integrationtest
 
-package org.apache.spark.mllib.linalg
+@YuniKornTag
+class YuniKornSuite extends KubernetesSuite {
 
-import dev.ludovic.netlib.arpack.{ARPACK => NetlibARPACK, JavaARPACK => NetlibJavaARPACK, NativeARPACK => NetlibNativeARPACK}
-
-/**
- * ARPACK routines for MLlib's vectors and matrices.
- */
-private[spark] object ARPACK extends Serializable {
-
-  @transient private var _javaARPACK: NetlibARPACK = _
-  @transient private var _nativeARPACK: NetlibARPACK = _
-
-  private[spark] def javaARPACK: NetlibARPACK = {
-    if (_javaARPACK == null) {
-      _javaARPACK = NetlibJavaARPACK.getInstance
-    }
-    _javaARPACK
-  }
-
-  private[spark] def nativeARPACK: NetlibARPACK = {
-    if (_nativeARPACK == null) {
-      _nativeARPACK =
-        try { NetlibNativeARPACK.getInstance } catch { case _: Throwable => javaARPACK }
-    }
-    _nativeARPACK
+  override protected def setUpTest(): Unit = {
+    super.setUpTest()
+    sparkAppConf
+      .set("spark.kubernetes.scheduler.name", "yunikorn")
+      .set("spark.kubernetes.driver.annotation.yunikorn.apache.org/app-id", "{{APP_ID}}")
+      .set("spark.kubernetes.executor.annotation.yunikorn.apache.org/app-id", "{{APP_ID}}")
   }
 }

@@ -14,31 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.spark.deploy.k8s.integrationtest;
 
-package org.apache.spark.mllib.linalg
+import java.lang.annotation.Retention;
+import java.lang.annotation.Target;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.ElementType;
 
-import dev.ludovic.netlib.arpack.{ARPACK => NetlibARPACK, JavaARPACK => NetlibJavaARPACK, NativeARPACK => NetlibNativeARPACK}
-
-/**
- * ARPACK routines for MLlib's vectors and matrices.
- */
-private[spark] object ARPACK extends Serializable {
-
-  @transient private var _javaARPACK: NetlibARPACK = _
-  @transient private var _nativeARPACK: NetlibARPACK = _
-
-  private[spark] def javaARPACK: NetlibARPACK = {
-    if (_javaARPACK == null) {
-      _javaARPACK = NetlibJavaARPACK.getInstance
-    }
-    _javaARPACK
-  }
-
-  private[spark] def nativeARPACK: NetlibARPACK = {
-    if (_nativeARPACK == null) {
-      _nativeARPACK =
-        try { NetlibNativeARPACK.getInstance } catch { case _: Throwable => javaARPACK }
-    }
-    _nativeARPACK
-  }
-}
+@org.scalatest.TagAnnotation
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.METHOD, ElementType.TYPE})
+public @interface YuniKornTag {}
