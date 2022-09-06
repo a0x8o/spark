@@ -53,6 +53,10 @@ from pyspark.sql.functions import (
     slice,
     least,
     regexp_replace,
+    atan2,
+    hypot,
+    pow,
+    pmod,
 )
 from pyspark.sql import functions
 from pyspark.testing.sqlutils import ReusedSQLTestCase, SQLTestUtils
@@ -1028,6 +1032,12 @@ class FunctionsTests(ReusedSQLTestCase):
             self.assertEqual([Row(b=True), Row(b=False)], res)
             res = df.select(array_position(df.data, dtype(1)).alias("c")).collect()
             self.assertEqual([Row(c=1), Row(c=0)], res)
+
+    def test_binary_math_function(self):
+        funcs, expected = zip(*[(atan2, 0.13664), (hypot, 8.07527), (pow, 2.14359), (pmod, 1.1)])
+        df = self.spark.range(1).select(*(func(1.1, 8) for func in funcs))
+        for a, e in zip(df.first(), expected):
+            self.assertAlmostEqual(a, e, 5)
 
 
 if __name__ == "__main__":
