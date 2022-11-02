@@ -138,6 +138,11 @@
           "Unable to convert column <name> of type <type> to JSON."
         ]
       },
+      "CANNOT_DROP_ALL_FIELDS" : {
+        "message" : [
+          "Cannot drop all fields in struct."
+        ]
+      },
       "CAST_WITHOUT_SUGGESTION" : {
         "message" : [
           "cannot cast <srcType> to <targetType>."
@@ -153,6 +158,21 @@
         "message" : [
           "cannot cast <srcType> to <targetType>.",
           "To convert values from <srcType> to <targetType>, you can use the functions <functionNames> instead."
+        ]
+      },
+      "CREATE_MAP_KEY_DIFF_TYPES" : {
+        "message" : [
+          "The given keys of function <functionName> should all be the same type, but they are <dataType>."
+        ]
+      },
+      "CREATE_MAP_VALUE_DIFF_TYPES" : {
+        "message" : [
+          "The given values of function <functionName> should all be the same type, but they are <dataType>."
+        ]
+      },
+      "CREATE_NAMED_STRUCT_WITHOUT_FOLDABLE_STRING" : {
+        "message" : [
+          "Only foldable `STRING` expressions are allowed to appear at odd position, but they are <inputExprs>."
         ]
       },
       "DATA_DIFF_TYPES" : {
@@ -188,6 +208,16 @@
       "INVALID_ORDERING_TYPE" : {
         "message" : [
           "The <functionName> does not support ordering on type <dataType>."
+        ]
+      },
+      "IN_SUBQUERY_DATA_TYPE_MISMATCH" : {
+        "message" : [
+          "The data type of one or more elements in the left hand side of an IN subquery is not compatible with the data type of the output of the subquery. Mismatched columns: [<mismatchedColumns>], left side: [<leftType>], right side: [<rightType>]."
+        ]
+      },
+      "IN_SUBQUERY_LENGTH_MISMATCH" : {
+        "message" : [
+          "The number of columns in the left hand side of an IN subquery does not match the number of columns in the output of subquery. Left hand side columns(length: <leftLength>): [<leftColumns>], right hand side columns(length: <rightLength>): [<rightColumns>]."
         ]
       },
       "MAP_CONCAT_DIFF_TYPES" : {
