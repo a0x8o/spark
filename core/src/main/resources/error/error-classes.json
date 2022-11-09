@@ -669,6 +669,11 @@
       }
     }
   },
+  "LOCATION_ALREADY_EXISTS" : {
+    "message" : [
+      "Cannot name the managed table as <identifier>, as its associated location <location> already exists. Please pick a different table name, or remove the existing location first."
+    ]
+  },
   "MALFORMED_PROTOBUF_MESSAGE" : {
     "message" : [
       "Malformed Protobuf messages are detected in message deserialization. Parse Mode: <failFastMode>. To process malformed protobuf message as null result, try setting the option 'mode' as 'PERMISSIVE'."
@@ -757,6 +762,11 @@
       "<value> cannot be represented as Decimal(<precision>, <scale>). If necessary set <config> to \"false\" to bypass this error."
     ],
     "sqlState" : "22005"
+  },
+  "NUM_COLUMNS_MISMATCH" : {
+    "message" : [
+      "<operator> can only be performed on tables with the same number of columns, but the first table has <refNumColumns> columns and the <invalidOrdinalNum> table has <invalidNumColumns> columns."
+    ]
   },
   "ORDER_BY_POS_OUT_OF_RANGE" : {
     "message" : [
@@ -1944,11 +1954,6 @@
       "CREATE EXTERNAL TABLE must be accompanied by LOCATION."
     ]
   },
-  "_LEGACY_ERROR_TEMP_1070" : {
-    "message" : [
-      "Can not <methodName> the managed table('<tableIdentifier>'). The associated location('<tableLocation>') already exists."
-    ]
-  },
   "_LEGACY_ERROR_TEMP_1071" : {
     "message" : [
       "Some existing schema fields (<nonExistentColumnNames>) are not present in the new schema. We don't support dropping columns yet."
@@ -2965,11 +2970,6 @@
   "_LEGACY_ERROR_TEMP_1278" : {
     "message" : [
       "<name> is not a view."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1279" : {
-    "message" : [
-      "View <name> already exists. If you want to update the view definition, please use ALTER VIEW AS or CREATE OR REPLACE VIEW AS."
     ]
   },
   "_LEGACY_ERROR_TEMP_1280" : {
@@ -5031,11 +5031,6 @@
   "_LEGACY_ERROR_TEMP_2428" : {
     "message" : [
       "The sum of the LIMIT clause and the OFFSET clause must not be greater than the maximum 32-bit integer value (2,147,483,647) but found limit = <limit>, offset = <offset>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_2429" : {
-    "message" : [
-      "<operator> can only be performed on tables with the same number of columns, but the first table has <firstColNum> columns and the <nTab> table has <nColNum> columns."
     ]
   },
   "_LEGACY_ERROR_TEMP_2430" : {
