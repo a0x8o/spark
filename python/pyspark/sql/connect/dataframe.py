@@ -414,6 +414,30 @@ class DataFrame(object):
     def offset(self, n: int) -> "DataFrame":
         return DataFrame.withPlan(plan.Offset(child=self._plan, offset=n), session=self._session)
 
+    def tail(self, num: int) -> List[Row]:
+        """
+        Returns the last ``num`` rows as a :class:`list` of :class:`Row`.
+
+        Running tail requires moving data into the application's driver process, and doing so with
+        a very large ``num`` can crash the driver process with OutOfMemoryError.
+
+        .. versionadded:: 3.4.0
+
+        Parameters
+        ----------
+        num : int
+            Number of records to return. Will return this number of records
+            or whataver number is available.
+
+        Returns
+        -------
+        list
+            List of rows
+        """
+        return DataFrame.withPlan(
+            plan.Tail(child=self._plan, limit=num), session=self._session
+        ).collect()
+
     def sort(self, *cols: "ColumnOrName") -> "DataFrame":
         """Sort by a specific column"""
         return DataFrame.withPlan(
@@ -951,29 +975,9 @@ class DataFrame(object):
         ), "Func returned an instance of type [%s], " "should have been DataFrame." % type(result)
         return result
 
-    def explain(
+    def _explain_string(
         self, extended: Optional[Union[bool, str]] = None, mode: Optional[str] = None
     ) -> str:
-        """Retruns plans in string for debugging purpose.
-
-        .. versionadded:: 3.4.0
-
-        Parameters
-        ----------
-        extended : bool, optional
-            default ``False``. If ``False``, returns only the physical plan.
-            When this is a string without specifying the ``mode``, it works as the mode is
-            specified.
-        mode : str, optional
-            specifies the expected output format of plans.
-
-            * ``simple``: Print only a physical plan.
-            * ``extended``: Print both logical and physical plans.
-            * ``codegen``: Print a physical plan and generated codes if they are available.
-            * ``cost``: Print a logical plan and statistics if they are available.
-            * ``formatted``: Split explain output into two sections: a physical plan outline \
-                and node details.
-        """
         if extended is not None and mode is not None:
             raise ValueError("extended and mode should not be set together.")
 
@@ -1017,6 +1021,31 @@ class DataFrame(object):
             return self._session.client.explain_string(query, explain_mode)
         else:
             return ""
+
+    def explain(
+        self, extended: Optional[Union[bool, str]] = None, mode: Optional[str] = None
+    ) -> None:
+        """Retruns plans in string for debugging purpose.
+
+        .. versionadded:: 3.4.0
+
+        Parameters
+        ----------
+        extended : bool, optional
+            default ``False``. If ``False``, returns only the physical plan.
+            When this is a string without specifying the ``mode``, it works as the mode is
+            specified.
+        mode : str, optional
+            specifies the expected output format of plans.
+
+            * ``simple``: Print only a physical plan.
+            * ``extended``: Print both logical and physical plans.
+            * ``codegen``: Print a physical plan and generated codes if they are available.
+            * ``cost``: Print a logical plan and statistics if they are available.
+            * ``formatted``: Split explain output into two sections: a physical plan outline \
+                and node details.
+        """
+        print(self._explain_string(extended=extended, mode=mode))
 
     def createGlobalTempView(self, name: str) -> None:
         """Creates a global temporary view with this :class:`DataFrame`.
@@ -1108,6 +1137,15 @@ class DataFrame(object):
 
     def toJSON(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError("toJSON() is not implemented.")
+
+    def _repr_html_(self, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError("_repr_html_() is not implemented.")
+
+    def semanticHash(self, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError("semanticHash() is not implemented.")
+
+    def sameSemantics(self, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError("sameSemantics() is not implemented.")
 
 
 class DataFrameNaFunctions:
