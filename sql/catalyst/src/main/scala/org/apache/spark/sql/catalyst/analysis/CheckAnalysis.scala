@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.optimizer.{BooleanSimplification, Decorrela
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
-import org.apache.spark.sql.catalyst.trees.TreePattern.UNRESOLVED_WINDOW_EXPRESSION
+import org.apache.spark.sql.catalyst.trees.TreePattern.{LATERAL_COLUMN_ALIAS_REFERENCE, UNRESOLVED_WINDOW_EXPRESSION}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, StringUtils, TypeUtils}
 import org.apache.spark.sql.connector.catalog.{LookupCatalog, SupportsPartitionManagement}
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryErrorsBase}
@@ -552,7 +552,7 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
                   errorClass = "NUM_COLUMNS_MISMATCH",
                   messageParameters = Map(
                     "operator" -> toSQLStmt(operator.nodeName),
-                    "refNumColumns" -> ref.length.toString,
+                    "firstNumColumns" -> ref.length.toString,
                     "invalidOrdinalNum" -> ordinalNumber(ti + 1),
                     "invalidNumColumns" -> child.output.length.toString))
               }
@@ -565,7 +565,7 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
                   e.failAnalysis(
                     errorClass = "_LEGACY_ERROR_TEMP_2430",
                     messageParameters = Map(
-                      "operator" -> operator.nodeName,
+                      "operator" -> toSQLStmt(operator.nodeName),
                       "ci" -> ordinalNumber(ci),
                       "ti" -> ordinalNumber(ti + 1),
                       "dt1" -> dt1.catalogString,
@@ -637,6 +637,16 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
               _.containsPattern(UNRESOLVED_WINDOW_EXPRESSION)) {
               case UnresolvedWindowExpression(_, windowSpec) =>
                 throw QueryCompilationErrors.windowSpecificationNotDefinedError(windowSpec.name)
+            })
+            // This should not happen, resolved Project or Aggregate should restore or resolve
+            // all lateral column alias references. Add check for extra safe.
+            projectList.foreach(_.transformDownWithPruning(
+              _.containsPattern(LATERAL_COLUMN_ALIAS_REFERENCE)) {
+              case lcaRef: LateralColumnAliasReference if p.resolved =>
+                throw SparkException.internalError("Resolved Project should not contain " +
+                  s"any LateralColumnAliasReference.\nDebugging information: plan: $p",
+                  context = lcaRef.origin.getQueryContext,
+                  summary = lcaRef.origin.context.summary)
             })
 
           case j: Join if !j.duplicateResolved =>
@@ -713,6 +723,19 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
               messageParameters = Map(
                 "operator" -> other.nodeName,
                 "invalidExprSqls" -> invalidExprSqls.mkString(", ")))
+
+          // This should not happen, resolved Project or Aggregate should restore or resolve
+          // all lateral column alias references. Add check for extra safe.
+          case agg @ Aggregate(_, aggList, _)
+            if aggList.exists(_.containsPattern(LATERAL_COLUMN_ALIAS_REFERENCE)) && agg.resolved =>
+            aggList.foreach(_.transformDownWithPruning(
+              _.containsPattern(LATERAL_COLUMN_ALIAS_REFERENCE)) {
+              case lcaRef: LateralColumnAliasReference =>
+                throw SparkException.internalError("Resolved Aggregate should not contain " +
+                  s"any LateralColumnAliasReference.\nDebugging information: plan: $agg",
+                  context = lcaRef.origin.getQueryContext,
+                  summary = lcaRef.origin.context.summary)
+            })
 
           case _ => // Analysis successful!
         }
