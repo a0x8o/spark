@@ -550,10 +550,42 @@ class SparkConnectProtoSuite extends PlanTest with SparkConnectPlanTest {
       connectTestRelation.select("id".protoAttr.cast(
         proto.DataType.newBuilder().setString(proto.DataType.String.getDefaultInstance).build())),
       sparkTestRelation.select(col("id").cast(StringType)))
+
+    comparePlans(
+      connectTestRelation.select("id".protoAttr.cast("string")),
+      sparkTestRelation.select(col("id").cast("string")))
   }
 
   test("Test Hint") {
     comparePlans(connectTestRelation.hint("COALESCE", 3), sparkTestRelation.hint("COALESCE", 3))
+  }
+
+  test("Test Unpivot") {
+    val connectPlan0 =
+      connectTestRelation.unpivot(Seq("id".protoAttr), Seq("name".protoAttr), "variable", "value")
+    val sparkPlan0 =
+      sparkTestRelation.unpivot(Array(Column("id")), Array(Column("name")), "variable", "value")
+    comparePlans(connectPlan0, sparkPlan0)
+
+    val connectPlan1 =
+      connectTestRelation.unpivot(Seq("id".protoAttr), "variable", "value")
+    val sparkPlan1 =
+      sparkTestRelation.unpivot(Array(Column("id")), "variable", "value")
+    comparePlans(connectPlan1, sparkPlan1)
+  }
+
+  test("Test Melt") {
+    val connectPlan0 =
+      connectTestRelation.melt(Seq("id".protoAttr), Seq("name".protoAttr), "variable", "value")
+    val sparkPlan0 =
+      sparkTestRelation.melt(Array(Column("id")), Array(Column("name")), "variable", "value")
+    comparePlans(connectPlan0, sparkPlan0)
+
+    val connectPlan1 =
+      connectTestRelation.melt(Seq("id".protoAttr), "variable", "value")
+    val sparkPlan1 =
+      sparkTestRelation.melt(Array(Column("id")), "variable", "value")
+    comparePlans(connectPlan1, sparkPlan1)
   }
 
   private def createLocalRelationProtoByAttributeReferences(

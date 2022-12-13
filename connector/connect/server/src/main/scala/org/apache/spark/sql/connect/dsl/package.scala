@@ -96,7 +96,17 @@ package object dsl {
             Expression.Cast
               .newBuilder()
               .setExpr(expr)
-              .setCastToType(dataType))
+              .setType(dataType))
+          .build()
+
+      def cast(dataType: String): Expression =
+        Expression
+          .newBuilder()
+          .setCast(
+            Expression.Cast
+              .newBuilder()
+              .setExpr(expr)
+              .setTypeStr(dataType))
           .build()
     }
 
@@ -708,6 +718,53 @@ package object dsl {
               .addAllParameters(parameters.map(toConnectProtoValue).asJava))
           .build()
       }
+
+      def unpivot(
+          ids: Seq[Expression],
+          values: Seq[Expression],
+          variableColumnName: String,
+          valueColumnName: String): Relation = {
+        Relation
+          .newBuilder()
+          .setUnpivot(
+            Unpivot
+              .newBuilder()
+              .setInput(logicalPlan)
+              .addAllIds(ids.asJava)
+              .addAllValues(values.asJava)
+              .setVariableColumnName(variableColumnName)
+              .setValueColumnName(valueColumnName))
+          .build()
+      }
+
+      def unpivot(
+          ids: Seq[Expression],
+          variableColumnName: String,
+          valueColumnName: String): Relation = {
+        Relation
+          .newBuilder()
+          .setUnpivot(
+            Unpivot
+              .newBuilder()
+              .setInput(logicalPlan)
+              .addAllIds(ids.asJava)
+              .setVariableColumnName(variableColumnName)
+              .setValueColumnName(valueColumnName))
+          .build()
+      }
+
+      def melt(
+          ids: Seq[Expression],
+          values: Seq[Expression],
+          variableColumnName: String,
+          valueColumnName: String): Relation =
+        unpivot(ids, values, variableColumnName, valueColumnName)
+
+      def melt(
+          ids: Seq[Expression],
+          variableColumnName: String,
+          valueColumnName: String): Relation =
+        unpivot(ids, variableColumnName, valueColumnName)
 
       private def createSetOperation(
           left: Relation,
