@@ -806,6 +806,11 @@
       }
     }
   },
+  "INVALID_SQL_ARG" : {
+    "message" : [
+      "The argument <name> of `sql()` is invalid. Consider to replace it by a SQL literal statement."
+    ]
+  },
   "INVALID_SQL_SYNTAX" : {
     "message" : [
       "Invalid SQL syntax: <inputString>"
@@ -1147,6 +1152,11 @@
       "Unable to convert SQL type <toType> to Protobuf type <protobufType>."
     ]
   },
+  "UNBOUND_SQL_PARAMETER" : {
+    "message" : [
+      "Found the unbound parameter: <name>. Please, fix `args` and provide a mapping of the parameter to a SQL literal statement."
+    ]
+  },
   "UNCLOSED_BRACKETED_COMMENT" : {
     "message" : [
       "Found an unclosed bracketed comment. Please, append */ at the end of the comment."
@@ -1277,6 +1287,11 @@
       "ANALYZE_UNCACHED_TEMP_VIEW" : {
         "message" : [
           "The ANALYZE TABLE FOR COLUMNS command can operate on temporary views that have been cached already. Consider to cache the view <viewName>."
+        ]
+      },
+      "ANALYZE_UNSUPPORTED_COLUMN_TYPE" : {
+        "message" : [
+          "The ANALYZE TABLE FOR COLUMNS command does not support the type <columnType> of the column <columnName> in the table <tableName>."
         ]
       },
       "CATALOG_OPERATION" : {
@@ -1471,6 +1486,11 @@
           "A correlated outer name reference within a subquery expression body was not found in the enclosing query: <value>"
         ]
       },
+      "CORRELATED_REFERENCE" : {
+        "message" : [
+          "Expressions referencing the outer query are not supported outside of WHERE/HAVING clauses: <sqlExprs>"
+        ]
+      },
       "LATERAL_JOIN_CONDITION_NON_DETERMINISTIC" : {
         "message" : [
           "Lateral join condition cannot be non-deterministic: <condition>"
@@ -1494,11 +1514,6 @@
       "NON_DETERMINISTIC_LATERAL_SUBQUERIES" : {
         "message" : [
           "Non-deterministic lateral subqueries are not supported when joining with outer relations that produce more than one row<treeNode>"
-        ]
-      },
-      "UNSUPPORTED_CORRELATED_REFERENCE" : {
-        "message" : [
-          "Expressions referencing the outer query are not supported outside of WHERE/HAVING clauses<treeNode>"
         ]
       },
       "UNSUPPORTED_CORRELATED_REFERENCE_DATA_TYPE" : {
@@ -1548,8 +1563,20 @@
   },
   "WRONG_NUM_ARGS" : {
     "message" : [
-      "The <functionName> requires <expectedNum> parameters but the actual number is <actualNum>."
-    ]
+      "Invalid number of arguments for the function <functionName>."
+    ],
+    "subClass" : {
+      "WITHOUT_SUGGESTION" : {
+        "message" : [
+          "Please, refer to 'https://spark.apache.org/docs/latest/sql-ref-functions.html' for a fix."
+        ]
+      },
+      "WITH_SUGGESTION" : {
+        "message" : [
+          "Consider to change the number of arguments because the function requires <expectedNum> parameters but the actual number is <actualNum>."
+        ]
+      }
+    }
   },
   "_LEGACY_ERROR_TEMP_0001" : {
     "message" : [
@@ -2016,11 +2043,6 @@
   "_LEGACY_ERROR_TEMP_1041" : {
     "message" : [
       "Undefined function <name>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1043" : {
-    "message" : [
-      "Invalid arguments for function <name>."
     ]
   },
   "_LEGACY_ERROR_TEMP_1045" : {
@@ -2873,11 +2895,6 @@
   "_LEGACY_ERROR_TEMP_1232" : {
     "message" : [
       "Partition spec is invalid. The spec (<specKeys>) must match the partition spec (<partitionColumnNames>) defined in table '<tableName>'."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1235" : {
-    "message" : [
-      "Column <name> in table <tableIdent> is of type <dataType>, and Spark does not support statistics collection on this column type."
     ]
   },
   "_LEGACY_ERROR_TEMP_1236" : {
