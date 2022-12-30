@@ -79,7 +79,7 @@ class ExamplePointUDT(UserDefinedType):
     """
 
     @classmethod
-    def sqlType(self):
+    def sqlType(cls):
         return ArrayType(DoubleType(), False)
 
     @classmethod
@@ -124,7 +124,7 @@ class PythonOnlyUDT(UserDefinedType):
     """
 
     @classmethod
-    def sqlType(self):
+    def sqlType(cls):
         return ArrayType(DoubleType(), False)
 
     @classmethod
@@ -154,13 +154,13 @@ class PythonOnlyPoint(ExamplePoint):
     __UDT__ = PythonOnlyUDT()  # type: ignore
 
 
-class MyObject(object):
+class MyObject:
     def __init__(self, key, value):
         self.key = key
         self.value = value
 
 
-class SQLTestUtils(object):
+class SQLTestUtils:
     """
     This util assumes the instance of this to have 'spark' attribute, having a spark session.
     It is usually used with 'ReusedSQLTestCase' class but can be used if you feel sure the
@@ -202,7 +202,7 @@ class SQLTestUtils(object):
             yield
         finally:
             for db in databases:
-                self.spark.sql("DROP DATABASE IF EXISTS %s CASCADE" % db)
+                self.spark.sql("DROP DATABASE IF EXISTS %s CASCADE" % db).collect()
             self.spark.catalog.setCurrentDatabase("default")
 
     @contextmanager
@@ -217,7 +217,7 @@ class SQLTestUtils(object):
             yield
         finally:
             for t in tables:
-                self.spark.sql("DROP TABLE IF EXISTS %s" % t)
+                self.spark.sql("DROP TABLE IF EXISTS %s" % t).collect()
 
     @contextmanager
     def tempView(self, *views):
@@ -245,7 +245,7 @@ class SQLTestUtils(object):
             yield
         finally:
             for f in functions:
-                self.spark.sql("DROP FUNCTION IF EXISTS %s" % f)
+                self.spark.sql("DROP FUNCTION IF EXISTS %s" % f).collect()
 
     @staticmethod
     def assert_close(a, b):

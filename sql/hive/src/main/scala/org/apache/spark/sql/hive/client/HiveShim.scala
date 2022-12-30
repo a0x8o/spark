@@ -620,7 +620,12 @@ private[client] class Shim_v0_12 extends Shim with Logging {
       tableName: String,
       throwException: Boolean): Table = {
     recordHiveCall()
-    hive.getTable(dbName, tableName, throwException)
+    val table = hive.getTable(dbName, tableName, throwException)
+    if (table != null) {
+      table.getTTable.setTableName(tableName)
+      table.getTTable.setDbName(dbName)
+    }
+    table
   }
 
   override def getTablesByPattern(hive: Hive, dbName: String, pattern: String): Seq[String] = {
@@ -832,6 +837,7 @@ private[client] class Shim_v0_13 extends Shim_v0_12 {
     }
   }
 
+  @scala.annotation.tailrec
   private def isCausedBy(e: Throwable, matchMassage: String): Boolean = {
     if (e.getMessage.contains(matchMassage)) {
       true
@@ -977,6 +983,7 @@ private[client] class Shim_v0_13 extends Shim_v0_12 {
     val inSetThreshold = SQLConf.get.metastorePartitionPruningInSetThreshold
 
     object ExtractAttribute {
+      @scala.annotation.tailrec
       def unapply(expr: Expression): Option[Attribute] = {
         expr match {
           case attr: Attribute => Some(attr)
@@ -1143,9 +1150,11 @@ private[client] class Shim_v0_13 extends Shim_v0_12 {
     // Because there is no way to know whether the partition properties has timeZone,
     // client-side filtering cannot be used with TimeZoneAwareExpression.
     def hasTimeZoneAwareExpression(e: Expression): Boolean = {
-      e.collectFirst {
-        case t: TimeZoneAwareExpression => t
-      }.isDefined
+      e.exists {
+        case cast: Cast => cast.needsTimeZone
+        case tz: TimeZoneAwareExpression => !tz.isInstanceOf[Cast]
+        case _ => false
+      }
     }
 
     if (!SQLConf.get.metastorePartitionPruningFastFallback ||

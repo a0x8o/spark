@@ -2,6 +2,7 @@
 
 CREATE VIEW t1(c1, c2) AS VALUES (0, 1), (1, 2);
 CREATE VIEW t2(c1, c2) AS VALUES (0, 2), (0, 3);
+CREATE VIEW t3(c1, c2) AS VALUES (0, ARRAY(0, 1)), (1, ARRAY(2)), (2, ARRAY()), (null, ARRAY(4));
 
 -- lateral join with single column select
 SELECT * FROM t1, LATERAL (SELECT c1);
@@ -44,10 +45,23 @@ SELECT * FROM t1, LATERAL (SELECT c2 FROM t2 WHERE t1.c1 = t2.c1);
 -- lateral join with correlated non-equality predicates
 SELECT * FROM t1, LATERAL (SELECT c2 FROM t2 WHERE t1.c2 < t2.c2);
 
+-- SPARK-36114: lateral join with aggregation and correlated non-equality predicates
+SELECT * FROM t1, LATERAL (SELECT max(c2) AS m FROM t2 WHERE t1.c2 < t2.c2);
+
 -- lateral join can reference preceding FROM clause items
 SELECT * FROM t1 JOIN t2 JOIN LATERAL (SELECT t1.c2 + t2.c2);
 -- expect error: cannot resolve `t2.c1`
 SELECT * FROM t1 JOIN LATERAL (SELECT t1.c1 AS a, t2.c1 AS b) s JOIN t2 ON s.b = t2.c1;
+
+-- SPARK-37716: lateral join with non-deterministic expressions.
+-- non-deterministic lateral subquery with single row relation.
+SELECT x FROM VALUES (0) t(x) JOIN LATERAL (SELECT x + rand(0) AS y);
+SELECT x FROM (SELECT SUM(c1) AS x FROM t1), LATERAL (SELECT x + rand(0) AS y);
+-- expect error: lateral subquery must be deterministic when joining with a multi-row relation.
+SELECT * FROM t1, LATERAL (SELECT c1 + c2 + rand(0) AS c3);
+SELECT * FROM t1, LATERAL (SELECT rand(0) FROM t2);
+-- expect error: lateral join cannot have non-deterministic join condition.
+SELECT * FROM t1 JOIN LATERAL (SELECT * FROM t2) s ON t1.c1 + rand(0) = s.c1;
 
 -- multiple lateral joins
 SELECT * FROM t1,
@@ -157,6 +171,13 @@ WITH cte1 AS (
 )
 SELECT * FROM cte2;
 
+-- SPARK-41441: lateral join with outer references in Generate
+SELECT * FROM t3 JOIN LATERAL (SELECT EXPLODE(c2));
+SELECT * FROM t3 JOIN LATERAL (SELECT EXPLODE_OUTER(c2));
+SELECT * FROM t3 JOIN LATERAL (SELECT EXPLODE(c2)) t(c3) ON c1 = c3;
+SELECT * FROM t3 LEFT JOIN LATERAL (SELECT EXPLODE(c2)) t(c3) ON c1 = c3;
+
 -- clean up
 DROP VIEW t1;
 DROP VIEW t2;
+DROP VIEW t3;

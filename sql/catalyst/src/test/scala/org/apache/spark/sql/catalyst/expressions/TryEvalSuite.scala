@@ -28,7 +28,7 @@ class TryEvalSuite extends SparkFunSuite with ExpressionEvalHelper {
     ).foreach { case (a, b, expected) =>
       val left = Literal(a)
       val right = Literal(b)
-      val input = TryEval(Add(left, right, failOnError = true))
+      val input = Add(left, right, EvalMode.TRY)
       checkEvaluation(input, expected)
     }
   }
@@ -41,32 +41,50 @@ class TryEvalSuite extends SparkFunSuite with ExpressionEvalHelper {
     ).foreach { case (a, b, expected) =>
       val left = Literal(a)
       val right = Literal(b)
-      val input = TryEval(Divide(left, right, failOnError = true))
+      val input = Divide(left, right, EvalMode.TRY)
       checkEvaluation(input, expected)
     }
   }
 
-  test("try_element_at: array") {
-    val left = Literal(Array(1, 2, 3))
+  test("try_subtract") {
     Seq(
-      (0, null),
-      (1, 1),
-      (4, null)
-    ).foreach { case (index, expected) =>
-      val input = TryEval(ElementAt(left, Literal(index), failOnError = false))
+      (1, 1, 0),
+      (Int.MaxValue, -1, null),
+      (Int.MinValue, 1, null)
+    ).foreach { case (a, b, expected) =>
+      val left = Literal(a)
+      val right = Literal(b)
+      val input = Subtract(left, right, EvalMode.TRY)
       checkEvaluation(input, expected)
     }
   }
 
-  test("try_element_at: map") {
-    val left = Literal.create(Map(1 -> 1))
+  test("try_multiply") {
     Seq(
-      (0, null),
-      (1, 1),
-      (4, null)
-    ).foreach { case (index, expected) =>
-      val input = TryEval(ElementAt(left, Literal(index), failOnError = false))
+      (2, 3, 6),
+      (Int.MaxValue, -10, null),
+      (Int.MinValue, 10, null)
+    ).foreach { case (a, b, expected) =>
+      val left = Literal(a)
+      val right = Literal(b)
+      val input = Multiply(left, right, EvalMode.TRY)
       checkEvaluation(input, expected)
+    }
+  }
+
+  test("Throw exceptions from children") {
+    val failingChild = Divide(Literal(1.0), Literal(0.0), EvalMode.ANSI)
+    Seq(
+      Add(failingChild, Literal(1.0), EvalMode.TRY),
+      Add(Literal(1.0), failingChild, EvalMode.TRY),
+      Subtract(failingChild, Literal(1.0), EvalMode.TRY),
+      Subtract(Literal(1.0), failingChild, EvalMode.TRY),
+      Multiply(failingChild, Literal(1.0), EvalMode.TRY),
+      Multiply(Literal(1.0), failingChild, EvalMode.TRY),
+      Divide(failingChild, Literal(1.0), EvalMode.TRY),
+      Divide(Literal(1.0), failingChild, EvalMode.TRY)
+    ).foreach { expr =>
+      checkExceptionInExpression[ArithmeticException](expr, "DIVIDE_BY_ZERO")
     }
   }
 }

@@ -25,11 +25,12 @@ import scala.collection.mutable
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.plans.logical.{EventTimeWatermark, LogicalPlan}
+import org.apache.spark.sql.catalyst.optimizer.InlineCTE
+import org.apache.spark.sql.catalyst.plans.logical.{EventTimeWatermark, LogicalPlan, WithCTE}
 import org.apache.spark.sql.catalyst.util.DateTimeConstants.MILLIS_PER_SECOND
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.connector.catalog.Table
-import org.apache.spark.sql.connector.read.streaming.{MicroBatchStream, ReportsSourceMetrics, SparkDataStream}
+import org.apache.spark.sql.connector.read.streaming.{MicroBatchStream, ReportsSinkMetrics, ReportsSourceMetrics, SparkDataStream}
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.datasources.v2.{MicroBatchScanExec, StreamingDataSourceV2Relation, StreamWriterCommitProgress}
 import org.apache.spark.sql.streaming._
@@ -200,7 +201,16 @@ trait ProgressReporter extends Logging {
     } else {
       sinkCommitProgress.map(_ => 0L)
     }
-    val sinkProgress = SinkProgress(sink.toString, sinkOutput)
+
+    val sinkMetrics = sink match {
+      case withMetrics: ReportsSinkMetrics =>
+        withMetrics.metrics()
+      case _ => Map[String, String]().asJava
+    }
+
+    val sinkProgress = SinkProgress(
+      sink.toString, sinkOutput, sinkMetrics)
+
     val observedMetrics = extractObservedMetrics(hasNewData, lastExecution)
 
     val newProgress = new StreamingQueryProgress(
@@ -284,6 +294,19 @@ trait ProgressReporter extends Logging {
       tuples.groupBy(_._1).mapValues(_.map(_._2).sum).toMap // sum up rows for each source
     }
 
+    def unrollCTE(plan: LogicalPlan): LogicalPlan = {
+      val containsCTE = plan.exists {
+        case _: WithCTE => true
+        case _ => false
+      }
+
+      if (containsCTE) {
+        InlineCTE(alwaysInline = true).apply(plan)
+      } else {
+        plan
+      }
+    }
+
     val onlyDataSourceV2Sources = {
       // Check whether the streaming query's logical plan has only V2 micro-batch data sources
       val allStreamingLeaves = logicalPlan.collect {
@@ -332,11 +355,24 @@ trait ProgressReporter extends Logging {
       val logicalPlanLeafToSource = newData.flatMap { case (source, logicalPlan) =>
         logicalPlan.collectLeaves().map { leaf => leaf -> source }
       }
-      val allLogicalPlanLeaves = lastExecution.logical.collectLeaves() // includes non-streaming
+
+      // SPARK-41198: CTE is inlined in optimization phase, which ends up with having different
+      // number of leaf nodes between (analyzed) logical plan and executed plan. Here we apply
+      // inlining CTE against logical plan manually if there is a CTE node.
+      val finalLogicalPlan = unrollCTE(lastExecution.logical)
+
+      val allLogicalPlanLeaves = finalLogicalPlan.collectLeaves() // includes non-streaming
       val allExecPlanLeaves = lastExecution.executedPlan.collectLeaves()
       if (allLogicalPlanLeaves.size == allExecPlanLeaves.size) {
         val execLeafToSource = allLogicalPlanLeaves.zip(allExecPlanLeaves).flatMap {
-          case (lp, ep) => logicalPlanLeafToSource.get(lp).map { source => ep -> source }
+          case (_, ep: MicroBatchScanExec) =>
+            // SPARK-41199: `logicalPlanLeafToSource` contains OffsetHolder instance for DSv2
+            // streaming source, hence we cannot lookup the actual source from the map.
+            // The physical node for DSv2 streaming source contains the information of the source
+            // by itself, so leverage it.
+            Some(ep -> ep.stream)
+          case (lp, ep) =>
+            logicalPlanLeafToSource.get(lp).map { source => ep -> source }
         }
         val sourceToInputRowsTuples = execLeafToSource.map { case (execLeaf, source) =>
           val numRows = execLeaf.metrics.get("numOutputRows").map(_.value).getOrElse(0L)

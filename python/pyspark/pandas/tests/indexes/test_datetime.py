@@ -64,6 +64,14 @@ class DatetimeIndexTest(PandasOnSparkTestCase, TestUtils):
         self.assertRaises(ValueError, lambda: f(freq="ns"))
         self.assertRaises(ValueError, lambda: f(freq="N"))
 
+    def test_datetime_index(self):
+        with self.assertRaisesRegexp(TypeError, "Index.name must be a hashable type"):
+            ps.DatetimeIndex(["2004-01-01", "2002-12-31", "2000-04-01"], name=[(1, 2)])
+        with self.assertRaisesRegexp(
+            TypeError, "Cannot perform 'all' with this index type: DatetimeIndex"
+        ):
+            ps.DatetimeIndex(["2004-01-01", "2002-12-31", "2000-04-01"]).all()
+
     def test_properties(self):
         for psidx, pidx in self.idx_pairs:
             self.assert_eq(psidx.year, pidx.year)
@@ -120,7 +128,7 @@ class DatetimeIndexTest(PandasOnSparkTestCase, TestUtils):
 
     def test_month_name(self):
         for psidx, pidx in self.idx_pairs:
-            self.assert_eq(psidx.day_name(), pidx.day_name())
+            self.assert_eq(psidx.month_name(), pidx.month_name())
 
     def test_normalize(self):
         for psidx, pidx in self.idx_pairs:
@@ -246,7 +254,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.indexes.test_datetime import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

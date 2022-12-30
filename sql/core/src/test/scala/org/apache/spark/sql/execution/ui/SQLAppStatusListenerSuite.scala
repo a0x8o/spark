@@ -19,8 +19,9 @@ package org.apache.spark.sql.execution.ui
 
 import java.util.Properties
 
-import scala.collection.mutable.ListBuffer
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.json4s.jackson.JsonMethods._
@@ -40,7 +41,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.util.quietly
-import org.apache.spark.sql.connector.{CSVDataWriter, CSVDataWriterFactory, RangeInputPartition, SimpleScanBuilder, SimpleWritableDataSource}
+import org.apache.spark.sql.connector.{CSVDataWriter, CSVDataWriterFactory, RangeInputPartition, SimpleScanBuilder, SimpleWritableDataSource, TestLocalScanTable}
 import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.connector.metric.{CustomMetric, CustomTaskMetric}
 import org.apache.spark.sql.connector.read.{InputPartition, PartitionReader, PartitionReaderFactory}
@@ -111,6 +112,7 @@ class SQLAppStatusListenerSuite extends SharedSparkSession with JsonTestUtils
       taskId = taskId,
       attemptNumber = attemptNumber,
       index = taskId.toInt,
+      partitionId = taskId.toInt,
       // The following fields are not used in tests
       launchTime = 0,
       executorId = "",
@@ -607,8 +609,8 @@ class SQLAppStatusListenerSuite extends SharedSparkSession with JsonTestUtils
 
   test("roundtripping SparkListenerDriverAccumUpdates through JsonProtocol (SPARK-18462)") {
     val event = SparkListenerDriverAccumUpdates(1L, Seq((2L, 3L)))
-    val json = JsonProtocol.sparkEventToJson(event)
-    assertValidDataInJson(json,
+    val json = JsonProtocol.sparkEventToJsonString(event)
+    assertValidDataInJson(parse(json),
       parse("""
         |{
         |  "Event": "org.apache.spark.sql.execution.ui.SparkListenerDriverAccumUpdates",
@@ -626,14 +628,14 @@ class SQLAppStatusListenerSuite extends SharedSparkSession with JsonTestUtils
     }
 
     // Test a case where the numbers in the JSON can only fit in longs:
-    val longJson = parse(
+    val longJson =
       """
         |{
         |  "Event": "org.apache.spark.sql.execution.ui.SparkListenerDriverAccumUpdates",
         |  "executionId": 4294967294,
         |  "accumUpdates": [[4294967294,3]]
         |}
-      """.stripMargin)
+      """.stripMargin
     JsonProtocol.sparkEventFromJson(longJson) match {
       case SparkListenerDriverAccumUpdates(executionId, accums) =>
         assert(executionId == 4294967294L)
@@ -839,7 +841,8 @@ class SQLAppStatusListenerSuite extends SharedSparkSession with JsonTestUtils
     val oldCount = statusStore.executionsList().size
 
     val schema = new StructType().add("i", "int").add("j", "int")
-    val physicalPlan = BatchScanExec(schema.toAttributes, new CustomMetricScanBuilder(), Seq.empty)
+    val physicalPlan = BatchScanExec(schema.toAttributes, new CustomMetricScanBuilder(), Seq.empty,
+      table = new TestLocalScanTable("fake"))
     val dummyQueryExecution = new QueryExecution(spark, LocalRelation()) {
       override lazy val sparkPlan = physicalPlan
       override lazy val executedPlan = physicalPlan
@@ -872,13 +875,49 @@ class SQLAppStatusListenerSuite extends SharedSparkSession with JsonTestUtils
     assert(metrics(innerMetric.id) === expectedInnerValue)
   }
 
+  test("SPARK-39635: Report driver metrics from Datasource v2 scan") {
+    val statusStore = spark.sharedState.statusStore
+    val oldCount = statusStore.executionsList().size
+
+    val schema = new StructType().add("i", "int").add("j", "int")
+    val physicalPlan = BatchScanExec(schema.toAttributes, new CustomDriverMetricScanBuilder(),
+      Seq.empty, table = new TestLocalScanTable("fake"))
+    val dummyQueryExecution = new QueryExecution(spark, LocalRelation()) {
+      override lazy val sparkPlan = physicalPlan
+      override lazy val executedPlan = physicalPlan
+    }
+
+    SQLExecution.withNewExecutionId(dummyQueryExecution) {
+      physicalPlan.execute().collect()
+    }
+
+    // Wait until the new execution is started and being tracked.
+    while (statusStore.executionsCount() < oldCount) {
+      Thread.sleep(100)
+    }
+
+    // Wait for listener to finish computing the metrics for the execution.
+    while (statusStore.executionsList().isEmpty ||
+      statusStore.executionsList().last.metricValues == null) {
+      Thread.sleep(100)
+    }
+
+    val execId = statusStore.executionsList().last.executionId
+    val metrics = statusStore.executionMetrics(execId)
+    val expectedMetric = physicalPlan.metrics("custom_driver_metric_partition_count")
+    val expectedValue = "2"
+    assert(metrics.contains(expectedMetric.id))
+    assert(metrics(expectedMetric.id) === expectedValue)
+  }
+
   test("SPARK-36030: Report metrics from Datasource v2 write") {
     withTempDir { dir =>
       val statusStore = spark.sharedState.statusStore
       val oldCount = statusStore.executionsList().size
 
       val cls = classOf[CustomMetricsDataSource].getName
-      spark.range(10).select('id as 'i, -'id as 'j).write.format(cls)
+      spark.range(10).select($"id" as Symbol("i"), -$"id" as Symbol("j"))
+        .write.format(cls)
         .option("path", dir.getCanonicalPath).mode("append").save()
 
       // Wait until the new execution is started and being tracked.
@@ -899,6 +938,72 @@ class SQLAppStatusListenerSuite extends SharedSparkSession with JsonTestUtils
       assert(customMetric.isDefined)
       assert(innerMetric.isDefined)
     }
+  }
+
+  test("SPARK-37578: Update output metrics from Datasource v2") {
+    withTempDir { dir =>
+      val statusStore = spark.sharedState.statusStore
+      val oldCount = statusStore.executionsCount()
+
+      val bytesWritten = new ArrayBuffer[Long]()
+      val recordsWritten = new ArrayBuffer[Long]()
+
+      val bytesWrittenListener = new SparkListener() {
+        override def onTaskEnd(taskEnd: SparkListenerTaskEnd): Unit = {
+          bytesWritten += taskEnd.taskMetrics.outputMetrics.bytesWritten
+          recordsWritten += taskEnd.taskMetrics.outputMetrics.recordsWritten
+        }
+      }
+      spark.sparkContext.addSparkListener(bytesWrittenListener)
+
+      try {
+        val cls = classOf[CustomMetricsDataSource].getName
+        spark.range(0, 10, 1, 2).select($"id" as Symbol("i"), -$"id" as Symbol("j"))
+          .write.format(cls)
+          .option("path", dir.getCanonicalPath).mode("append").save()
+
+        // Wait until the new execution is started and being tracked.
+        eventually(timeout(10.seconds), interval(10.milliseconds)) {
+          assert(statusStore.executionsCount() > oldCount)
+        }
+
+        // Wait for listener to finish computing the metrics for the execution.
+        eventually(timeout(10.seconds), interval(10.milliseconds)) {
+          assert(statusStore.executionsList().nonEmpty &&
+            statusStore.executionsList().last.metricValues != null)
+        }
+
+        spark.sparkContext.listenerBus.waitUntilEmpty()
+        assert(bytesWritten.sum == 246)
+        assert(recordsWritten.sum == 20)
+      } finally {
+        spark.sparkContext.removeSparkListener(bytesWrittenListener)
+      }
+    }
+  }
+
+  test("SPARK-40834: Use SparkListenerSQLExecutionEnd to track final SQL status in UI") {
+    var received = false
+    spark.sparkContext.addSparkListener(new SparkListener {
+      override def onOtherEvent(event: SparkListenerEvent): Unit = {
+        event match {
+          case SparkListenerSQLExecutionEnd(_, _, Some(errorMessage)) =>
+            val error = new ObjectMapper().readTree(errorMessage)
+            assert(error.get("errorClass").toPrettyString === "\"java.lang.Exception\"")
+            assert(error.path("messageParameters").get("message").toPrettyString === "\"test\"")
+            received = true
+          case _ =>
+        }
+      }
+    })
+
+    intercept[Exception] {
+      SQLExecution.withNewExecutionId(spark.range(1).queryExecution) {
+        throw new Exception("test")
+      }
+    }
+    spark.sparkContext.listenerBus.waitUntilEmpty(10000)
+    assert(received)
   }
 }
 
@@ -993,6 +1098,35 @@ class SimpleCustomMetric extends CustomMetric {
   }
 }
 
+class SimpleCustomDriverMetric extends CustomMetric {
+  override def name(): String = "custom_driver_metric_partition_count"
+  override def description(): String = "Simple custom driver metrics - partition count"
+  override def aggregateTaskMetrics(taskMetrics: Array[Long]): String = {
+    taskMetrics.sum.toString
+  }
+}
+
+class SimpleCustomDriverTaskMetric(value : Long) extends CustomTaskMetric {
+  override def name(): String = "custom_driver_metric_partition_count"
+  override def value(): Long = value
+}
+
+class BytesWrittenCustomMetric extends CustomMetric {
+  override def name(): String = "bytesWritten"
+  override def description(): String = "bytesWritten metric"
+  override def aggregateTaskMetrics(taskMetrics: Array[Long]): String = {
+    s"bytesWritten: ${taskMetrics.mkString(", ")}"
+  }
+}
+
+class RecordsWrittenCustomMetric extends CustomMetric {
+  override def name(): String = "recordsWritten"
+  override def description(): String = "recordsWritten metric"
+  override def aggregateTaskMetrics(taskMetrics: Array[Long]): String = {
+    s"recordsWritten: ${taskMetrics.mkString(", ")}"
+  }
+}
+
 // The followings are for custom metrics of V2 data source.
 object CustomMetricReaderFactory extends PartitionReaderFactory {
   override def createReader(partition: InputPartition): PartitionReader[InternalRow] = {
@@ -1036,6 +1170,28 @@ class CustomMetricScanBuilder extends SimpleScanBuilder {
   override def createReaderFactory(): PartitionReaderFactory = CustomMetricReaderFactory
 }
 
+class CustomDriverMetricScanBuilder extends SimpleScanBuilder {
+
+  var partitionCount: Long = 0L
+
+  override def planInputPartitions(): Array[InputPartition] = {
+    val partitions: Array[InputPartition] = Array(RangeInputPartition(0, 5),
+      RangeInputPartition(5, 10))
+    partitionCount = partitions.length
+    partitions
+  }
+
+  override def createReaderFactory(): PartitionReaderFactory = CustomMetricReaderFactory
+
+  override def supportedCustomMetrics(): Array[CustomMetric] = {
+    Array(new SimpleCustomDriverMetric)
+  }
+
+  override def reportDriverMetrics(): Array[CustomTaskMetric] = {
+    Array(new SimpleCustomDriverTaskMetric(partitionCount))
+  }
+}
+
 class CustomMetricsCSVDataWriter(fs: FileSystem, file: Path) extends CSVDataWriter(fs, file) {
   override def currentMetricsValues(): Array[CustomTaskMetric] = {
     val metric = new CustomTaskMetric {
@@ -1046,7 +1202,15 @@ class CustomMetricsCSVDataWriter(fs: FileSystem, file: Path) extends CSVDataWrit
       override def name(): String = "inner_metric"
       override def value(): Long = 54321;
     }
-    Array(metric, innerMetric)
+    val bytesWrittenMetric = new CustomTaskMetric {
+      override def name(): String = "bytesWritten"
+      override def value(): Long = 123;
+    }
+    val recordsWrittenMetric = new CustomTaskMetric {
+      override def name(): String = "recordsWritten"
+      override def value(): Long = 10;
+    }
+    Array(metric, innerMetric, bytesWrittenMetric, recordsWrittenMetric)
   }
 }
 
@@ -1088,7 +1252,8 @@ class CustomMetricsDataSource extends SimpleWritableDataSource {
         }
 
         override def supportedCustomMetrics(): Array[CustomMetric] = {
-          Array(new SimpleCustomMetric, new Outer.InnerCustomMetric)
+          Array(new SimpleCustomMetric, new Outer.InnerCustomMetric,
+            new BytesWrittenCustomMetric, new RecordsWrittenCustomMetric)
         }
       }
     }

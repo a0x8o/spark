@@ -35,6 +35,8 @@ import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.deploy.worker.WorkerWatcher
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
+import org.apache.spark.network.netty.SparkTransportConf
+import org.apache.spark.network.util.NettyUtils
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.resource.ResourceProfile._
@@ -42,7 +44,6 @@ import org.apache.spark.resource.ResourceUtils._
 import org.apache.spark.rpc._
 import org.apache.spark.scheduler.{ExecutorLossMessage, ExecutorLossReason, TaskDescription}
 import org.apache.spark.scheduler.cluster.CoarseGrainedClusterMessages._
-import org.apache.spark.serializer.SerializerInstance
 import org.apache.spark.util.{ChildFirstURLClassLoader, MutableURLClassLoader, SignalUtils, ThreadUtils, Utils}
 
 private[spark] class CoarseGrainedExecutorBackend(
@@ -55,7 +56,7 @@ private[spark] class CoarseGrainedExecutorBackend(
     env: SparkEnv,
     resourcesFileOpt: Option[String],
     resourceProfile: ResourceProfile)
-  extends IsolatedRpcEndpoint with ExecutorBackend with Logging {
+  extends IsolatedThreadSafeRpcEndpoint with ExecutorBackend with Logging {
 
   import CoarseGrainedExecutorBackend._
 
@@ -64,10 +65,6 @@ private[spark] class CoarseGrainedExecutorBackend(
   private[spark] val stopping = new AtomicBoolean(false)
   var executor: Executor = null
   @volatile var driver: Option[RpcEndpointRef] = None
-
-  // If this CoarseGrainedExecutorBackend is changed to support multiple threads, then this may need
-  // to be changed so that we don't share the serializer instance across threads
-  private[this] val ser: SerializerInstance = env.closureSerializer.newInstance()
 
   private var _resources = Map.empty[String, ResourceInformation]
 
@@ -90,7 +87,8 @@ private[spark] class CoarseGrainedExecutorBackend(
 
     logInfo("Connecting to driver: " + driverUrl)
     try {
-      if (PlatformDependent.directBufferPreferred() &&
+      val shuffleClientTransportConf = SparkTransportConf.fromSparkConf(env.conf, "shuffle")
+      if (NettyUtils.preferDirectBufs(shuffleClientTransportConf) &&
           PlatformDependent.maxDirectMemory() < env.conf.get(MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM)) {
         throw new SparkException(s"Netty direct memory should at least be bigger than " +
           s"'${MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM.key}', but got " +
@@ -106,6 +104,7 @@ private[spark] class CoarseGrainedExecutorBackend(
     rpcEnv.asyncSetupEndpointRefByURI(driverUrl).flatMap { ref =>
       // This is a very fast action so we can use "ThreadUtils.sameThread"
       driver = Some(ref)
+      env.executorBackend = Option(this)
       ref.ask[Boolean](RegisterExecutor(executorId, self, hostname, cores, extractLogUrls,
         extractAttributes, _resources, resourceProfile.id))
     }(ThreadUtils.sameThread).onComplete {
@@ -160,6 +159,11 @@ private[spark] class CoarseGrainedExecutorBackend(
     val prefix = "SPARK_EXECUTOR_ATTRIBUTE_"
     sys.env.filterKeys(_.startsWith(prefix))
       .map(e => (e._1.substring(prefix.length).toUpperCase(Locale.ROOT), e._2)).toMap
+  }
+
+  def notifyDriverAboutPushCompletion(shuffleId: Int, shuffleMergeId: Int, mapIndex: Int): Unit = {
+    val msg = ShufflePushCompletion(shuffleId, shuffleMergeId, mapIndex)
+    driver.foreach(_.send(msg))
   }
 
   override def receive: PartialFunction[Any, Unit] = {

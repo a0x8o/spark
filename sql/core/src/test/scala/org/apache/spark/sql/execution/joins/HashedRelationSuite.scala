@@ -24,12 +24,14 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
 import org.apache.spark.SparkConf
+import org.apache.spark.SparkException
 import org.apache.spark.internal.config._
 import org.apache.spark.internal.config.Kryo._
 import org.apache.spark.memory.{TaskMemoryManager, UnifiedMemoryManager}
 import org.apache.spark.serializer.KryoSerializer
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.map.BytesToBytesMap
@@ -91,6 +93,9 @@ class HashedRelationSuite extends SharedSparkSession {
     assert(hashed2.get(unsafeData(1)).toArray === Array(unsafeData(1)))
     assert(hashed2.get(toUnsafe(InternalRow(10))) === null)
     assert(hashed2.get(unsafeData(2)).toArray === data2)
+
+    // SPARK-38542: UnsafeHashedRelation should serialize numKeys out
+    assert(hashed2.keys().map(_.copy()).forall(_.numFields == 1))
 
     val os2 = new ByteArrayOutputStream()
     val out2 = new ObjectOutputStream(os2)
@@ -530,7 +535,7 @@ class HashedRelationSuite extends SharedSparkSession {
       buffer.append(keyIterator.next().getLong(0))
     }
     // attempt an illegal next() call
-    val caught = intercept[NoSuchElementException] {
+    val caught = intercept[SparkException] {
       keyIterator.next()
     }
     assert(caught.getLocalizedMessage === "End of the iterator")
@@ -610,20 +615,25 @@ class HashedRelationSuite extends SharedSparkSession {
     val keys = Seq(BoundReference(0, ByteType, false),
       BoundReference(1, IntegerType, false),
       BoundReference(2, ShortType, false))
-    val packed = HashJoin.rewriteKeyExpr(keys)
-    val unsafeProj = UnsafeProjection.create(packed)
-    val packedKeys = unsafeProj(row)
+    // Rewrite and exacting key expressions should not cause exception when ANSI mode is on.
+    Seq("false", "true").foreach { ansiEnabled =>
+      withSQLConf(SQLConf.ANSI_ENABLED.key -> ansiEnabled) {
+        val packed = HashJoin.rewriteKeyExpr(keys)
+        val unsafeProj = UnsafeProjection.create(packed)
+        val packedKeys = unsafeProj(row)
 
-    Seq((0, ByteType), (1, IntegerType), (2, ShortType)).foreach { case (i, dt) =>
-      val key = HashJoin.extractKeyExprAt(keys, i)
-      val proj = UnsafeProjection.create(key)
-      assert(proj(packedKeys).get(0, dt) == -i - 1)
+        Seq((0, ByteType), (1, IntegerType), (2, ShortType)).foreach { case (i, dt) =>
+          val key = HashJoin.extractKeyExprAt(keys, i)
+          val proj = UnsafeProjection.create(key)
+          assert(proj(packedKeys).get(0, dt) == -i - 1)
+        }
+      }
     }
   }
 
   test("EmptyHashedRelation override methods behavior test") {
     val buildKey = Seq(BoundReference(0, LongType, false))
-    val hashed = HashedRelation(Seq.empty[InternalRow].toIterator, buildKey, 1, mm)
+    val hashed = HashedRelation(Seq.empty[InternalRow].iterator, buildKey, 1, mm)
     assert(hashed == EmptyHashedRelation)
 
     val key = InternalRow(1L)
@@ -712,6 +722,31 @@ class HashedRelationSuite extends SharedSparkSession {
         // should have same value and order as returned from getWithKeyIndex()
         val actualValues = row.map(_._2.getInt(1))
         assert(actualValues === expectedValues)
+    }
+  }
+
+  test("LongToUnsafeRowMap support ignoresDuplicatedKey") {
+    val taskMemoryManager = new TaskMemoryManager(
+      new UnifiedMemoryManager(
+        new SparkConf().set(MEMORY_OFFHEAP_ENABLED.key, "false"),
+        Long.MaxValue,
+        Long.MaxValue / 2,
+        1),
+      0)
+    val unsafeProj = UnsafeProjection.create(Seq(BoundReference(0, LongType, false)))
+    val keys = Seq(1L, 1L, 1L)
+    Seq(true, false).foreach { ignoresDuplicatedKey =>
+      val map = new LongToUnsafeRowMap(taskMemoryManager, 1, ignoresDuplicatedKey)
+      keys.foreach { k =>
+        map.append(k, unsafeProj(InternalRow(k)))
+      }
+      map.optimize()
+      val res = new UnsafeRow(1)
+      val it = map.get(1L, res)
+      assert(it.hasNext)
+      assert(it.next.getLong(0) == 1)
+      assert(it.hasNext != ignoresDuplicatedKey)
+      map.free()
     }
   }
 }

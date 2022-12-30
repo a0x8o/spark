@@ -26,7 +26,7 @@ from pyspark.resource.requests import (
 )
 
 
-class ResourceProfile(object):
+class ResourceProfile:
 
     """
     Resource profile to associate with an RDD. A :class:`pyspark.resource.ResourceProfile`
@@ -39,6 +39,44 @@ class ResourceProfile(object):
     Notes
     -----
     This API is evolving.
+
+    Examples
+    --------
+    Create Executor resource requests.
+
+    >>> executor_requests = (
+    ...     ExecutorResourceRequests()
+    ...     .cores(2)
+    ...     .memory("6g")
+    ...     .memoryOverhead("1g")
+    ...     .pysparkMemory("2g")
+    ...     .offheapMemory("3g")
+    ...     .resource("gpu", 2, "testGpus", "nvidia.com")
+    ... )
+
+    Create task resource requasts.
+
+    >>> task_requests = TaskResourceRequests().cpus(2).resource("gpu", 2)
+
+    Create a resource profile.
+
+    >>> builder = ResourceProfileBuilder()
+    >>> resource_profile = builder.require(executor_requests).require(task_requests).build
+
+    Create an RDD with the resource profile.
+
+    >>> rdd = sc.parallelize(range(10)).withResources(resource_profile)
+    >>> rdd.getResourceProfile()
+    <pyspark.resource.profile.ResourceProfile object ...>
+    >>> rdd.getResourceProfile().taskResources
+    {'cpus': <...TaskResourceRequest...>, 'gpu': <...TaskResourceRequest...>}
+    >>> rdd.getResourceProfile().executorResources
+    {'gpu': <...ExecutorResourceRequest...>,
+     'cores': <...ExecutorResourceRequest...>,
+     'offHeap': <...ExecutorResourceRequest...>,
+     'memoryOverhead': <...ExecutorResourceRequest...>,
+     'pyspark.memory': <...ExecutorResourceRequest...>,
+     'memory': <...ExecutorResourceRequest...>}
     """
 
     @overload
@@ -69,6 +107,13 @@ class ResourceProfile(object):
 
     @property
     def id(self) -> int:
+        """
+        Returns
+        -------
+        int
+            A unique id of this :class:`ResourceProfile`
+        """
+
         if self._java_resource_profile is not None:
             return self._java_resource_profile.id()
         else:
@@ -79,6 +124,13 @@ class ResourceProfile(object):
 
     @property
     def taskResources(self) -> Dict[str, TaskResourceRequest]:
+        """
+        Returns
+        -------
+        dict
+            a dictionary of resources to :class:`TaskResourceRequest`
+        """
+
         if self._java_resource_profile is not None:
             taskRes = self._java_resource_profile.taskResourcesJMap()
             result = {}
@@ -90,6 +142,12 @@ class ResourceProfile(object):
 
     @property
     def executorResources(self) -> Dict[str, ExecutorResourceRequest]:
+        """
+        Returns
+        -------
+        dict
+            a dictionary of resources to :class:`ExecutorResourceRequest`
+        """
         if self._java_resource_profile is not None:
             execRes = self._java_resource_profile.executorResourcesJMap()
             result = {}
@@ -102,7 +160,7 @@ class ResourceProfile(object):
             return self._executor_resource_requests
 
 
-class ResourceProfileBuilder(object):
+class ResourceProfileBuilder:
 
     """
     Resource profile Builder to build a resource profile to associate with an RDD.
@@ -111,6 +169,10 @@ class ResourceProfileBuilder(object):
     resource requirements between stages.
 
     .. versionadded:: 3.1.0
+
+    See Also
+    --------
+    :class:`pyspark.resource.ResourceProfile`
 
     Notes
     -----
@@ -121,7 +183,7 @@ class ResourceProfileBuilder(object):
         from pyspark.context import SparkContext
 
         # TODO: ignore[attr-defined] will be removed, once SparkContext is inlined
-        _jvm = SparkContext._jvm  # type: ignore[attr-defined]
+        _jvm = SparkContext._jvm
         if _jvm is not None:
             self._jvm = _jvm
             self._java_resource_profile_builder = (
@@ -130,48 +192,51 @@ class ResourceProfileBuilder(object):
         else:
             self._jvm = None
             self._java_resource_profile_builder = None
-            self._executor_resource_requests: Optional[Dict[str, ExecutorResourceRequest]] = {}
-            self._task_resource_requests: Optional[Dict[str, TaskResourceRequest]] = {}
+            self._executor_resource_requests: Dict[str, ExecutorResourceRequest] = {}
+            self._task_resource_requests: Dict[str, TaskResourceRequest] = {}
 
     def require(
-        self, resourceRequest: Union[ExecutorResourceRequest, TaskResourceRequests]
+        self, resourceRequest: Union[ExecutorResourceRequests, TaskResourceRequests]
     ) -> "ResourceProfileBuilder":
+        """
+        Add executor resource requests
+
+        Parameters
+        ----------
+        resourceRequest : :class:`ExecutorResourceRequests` or :class:`TaskResourceRequests`
+            The detailed executor resource requests, see :class:`ExecutorResourceRequests`
+
+        Returns
+        -------
+        dict
+            a dictionary of resources to :class:`ExecutorResourceRequest`
+        """
+
         if isinstance(resourceRequest, TaskResourceRequests):
             if self._java_resource_profile_builder is not None:
-                if (
-                    resourceRequest._java_task_resource_requests is not None
-                ):  # type: ignore[attr-defined]
+                if resourceRequest._java_task_resource_requests is not None:
                     self._java_resource_profile_builder.require(
                         resourceRequest._java_task_resource_requests
-                    )  # type: ignore[attr-defined]
+                    )
                 else:
                     taskReqs = TaskResourceRequests(self._jvm, resourceRequest.requests)
                     self._java_resource_profile_builder.require(
                         taskReqs._java_task_resource_requests
-                    )  # type: ignore[attr-defined]
+                    )
             else:
-                self._task_resource_requests.update(  # type: ignore[union-attr]
-                    resourceRequest.requests
-                )
+                self._task_resource_requests.update(resourceRequest.requests)
         else:
             if self._java_resource_profile_builder is not None:
-                if (
-                    resourceRequest._java_executor_resource_requests is not None  # type: ignore[attr-defined]
-                ):
-                    self._java_resource_profile_builder.require(
-                        resourceRequest._java_executor_resource_requests  # type: ignore[attr-defined]
-                    )
+                r = resourceRequest._java_executor_resource_requests
+                if r is not None:
+                    self._java_resource_profile_builder.require(r)
                 else:
-                    execReqs = ExecutorResourceRequests(
-                        self._jvm, resourceRequest.requests  # type: ignore[attr-defined]
-                    )
+                    execReqs = ExecutorResourceRequests(self._jvm, resourceRequest.requests)
                     self._java_resource_profile_builder.require(
-                        execReqs._java_executor_resource_requests  # type: ignore[attr-defined]
+                        execReqs._java_executor_resource_requests
                     )
             else:
-                self._executor_resource_requests.update(  # type: ignore[union-attr]
-                    resourceRequest.requests  # type: ignore[attr-defined]
-                )
+                self._executor_resource_requests.update(resourceRequest.requests)
         return self
 
     def clearExecutorResourceRequests(self) -> None:
@@ -187,7 +252,13 @@ class ResourceProfileBuilder(object):
             self._task_resource_requests = {}
 
     @property
-    def taskResources(self) -> Optional[Dict[str, TaskResourceRequest]]:
+    def taskResources(self) -> Dict[str, TaskResourceRequest]:
+        """
+        Returns
+        -------
+        dict
+            a dictionary of resources to :class:`TaskResourceRequest`
+        """
         if self._java_resource_profile_builder is not None:
             taskRes = self._java_resource_profile_builder.taskResourcesJMap()
             result = {}
@@ -198,7 +269,13 @@ class ResourceProfileBuilder(object):
             return self._task_resource_requests
 
     @property
-    def executorResources(self) -> Optional[Dict[str, ExecutorResourceRequest]]:
+    def executorResources(self) -> Dict[str, ExecutorResourceRequest]:
+        """
+        Returns
+        -------
+        dict
+            a dictionary of resources to :class:`ExecutorResourceRequest`
+        """
         if self._java_resource_profile_builder is not None:
             result = {}
             execRes = self._java_resource_profile_builder.executorResourcesJMap()
@@ -219,3 +296,22 @@ class ResourceProfileBuilder(object):
             return ResourceProfile(
                 _exec_req=self._executor_resource_requests, _task_req=self._task_resource_requests
             )
+
+
+def _test() -> None:
+    import doctest
+    import sys
+    from pyspark import SparkContext
+
+    globs = globals().copy()
+    globs["sc"] = SparkContext("local[4]", "profile tests")
+    (failure_count, test_count) = doctest.testmod(
+        globs=globs, optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE
+    )
+    globs["sc"].stop()
+    if failure_count:
+        sys.exit(-1)
+
+
+if __name__ == "__main__":
+    _test()

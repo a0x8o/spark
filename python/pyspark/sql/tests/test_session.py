@@ -81,6 +81,8 @@ class SparkSessionTests3(unittest.TestCase):
             activeSession = SparkSession.getActiveSession()
             df = activeSession.createDataFrame([(1, "Alice")], ["age", "name"])
             self.assertEqual(df.collect(), [Row(age=1, name="Alice")])
+            with self.assertRaises(ValueError):
+                activeSession.createDataFrame(activeSession._sc.parallelize([[], []]))
         finally:
             spark.stop()
 
@@ -224,28 +226,26 @@ class SparkSessionTests5(unittest.TestCase):
     def test_sqlcontext_with_stopped_sparksession(self):
         # SPARK-30856: test that SQLContext.getOrCreate() returns a usable instance after
         # the SparkSession is restarted.
-        sql_context = self.spark._wrapped
+        sql_context = SQLContext.getOrCreate(self.spark.sparkContext)
         self.spark.stop()
-        sc = SparkContext("local[4]", self.sc.appName)
-        spark = SparkSession(sc)  # Instantiate the underlying SQLContext
-        new_sql_context = spark._wrapped
+        spark = SparkSession.builder.master("local[4]").appName(self.sc.appName).getOrCreate()
+        new_sql_context = SQLContext.getOrCreate(spark.sparkContext)
 
         self.assertIsNot(new_sql_context, sql_context)
-        self.assertIs(SQLContext.getOrCreate(sc).sparkSession, spark)
+        self.assertIs(SQLContext.getOrCreate(spark.sparkContext).sparkSession, spark)
         try:
             df = spark.createDataFrame([(1, 2)], ["c", "c"])
             df.collect()
         finally:
             spark.stop()
             self.assertIsNone(SQLContext._instantiatedContext)
-            sc.stop()
 
     def test_sqlcontext_with_stopped_sparkcontext(self):
         # SPARK-30856: test initialization via SparkSession when only the SparkContext is stopped
         self.sc.stop()
-        self.sc = SparkContext("local[4]", self.sc.appName)
-        self.spark = SparkSession(self.sc)
-        self.assertIs(SQLContext.getOrCreate(self.sc).sparkSession, self.spark)
+        spark = SparkSession.builder.master("local[4]").appName(self.sc.appName).getOrCreate()
+        self.sc = spark.sparkContext
+        self.assertIs(SQLContext.getOrCreate(self.sc).sparkSession, spark)
 
     def test_get_sqlcontext_with_stopped_sparkcontext(self):
         # SPARK-30856: test initialization via SQLContext.getOrCreate() when only the SparkContext
@@ -327,6 +327,27 @@ class SparkSessionBuilderTests(unittest.TestCase):
             if sc is not None:
                 sc.stop()
 
+    def test_create_spark_context_with_initial_session_options_bool(self):
+        session = None
+        # Test if `True` is set as "true".
+        try:
+            session = SparkSession.builder.config(
+                "spark.sql.pyspark.jvmStacktrace.enabled", True
+            ).getOrCreate()
+            self.assertEqual(session.conf.get("spark.sql.pyspark.jvmStacktrace.enabled"), "true")
+        finally:
+            if session is not None:
+                session.stop()
+        # Test if `False` is set as "false".
+        try:
+            session = SparkSession.builder.config(
+                "spark.sql.pyspark.jvmStacktrace.enabled", False
+            ).getOrCreate()
+            self.assertEqual(session.conf.get("spark.sql.pyspark.jvmStacktrace.enabled"), "false")
+        finally:
+            if session is not None:
+                session.stop()
+
 
 class SparkExtensionsTest(unittest.TestCase):
     # These tests are separate because it uses 'spark.sql.extensions' which is
@@ -383,7 +404,7 @@ if __name__ == "__main__":
     from pyspark.sql.tests.test_session import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

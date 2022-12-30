@@ -26,7 +26,7 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
-import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, DecimalType, IntegralType, MapType, StructType}
 
 object TableOutputResolver {
   def resolveOutputColumns(
@@ -220,6 +220,32 @@ object TableOutputResolver {
     }
   }
 
+  // For table insertions, capture the overflow errors and show proper message.
+  // Without this method, the overflow errors of castings will show hints for turning off ANSI SQL
+  // mode, which are not helpful since the behavior is controlled by the store assignment policy.
+  def checkCastOverflowInTableInsert(cast: Cast, columnName: String): Expression = {
+    if (canCauseCastOverflow(cast)) {
+      CheckOverflowInTableInsert(cast, columnName)
+    } else {
+      cast
+    }
+  }
+
+  private def containsIntegralOrDecimalType(dt: DataType): Boolean = dt match {
+    case _: IntegralType | _: DecimalType => true
+    case a: ArrayType => containsIntegralOrDecimalType(a.elementType)
+    case m: MapType =>
+      containsIntegralOrDecimalType(m.keyType) || containsIntegralOrDecimalType(m.valueType)
+    case s: StructType =>
+      s.fields.exists(sf => containsIntegralOrDecimalType(sf.dataType))
+    case _ => false
+  }
+
+  private def canCauseCastOverflow(cast: Cast): Boolean = {
+    containsIntegralOrDecimalType(cast.dataType) &&
+      !Cast.canUpCast(cast.child.dataType, cast.dataType)
+  }
+
   private def checkField(
       tableAttr: Attribute,
       queryExpr: NamedExpression,
@@ -235,7 +261,13 @@ object TableOutputResolver {
     } else {
       val casted = storeAssignmentPolicy match {
         case StoreAssignmentPolicy.ANSI =>
-          AnsiCast(queryExpr, tableAttr.dataType, Option(conf.sessionLocalTimeZone))
+          val cast = Cast(queryExpr, tableAttr.dataType, Option(conf.sessionLocalTimeZone),
+            ansiEnabled = true)
+          cast.setTagValue(Cast.BY_TABLE_INSERTION, ())
+          checkCastOverflowInTableInsert(cast, tableAttr.name)
+        case StoreAssignmentPolicy.LEGACY =>
+          Cast(queryExpr, tableAttr.dataType, Option(conf.sessionLocalTimeZone),
+            ansiEnabled = false)
         case _ =>
           Cast(queryExpr, tableAttr.dataType, Option(conf.sessionLocalTimeZone))
       }

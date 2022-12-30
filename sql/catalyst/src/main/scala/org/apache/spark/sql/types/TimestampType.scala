@@ -21,6 +21,7 @@ import scala.math.Ordering
 import scala.reflect.runtime.universe.typeTag
 
 import org.apache.spark.annotation.Stable
+import org.apache.spark.sql.catalyst.types.{PhysicalDataType, PhysicalLongType}
 
 /**
  * The timestamp type represents a time instant in microsecond precision.
@@ -32,7 +33,7 @@ import org.apache.spark.annotation.Stable
  * @since 1.3.0
  */
 @Stable
-class TimestampType private() extends AtomicType {
+class TimestampType private() extends DatetimeType {
   /**
    * Internally, a timestamp is stored as the number of microseconds from
    * the epoch of 1970-01-01T00:00:00.000000Z (UTC+00:00)
@@ -47,6 +48,8 @@ class TimestampType private() extends AtomicType {
    * The default size of a value of the TimestampType is 8 bytes.
    */
   override def defaultSize: Int = 8
+
+  override def physicalDataType: PhysicalDataType = PhysicalLongType
 
   private[spark] override def asNullable: TimestampType = this
 }

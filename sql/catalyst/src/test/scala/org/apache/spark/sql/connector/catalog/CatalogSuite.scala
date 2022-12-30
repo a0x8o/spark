@@ -26,6 +26,7 @@ import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.{NamespaceAlreadyExistsException, NoSuchFunctionException, NoSuchNamespaceException, NoSuchTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
+import org.apache.spark.sql.catalyst.util.quoteIdentifier
 import org.apache.spark.sql.connector.catalog.functions.{BoundFunction, ScalarFunction, UnboundFunction}
 import org.apache.spark.sql.connector.expressions.LogicalExpressions
 import org.apache.spark.sql.internal.SQLConf
@@ -48,7 +49,12 @@ class CatalogSuite extends SparkFunSuite {
 
   private val testNs = Array("`", ".")
   private val testIdent = Identifier.of(testNs, "test_table")
+  private val testIdentQuoted = testIdent.asMultipartIdentifier
+    .map(part => quoteIdentifier(part)).mkString(".")
+
   private val testIdentNew = Identifier.of(testNs, "test_table_new")
+  private val testIdentNewQuoted = testIdentNew.asMultipartIdentifier
+    .map(part => quoteIdentifier(part)).mkString(".")
 
   test("Catalogs can load the catalog") {
     val catalog = newCatalog()
@@ -133,8 +139,7 @@ class CatalogSuite extends SparkFunSuite {
       catalog.createTable(testIdent, schema, Array.empty, emptyProps)
     }
 
-    assert(exc.message.contains(testIdent.quoted))
-    assert(exc.message.contains("already exists"))
+    checkErrorTableAlreadyExists(exc, testIdentQuoted)
 
     assert(catalog.tableExists(testIdent))
   }
@@ -171,8 +176,7 @@ class CatalogSuite extends SparkFunSuite {
       catalog.loadTable(testIdent)
     }
 
-    assert(exc.message.contains(testIdent.quoted))
-    assert(exc.message.contains("not found"))
+    checkErrorTableNotFound(exc, testIdentQuoted)
   }
 
   test("invalidateTable") {
@@ -550,7 +554,7 @@ class CatalogSuite extends SparkFunSuite {
     assert(table.schema == schema)
 
     val updated = catalog.alterTable(testIdent,
-      TableChange.deleteColumn(Array("id")))
+      TableChange.deleteColumn(Array("id"), false))
 
     val expectedSchema = new StructType().add("data", StringType)
     assert(updated.schema == expectedSchema)
@@ -567,7 +571,7 @@ class CatalogSuite extends SparkFunSuite {
     assert(table.schema == tableSchema)
 
     val updated = catalog.alterTable(testIdent,
-      TableChange.deleteColumn(Array("point", "y")))
+      TableChange.deleteColumn(Array("point", "y"), false))
 
     val newPointStruct = new StructType().add("x", DoubleType)
     val expectedSchema = schema.add("point", newPointStruct)
@@ -583,11 +587,15 @@ class CatalogSuite extends SparkFunSuite {
     assert(table.schema == schema)
 
     val exc = intercept[IllegalArgumentException] {
-      catalog.alterTable(testIdent, TableChange.deleteColumn(Array("missing_col")))
+      catalog.alterTable(testIdent, TableChange.deleteColumn(Array("missing_col"), false))
     }
 
     assert(exc.getMessage.contains("missing_col"))
     assert(exc.getMessage.contains("Cannot find"))
+
+    // with if exists it should pass
+    catalog.alterTable(testIdent, TableChange.deleteColumn(Array("missing_col"), true))
+    assert(table.schema == schema)
   }
 
   test("alterTable: delete missing nested column fails") {
@@ -601,11 +609,15 @@ class CatalogSuite extends SparkFunSuite {
     assert(table.schema == tableSchema)
 
     val exc = intercept[IllegalArgumentException] {
-      catalog.alterTable(testIdent, TableChange.deleteColumn(Array("point", "z")))
+      catalog.alterTable(testIdent, TableChange.deleteColumn(Array("point", "z"), false))
     }
 
     assert(exc.getMessage.contains("z"))
     assert(exc.getMessage.contains("Cannot find"))
+
+    // with if exists it should pass
+    catalog.alterTable(testIdent, TableChange.deleteColumn(Array("point", "z"), true))
+    assert(table.schema == tableSchema)
   }
 
   test("alterTable: table does not exist") {
@@ -615,8 +627,7 @@ class CatalogSuite extends SparkFunSuite {
       catalog.alterTable(testIdent, TableChange.setProperty("prop", "val"))
     }
 
-    assert(exc.message.contains(testIdent.quoted))
-    assert(exc.message.contains("not found"))
+    checkErrorTableNotFound(exc, testIdentQuoted)
   }
 
   test("dropTable") {
@@ -672,8 +683,7 @@ class CatalogSuite extends SparkFunSuite {
       catalog.renameTable(testIdent, testIdentNew)
     }
 
-    assert(exc.message.contains(testIdent.quoted))
-    assert(exc.message.contains("not found"))
+    checkErrorTableNotFound(exc, testIdentQuoted)
   }
 
   test("renameTable: fail if new table name already exists") {
@@ -692,8 +702,7 @@ class CatalogSuite extends SparkFunSuite {
       catalog.renameTable(testIdent, testIdentNew)
     }
 
-    assert(exc.message.contains(testIdentNew.quoted))
-    assert(exc.message.contains("already exists"))
+    checkErrorTableAlreadyExists(exc, testIdentNewQuoted)
   }
 
   test("listNamespaces: list namespaces from metadata") {
@@ -820,7 +829,7 @@ class CatalogSuite extends SparkFunSuite {
 
     assert(catalog.namespaceExists(testNs) === false)
 
-    val ret = catalog.dropNamespace(testNs)
+    val ret = catalog.dropNamespace(testNs, cascade = false)
 
     assert(ret === false)
   }
@@ -833,7 +842,7 @@ class CatalogSuite extends SparkFunSuite {
     assert(catalog.namespaceExists(testNs) === true)
     assert(catalog.loadNamespaceMetadata(testNs).asScala === Map("property" -> "value"))
 
-    val ret = catalog.dropNamespace(testNs)
+    val ret = catalog.dropNamespace(testNs, cascade = false)
 
     assert(ret === true)
     assert(catalog.namespaceExists(testNs) === false)
@@ -845,7 +854,7 @@ class CatalogSuite extends SparkFunSuite {
     catalog.createNamespace(testNs, Map("property" -> "value").asJava)
     catalog.createTable(testIdent, schema, Array.empty, emptyProps)
 
-    assert(catalog.dropNamespace(testNs))
+    assert(catalog.dropNamespace(testNs, cascade = true))
 
     assert(!catalog.namespaceExists(testNs))
     intercept[NoSuchNamespaceException](catalog.listTables(testNs))

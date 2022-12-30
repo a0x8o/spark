@@ -17,12 +17,14 @@
 
 package org.apache.spark.sql.execution.datasources.jdbc
 
-import java.sql.{Connection, Driver, JDBCType, PreparedStatement, ResultSet, ResultSetMetaData, SQLException}
+import java.sql.{Connection, JDBCType, PreparedStatement, ResultSet, ResultSetMetaData, SQLException}
 import java.time.{Instant, LocalDate}
 import java.util
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -36,12 +38,11 @@ import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.SpecificInternalRow
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils, GenericArrayData}
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{instantToMicros, localDateToDays, toJavaDate, toJavaTimestamp}
-import org.apache.spark.sql.connector.catalog.TableChange
-import org.apache.spark.sql.connector.catalog.index.TableIndex
+import org.apache.spark.sql.catalyst.util.DateTimeUtils.{instantToMicros, localDateTimeToMicros, localDateToDays, toJavaDate, toJavaTimestamp, toJavaTimestampNoRebase}
+import org.apache.spark.sql.connector.catalog.{Identifier, TableChange}
+import org.apache.spark.sql.connector.catalog.index.{SupportsIndex, TableIndex}
 import org.apache.spark.sql.connector.expressions.NamedReference
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
-import org.apache.spark.sql.execution.datasources.jdbc.connection.ConnectionProvider
 import org.apache.spark.sql.jdbc.{JdbcDialect, JdbcDialects, JdbcType}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.SchemaUtils
@@ -52,24 +53,6 @@ import org.apache.spark.util.NextIterator
  * Util functions for JDBC tables.
  */
 object JdbcUtils extends Logging with SQLConfHelper {
-  /**
-   * Returns a factory for creating connections to the given JDBC URL.
-   *
-   * @param options - JDBC options that contains url, table and other information.
-   * @throws IllegalArgumentException if the driver could not open a JDBC connection.
-   */
-  def createConnectionFactory(options: JDBCOptions): () => Connection = {
-    val driverClass: String = options.driverClass
-    () => {
-      DriverRegistry.register(driverClass)
-      val driver: Driver = DriverRegistry.get(driverClass)
-      val connection =
-        ConnectionProvider.create(driver, options.parameters, options.connectionProviderName)
-      require(connection != null,
-        s"The driver could not open a JDBC connection. Check the URL: ${options.url}")
-      connection
-    }
-  }
 
   /**
    * Returns true if the table already exists in the JDBC database.
@@ -167,6 +150,10 @@ object JdbcUtils extends Logging with SQLConfHelper {
       case StringType => Option(JdbcType("TEXT", java.sql.Types.CLOB))
       case BinaryType => Option(JdbcType("BLOB", java.sql.Types.BLOB))
       case TimestampType => Option(JdbcType("TIMESTAMP", java.sql.Types.TIMESTAMP))
+      // This is a common case of timestamp without time zone. Most of the databases either only
+      // support TIMESTAMP type or use TIMESTAMP as an alias for TIMESTAMP WITHOUT TIME ZONE.
+      // Note that some dialects override this setting, e.g. as SQL Server.
+      case TimestampNTZType => Option(JdbcType("TIMESTAMP", java.sql.Types.TIMESTAMP))
       case DateType => Option(JdbcType("DATE", java.sql.Types.DATE))
       case t: DecimalType => Option(
         JdbcType(s"DECIMAL(${t.precision},${t.scale})", java.sql.Types.DECIMAL))
@@ -190,7 +177,8 @@ object JdbcUtils extends Logging with SQLConfHelper {
       sqlType: Int,
       precision: Int,
       scale: Int,
-      signed: Boolean): DataType = {
+      signed: Boolean,
+      isTimestampNTZ: Boolean): DataType = {
     val answer = sqlType match {
       // scalastyle:off
       case java.sql.Types.ARRAY         => null
@@ -232,6 +220,8 @@ object JdbcUtils extends Logging with SQLConfHelper {
       case java.sql.Types.TIME          => TimestampType
       case java.sql.Types.TIME_WITH_TIMEZONE
                                         => null
+      case java.sql.Types.TIMESTAMP
+        if isTimestampNTZ               => TimestampNTZType
       case java.sql.Types.TIMESTAMP     => TimestampType
       case java.sql.Types.TIMESTAMP_WITH_TIMEZONE
                                         => null
@@ -256,10 +246,12 @@ object JdbcUtils extends Logging with SQLConfHelper {
     val dialect = JdbcDialects.get(options.url)
 
     try {
-      val statement = conn.prepareStatement(dialect.getSchemaQuery(options.tableOrQuery))
+      val statement =
+        conn.prepareStatement(options.prepareQuery + dialect.getSchemaQuery(options.tableOrQuery))
       try {
         statement.setQueryTimeout(options.queryTimeout)
-        Some(getSchema(statement.executeQuery(), dialect))
+        Some(getSchema(statement.executeQuery(), dialect,
+          isTimestampNTZ = options.inferTimestampNTZType))
       } catch {
         case _: SQLException => None
       } finally {
@@ -274,13 +266,15 @@ object JdbcUtils extends Logging with SQLConfHelper {
    * Takes a [[ResultSet]] and returns its Catalyst schema.
    *
    * @param alwaysNullable If true, all the columns are nullable.
+   * @param isTimestampNTZ If true, all timestamp columns are interpreted as TIMESTAMP_NTZ.
    * @return A [[StructType]] giving the Catalyst schema.
    * @throws SQLException if the schema contains an unsupported type.
    */
   def getSchema(
       resultSet: ResultSet,
       dialect: JdbcDialect,
-      alwaysNullable: Boolean = false): StructType = {
+      alwaysNullable: Boolean = false,
+      isTimestampNTZ: Boolean = false): StructType = {
     val rsmd = resultSet.getMetaData
     val ncols = rsmd.getColumnCount
     val fields = new Array[StructField](ncols)
@@ -322,7 +316,7 @@ object JdbcUtils extends Logging with SQLConfHelper {
 
       val columnType =
         dialect.getCatalystType(dataType, typeName, fieldSize, metadata).getOrElse(
-          getCatalystType(dataType, fieldSize, fieldScale, isSigned))
+          getCatalystType(dataType, fieldSize, fieldScale, isSigned, isTimestampNTZ))
       fields(i) = StructField(columnName, columnType, nullable, metadata.build())
       i = i + 1
     }
@@ -488,6 +482,15 @@ object JdbcUtils extends Logging with SQLConfHelper {
           row.update(pos, null)
         }
 
+    case TimestampNTZType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        val t = rs.getTimestamp(pos + 1)
+        if (t != null) {
+          row.setLong(pos, DateTimeUtils.fromJavaTimestampNoRebase(t))
+        } else {
+          row.update(pos, null)
+        }
+
     case BinaryType =>
       (rs: ResultSet, row: InternalRow, pos: Int) =>
         row.update(pos, rs.getBytes(pos + 1))
@@ -599,6 +602,11 @@ object JdbcUtils extends Logging with SQLConfHelper {
           stmt.setTimestamp(pos + 1, row.getAs[java.sql.Timestamp](pos))
       }
 
+    case TimestampNTZType =>
+      (stmt: PreparedStatement, row: Row, pos: Int) =>
+        val micros = localDateTimeToMicros(row.getAs[java.time.LocalDateTime](pos))
+        stmt.setTimestamp(pos + 1, toJavaTimestampNoRebase(micros))
+
     case DateType =>
       if (conf.datetimeJava8ApiEnabled) {
         (stmt: PreparedStatement, row: Row, pos: Int) =>
@@ -649,7 +657,6 @@ object JdbcUtils extends Logging with SQLConfHelper {
    * updated even with error if it doesn't support transaction, as there're dirty outputs.
    */
   def savePartition(
-      getConnection: () => Connection,
       table: String,
       iterator: Iterator[Row],
       rddSchema: StructType,
@@ -665,7 +672,7 @@ object JdbcUtils extends Logging with SQLConfHelper {
 
     val outMetrics = TaskContext.get().taskMetrics().outputMetrics
 
-    val conn = getConnection()
+    val conn = dialect.createConnectionFactory(options)(-1)
     var committed = false
 
     var finalIsolationLevel = Connection.TRANSACTION_NONE
@@ -816,8 +823,7 @@ object JdbcUtils extends Logging with SQLConfHelper {
     val userSchema = CatalystSqlParser.parseTableSchema(createTableColumnTypes)
 
     // checks duplicate columns in the user specified column types.
-    SchemaUtils.checkColumnNameDuplication(
-      userSchema.map(_.name), "in the createTableColumnTypes option value", conf.resolver)
+    SchemaUtils.checkColumnNameDuplication(userSchema.map(_.name), conf.resolver)
 
     // checks if user specified column names exist in the DataFrame schema
     userSchema.fieldNames.foreach { col =>
@@ -842,10 +848,7 @@ object JdbcUtils extends Logging with SQLConfHelper {
     if (null != customSchema && customSchema.nonEmpty) {
       val userSchema = CatalystSqlParser.parseTableSchema(customSchema)
 
-      SchemaUtils.checkSchemaColumnNameDuplication(
-        userSchema,
-        "in the customSchema option value",
-        nameEquality)
+      SchemaUtils.checkSchemaColumnNameDuplication(userSchema, nameEquality)
 
       // This is resolved by names, use the custom filed dataType to replace the default dataType.
       val newSchema = tableSchema.map { col =>
@@ -872,7 +875,6 @@ object JdbcUtils extends Logging with SQLConfHelper {
     val table = options.table
     val dialect = JdbcDialects.get(url)
     val rddSchema = df.schema
-    val getConnection: () => Connection = createConnectionFactory(options)
     val batchSize = options.batchSize
     val isolationLevel = options.isolationLevel
 
@@ -884,8 +886,7 @@ object JdbcUtils extends Logging with SQLConfHelper {
       case _ => df
     }
     repartitionedDF.rdd.foreachPartition { iterator => savePartition(
-      getConnection, table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel,
-      options)
+      table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel, options)
     }
   }
 
@@ -969,52 +970,57 @@ object JdbcUtils extends Logging with SQLConfHelper {
   }
 
   /**
-   * Creates a namespace.
+   * Creates a schema.
    */
-  def createNamespace(
+  def createSchema(
       conn: Connection,
       options: JDBCOptions,
-      namespace: String,
+      schema: String,
       comment: String): Unit = {
-    val dialect = JdbcDialects.get(options.url)
-    executeStatement(conn, options, s"CREATE SCHEMA ${dialect.quoteIdentifier(namespace)}")
-    if (!comment.isEmpty) createNamespaceComment(conn, options, namespace, comment)
-  }
-
-  def createNamespaceComment(
-      conn: Connection,
-      options: JDBCOptions,
-      namespace: String,
-      comment: String): Unit = {
-    val dialect = JdbcDialects.get(options.url)
+    val statement = conn.createStatement
     try {
-      executeStatement(
-        conn, options, dialect.getSchemaCommentQuery(namespace, comment))
-    } catch {
-      case e: Exception =>
-        logWarning("Cannot create JDBC catalog comment. The catalog comment will be ignored.")
+      statement.setQueryTimeout(options.queryTimeout)
+      val dialect = JdbcDialects.get(options.url)
+      dialect.createSchema(statement, schema, comment)
+    } finally {
+      statement.close()
     }
   }
 
-  def removeNamespaceComment(
+  def schemaExists(conn: Connection, options: JDBCOptions, schema: String): Boolean = {
+    val dialect = JdbcDialects.get(options.url)
+    dialect.schemasExists(conn, options, schema)
+  }
+
+  def listSchemas(conn: Connection, options: JDBCOptions): Array[Array[String]] = {
+    val dialect = JdbcDialects.get(options.url)
+    dialect.listSchemas(conn, options)
+  }
+
+  def alterSchemaComment(
       conn: Connection,
       options: JDBCOptions,
-      namespace: String): Unit = {
+      schema: String,
+      comment: String): Unit = {
     val dialect = JdbcDialects.get(options.url)
-    try {
-      executeStatement(conn, options, dialect.removeSchemaCommentQuery(namespace))
-    } catch {
-      case e: Exception =>
-        logWarning("Cannot drop JDBC catalog comment.")
-    }
+    executeStatement(conn, options, dialect.getSchemaCommentQuery(schema, comment))
+  }
+
+  def removeSchemaComment(
+      conn: Connection,
+      options: JDBCOptions,
+      schema: String): Unit = {
+    val dialect = JdbcDialects.get(options.url)
+    executeStatement(conn, options, dialect.removeSchemaCommentQuery(schema))
   }
 
   /**
-   * Drops a namespace from the JDBC database.
+   * Drops a schema from the JDBC database.
    */
-  def dropNamespace(conn: Connection, options: JDBCOptions, namespace: String): Unit = {
+  def dropSchema(
+      conn: Connection, options: JDBCOptions, schema: String, cascade: Boolean): Unit = {
     val dialect = JdbcDialects.get(options.url)
-    executeStatement(conn, options, s"DROP SCHEMA ${dialect.quoteIdentifier(namespace)}")
+    executeStatement(conn, options, dialect.dropSchema(schema, cascade))
   }
 
   /**
@@ -1023,14 +1029,14 @@ object JdbcUtils extends Logging with SQLConfHelper {
   def createIndex(
       conn: Connection,
       indexName: String,
-      tableName: String,
+      tableIdent: Identifier,
       columns: Array[NamedReference],
       columnsProperties: util.Map[NamedReference, util.Map[String, String]],
       properties: util.Map[String, String],
       options: JDBCOptions): Unit = {
     val dialect = JdbcDialects.get(options.url)
     executeStatement(conn, options,
-      dialect.createIndex(indexName, tableName, columns, columnsProperties, properties))
+      dialect.createIndex(indexName, tableIdent, columns, columnsProperties, properties))
   }
 
   /**
@@ -1039,10 +1045,10 @@ object JdbcUtils extends Logging with SQLConfHelper {
   def indexExists(
       conn: Connection,
       indexName: String,
-      tableName: String,
+      tableIdent: Identifier,
       options: JDBCOptions): Boolean = {
     val dialect = JdbcDialects.get(options.url)
-    dialect.indexExists(conn, indexName, tableName, options)
+    dialect.indexExists(conn, indexName, tableIdent, options)
   }
 
   /**
@@ -1051,10 +1057,10 @@ object JdbcUtils extends Logging with SQLConfHelper {
   def dropIndex(
       conn: Connection,
       indexName: String,
-      tableName: String,
+      tableIdent: Identifier,
       options: JDBCOptions): Unit = {
     val dialect = JdbcDialects.get(options.url)
-    executeStatement(conn, options, dialect.dropIndex(indexName, tableName))
+    executeStatement(conn, options, dialect.dropIndex(indexName, tableIdent))
   }
 
   /**
@@ -1062,10 +1068,10 @@ object JdbcUtils extends Logging with SQLConfHelper {
    */
   def listIndexes(
       conn: Connection,
-      tableName: String,
+      tableIdent: Identifier,
       options: JDBCOptions): Array[TableIndex] = {
     val dialect = JdbcDialects.get(options.url)
-    dialect.listIndexes(conn, tableName, options)
+    dialect.listIndexes(conn, tableIdent, options)
   }
 
   private def executeStatement(conn: Connection, options: JDBCOptions, sql: String): Unit = {
@@ -1078,11 +1084,84 @@ object JdbcUtils extends Logging with SQLConfHelper {
     }
   }
 
-  def executeQuery(conn: Connection, options: JDBCOptions, sql: String): ResultSet = {
+  /**
+   * Check if index exists in a table
+   */
+  def checkIfIndexExists(
+      conn: Connection,
+      sql: String,
+      options: JDBCOptions): Boolean = {
     val statement = conn.createStatement
     try {
       statement.setQueryTimeout(options.queryTimeout)
-      statement.executeQuery(sql)
+      val rs = statement.executeQuery(sql)
+      rs.next
+    } catch {
+      case _: Exception =>
+        logWarning("Cannot retrieved index info.")
+        false
+    } finally {
+      statement.close()
+    }
+  }
+
+  /**
+   * Process index properties and return tuple of indexType and list of the other index properties.
+   */
+  def processIndexProperties(
+      properties: util.Map[String, String],
+      dialectName: String): (String, Array[String]) = {
+    var indexType = ""
+    val indexPropertyList: ArrayBuffer[String] = ArrayBuffer[String]()
+    val supportedIndexTypeList = getSupportedIndexTypeList(dialectName)
+
+    if (!properties.isEmpty) {
+      properties.asScala.foreach { case (k, v) =>
+        if (k.equals(SupportsIndex.PROP_TYPE)) {
+          if (containsIndexTypeIgnoreCase(supportedIndexTypeList, v)) {
+            indexType = s"USING $v"
+          } else {
+            throw new UnsupportedOperationException(s"Index Type $v is not supported." +
+              s" The supported Index Types are: ${supportedIndexTypeList.mkString(" AND ")}")
+          }
+        } else {
+          indexPropertyList.append(s"$k = $v")
+        }
+      }
+    }
+    (indexType, indexPropertyList.toArray)
+  }
+
+  def containsIndexTypeIgnoreCase(supportedIndexTypeList: Array[String], value: String): Boolean = {
+    if (supportedIndexTypeList.isEmpty) {
+      throw new UnsupportedOperationException(
+        "Cannot specify 'USING index_type' in 'CREATE INDEX'")
+    }
+    for (indexType <- supportedIndexTypeList) {
+      if (value.equalsIgnoreCase(indexType)) return true
+    }
+    false
+  }
+
+  def getSupportedIndexTypeList(dialectName: String): Array[String] = {
+    dialectName match {
+      case "mysql" => Array("BTREE", "HASH")
+      case "postgresql" => Array("BTREE", "HASH", "BRIN")
+      case _ => Array.empty
+    }
+  }
+
+  def executeQuery(conn: Connection, options: JDBCOptions, sql: String)(
+    f: ResultSet => Unit): Unit = {
+    val statement = conn.createStatement
+    try {
+      statement.setQueryTimeout(options.queryTimeout)
+      val rs = statement.executeQuery(sql)
+      try {
+        f(rs)
+      } finally {
+        rs.close()
+      }
     } finally {
       statement.close()
     }
@@ -1097,7 +1176,8 @@ object JdbcUtils extends Logging with SQLConfHelper {
   }
 
   def withConnection[T](options: JDBCOptions)(f: Connection => T): T = {
-    val conn = createConnectionFactory(options)()
+    val dialect = JdbcDialects.get(options.url)
+    val conn = dialect.createConnectionFactory(options)(-1)
     try {
       f(conn)
     } finally {

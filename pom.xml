@@ -26,10 +26,10 @@
   </parent>
   <groupId>org.apache.spark</groupId>
   <artifactId>spark-parent_2.12</artifactId>
-  <version>3.3.0-SNAPSHOT</version>
+  <version>3.4.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Spark Project Parent POM</name>
-  <url>http://spark.apache.org/</url>
+  <url>https://spark.apache.org/</url>
   <licenses>
     <license>
       <name>Apache 2.0 License</name>
@@ -43,16 +43,10 @@
     <url>scm:git:git@github.com:apache/spark.git</url>
     <tag>HEAD</tag>
   </scm>
-  <developers>
-    <developer>
-      <id>matei</id>
-      <name>Matei Zaharia</name>
-      <email>matei.zaharia@gmail.com</email>
-      <url>https://cs.stanford.edu/people/matei</url>
-      <organization>Apache Software Foundation</organization>
-      <organizationUrl>http://spark.apache.org</organizationUrl>
-    </developer>
-  </developers>
+  <organization>
+    <name>Apache Software Foundation</name>
+    <url>https://www.apache.org</url>
+  </organization>
   <issueManagement>
     <system>JIRA</system>
     <url>https://issues.apache.org/jira/browse/SPARK</url>
@@ -101,11 +95,15 @@
     <module>examples</module>
     <module>repl</module>
     <module>launcher</module>
-    <module>external/kafka-0-10-token-provider</module>
-    <module>external/kafka-0-10</module>
-    <module>external/kafka-0-10-assembly</module>
-    <module>external/kafka-0-10-sql</module>
-    <module>external/avro</module>
+    <module>connector/kafka-0-10-token-provider</module>
+    <module>connector/kafka-0-10</module>
+    <module>connector/kafka-0-10-assembly</module>
+    <module>connector/kafka-0-10-sql</module>
+    <module>connector/avro</module>
+    <module>connector/connect/server</module>
+    <module>connector/connect/common</module>
+    <module>connector/connect/client/jvm</module>
+    <module>connector/protobuf</module>
     <!-- See additional modules enabled by profiles below -->
   </modules>
 
@@ -115,15 +113,21 @@
     <java.version>1.8</java.version>
     <maven.compiler.source>${java.version}</maven.compiler.source>
     <maven.compiler.target>${java.version}</maven.compiler.target>
-    <maven.version>3.6.3</maven.version>
+    <maven.version>3.8.6</maven.version>
     <exec-maven-plugin.version>1.6.0</exec-maven-plugin.version>
     <sbt.project.name>spark</sbt.project.name>
-    <slf4j.version>1.7.30</slf4j.version>
-    <log4j.version>1.2.17</log4j.version>
-    <hadoop.version>3.3.1</hadoop.version>
-    <protobuf.version>2.5.0</protobuf.version>
+    <slf4j.version>2.0.6</slf4j.version>
+    <log4j.version>2.19.0</log4j.version>
+    <!-- make sure to update IsolatedClientLoader whenever this version is changed -->
+    <hadoop.version>3.3.4</hadoop.version>
+    <!-- Protobuf version for building with Hadoop/Yarn dependencies -->
+    <protobuf.hadoopDependency.version>2.5.0</protobuf.hadoopDependency.version>
+    <!-- Actual Protobuf version in Spark modules like Spark Connect, protobuf connector, etc. -->
+    <!-- SPARK-41247: When updating `protobuf.version`, also need to update `protoVersion` in `SparkBuild.scala` -->
+    <protobuf.version>3.21.12</protobuf.version>
+    <protoc-jar-maven-plugin.version>3.11.4</protoc-jar-maven-plugin.version>
     <yarn.version>${hadoop.version}</yarn.version>
-    <zookeeper.version>3.6.2</zookeeper.version>
+    <zookeeper.version>3.6.3</zookeeper.version>
     <curator.version>2.13.0</curator.version>
     <hive.group>org.apache.hive</hive.group>
     <hive.classifier>core</hive.classifier>
@@ -133,44 +137,55 @@
     <!-- Version used for internal directory structure -->
     <hive.version.short>2.3</hive.version.short>
     <!-- note that this should be compatible with Kafka brokers version 0.10 and up -->
-    <kafka.version>2.8.1</kafka.version>
+    <kafka.version>3.3.1</kafka.version>
     <!-- After 10.15.1.3, the minimum required version is JDK9 -->
     <derby.version>10.14.2.0</derby.version>
-    <parquet.version>1.12.2</parquet.version>
-    <orc.version>1.7.1</orc.version>
-    <jetty.version>9.4.43.v20210629</jetty.version>
+    <parquet.version>1.12.3</parquet.version>
+    <orc.version>1.8.1</orc.version>
+    <orc.classifier>shaded-protobuf</orc.classifier>
+    <jetty.version>9.4.49.v20220914</jetty.version>
     <jakartaservlet.version>4.0.3</jakartaservlet.version>
     <chill.version>0.10.0</chill.version>
-    <ivy.version>2.5.0</ivy.version>
+    <ivy.version>2.5.1</ivy.version>
     <oro.version>2.0.8</oro.version>
     <!--
     If you changes codahale.metrics.version, you also need to change
     the link to metrics.dropwizard.io in docs/monitoring.md.
     -->
-    <codahale.metrics.version>4.2.2</codahale.metrics.version>
-    <avro.version>1.11.0</avro.version>
+    <codahale.metrics.version>4.2.13</codahale.metrics.version>
+    <!-- Should be consistent with SparkBuild.scala and docs -->
+    <avro.version>1.11.1</avro.version>
     <aws.kinesis.client.version>1.12.0</aws.kinesis.client.version>
     <!-- Should be consistent with Kinesis client dependency -->
     <aws.java.sdk.version>1.11.655</aws.java.sdk.version>
     <!-- the producer is used in tests -->
     <aws.kinesis.producer.version>0.12.8</aws.kinesis.producer.version>
+    <gcs-connector.version>hadoop3-2.2.7</gcs-connector.version>
     <!--  org.apache.httpcomponents/httpclient-->
-    <commons.httpclient.version>4.5.13</commons.httpclient.version>
+    <commons.httpclient.version>4.5.14</commons.httpclient.version>
     <commons.httpcore.version>4.4.14</commons.httpcore.version>
-    <commons.math3.version>3.4.1</commons.math3.version>
+    <commons.math3.version>3.6.1</commons.math3.version>
     <!-- managed up from 3.2.1 for SPARK-11652 -->
     <commons.collections.version>3.2.2</commons.collections.version>
-    <scala.version>2.12.15</scala.version>
+    <commons.collections4.version>4.4</commons.collections4.version>
+    <scala.version>2.12.17</scala.version>
     <scala.binary.version>2.12</scala.binary.version>
-    <scalatest-maven-plugin.version>2.0.2</scalatest-maven-plugin.version>
-    <scalafmt.parameters>--test</scalafmt.parameters>
+    <scalatest-maven-plugin.version>2.1.0</scalatest-maven-plugin.version>
+    <!--
+      This needs to be managed in different profiles to avoid
+      errors building different Hadoop versions.
+      See: SPARK-36547, SPARK-38394.
+       -->
+    <scala-maven-plugin.version>4.8.0</scala-maven-plugin.version>
     <!-- for now, not running scalafmt as part of default verify pipeline -->
     <scalafmt.skip>true</scalafmt.skip>
+    <scalafmt.validateOnly>true</scalafmt.validateOnly>
+    <scalafmt.changedOnly>true</scalafmt.changedOnly>
     <codehaus.jackson.version>1.9.13</codehaus.jackson.version>
-    <fasterxml.jackson.version>2.13.0</fasterxml.jackson.version>
+    <fasterxml.jackson.version>2.14.1</fasterxml.jackson.version>
+    <fasterxml.jackson.databind.version>2.14.1</fasterxml.jackson.databind.version>
     <snappy.version>1.1.8.4</snappy.version>
-    <netlib.java.version>1.1.2</netlib.java.version>
-    <netlib.ludovic.dev.version>2.2.1</netlib.ludovic.dev.version>
+    <netlib.ludovic.dev.version>3.0.3</netlib.ludovic.dev.version>
     <commons-codec.version>1.15</commons-codec.version>
     <commons-compress.version>1.21</commons-compress.version>
     <commons-io.version>2.11.0</commons-io.version>
@@ -182,29 +197,32 @@
     <commons-pool2.version>2.11.1</commons-pool2.version>
     <datanucleus-core.version>4.1.17</datanucleus-core.version>
     <guava.version>14.0.1</guava.version>
-    <janino.version>3.0.16</janino.version>
-    <jersey.version>2.34</jersey.version>
-    <joda.version>2.10.12</joda.version>
+    <janino.version>3.1.9</janino.version>
+    <jersey.version>2.36</jersey.version>
+    <joda.version>2.12.2</joda.version>
     <jodd.version>3.5.2</jodd.version>
     <jsr305.version>3.0.0</jsr305.version>
     <libthrift.version>0.12.0</libthrift.version>
-    <antlr4.version>4.8</antlr4.version>
+    <!-- Please don't upgrade the version to 4.10+, it depends on JDK 11 -->
+    <antlr4.version>4.9.3</antlr4.version>
     <jpam.version>1.1</jpam.version>
-    <selenium.version>3.141.59</selenium.version>
-    <htmlunit.version>2.50.0</htmlunit.version>
+    <selenium.version>4.7.1</selenium.version>
+    <htmlunit-driver.version>4.7.0</htmlunit-driver.version>
+    <htmlunit.version>2.67.0</htmlunit.version>
     <maven-antrun.version>1.8</maven-antrun.version>
     <commons-crypto.version>1.1.0</commons-crypto.version>
     <commons-cli.version>1.5.0</commons-cli.version>
     <bouncycastle.version>1.60</bouncycastle.version>
-    <tink.version>1.6.0</tink.version>
+    <tink.version>1.7.0</tink.version>
+    <netty.version>4.1.86.Final</netty.version>
     <!--
     If you are changing Arrow version specification, please check
     ./python/pyspark/sql/pandas/utils.py, and ./python/setup.py too.
     -->
-    <arrow.version>6.0.0</arrow.version>
+    <arrow.version>10.0.1</arrow.version>
     <!-- org.fusesource.leveldbjni will be used except on arm64 platform. -->
     <leveldbjni.group>org.fusesource.leveldbjni</leveldbjni.group>
-    <kubernetes-client.version>5.10.1</kubernetes-client.version>
+    <kubernetes-client.version>6.3.1</kubernetes-client.version>
 
     <test.java.home>${java.home}</test.java.home>
 
@@ -238,7 +256,7 @@
     -->
     <hadoop.deps.scope>compile</hadoop.deps.scope>
     <hive.deps.scope>compile</hive.deps.scope>
-    <hive.storage.version>2.7.2</hive.storage.version>
+    <hive.storage.version>2.7.3</hive.storage.version>
     <hive.storage.scope>compile</hive.storage.scope>
     <hive.common.scope>compile</hive.common.scope>
     <hive.llap.scope>compile</hive.llap.scope>
@@ -285,11 +303,6 @@
     <maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss z</maven.build.timestamp.format>
 
     <!-- SPARK-36796 for JDK-17 test-->
-    <!--
-      SPARK-37070 In order to enable the UTs in `mllib-local` and `mllib` to use `mockito`
-      to mock `j.u.Random`, "-add-exports=java.base/jdk.internal.util.random=ALL-UNNAMED"
-      is added. Should remove it when `mockito` can mock `j.u.Random` directly.
-    -->
     <extraJavaTestArgs>
       -XX:+IgnoreUnrecognizedVMOptions
       --add-opens=java.base/java.lang=ALL-UNNAMED
@@ -305,7 +318,7 @@
       --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
       --add-opens=java.base/sun.security.action=ALL-UNNAMED
       --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
-      --add-exports=java.base/jdk.internal.util.random=ALL-UNNAMED
+      -Djdk.reflect.useDirectMethodHandle=false
     </extraJavaTestArgs>
   </properties>
   <repositories>
@@ -394,17 +407,17 @@
     </dependency>
     <dependency>
       <groupId>org.scalatestplus</groupId>
-      <artifactId>scalacheck-1-15_${scala.binary.version}</artifactId>
+      <artifactId>scalacheck-1-17_${scala.binary.version}</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.scalatestplus</groupId>
-      <artifactId>mockito-3-4_${scala.binary.version}</artifactId>
+      <artifactId>mockito-4-6_${scala.binary.version}</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.scalatestplus</groupId>
-      <artifactId>selenium-3-141_${scala.binary.version}</artifactId>
+      <artifactId>selenium-4-7_${scala.binary.version}</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -413,7 +426,7 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>com.novocode</groupId>
+      <groupId>com.github.sbt</groupId>
       <artifactId>junit-interface</artifactId>
       <scope>test</scope>
     </dependency>
@@ -435,7 +448,7 @@
       <dependency>
         <groupId>org.scala-lang.modules</groupId>
         <artifactId>scala-parallel-collections_${scala.binary.version}</artifactId>
-        <version>1.0.3</version>
+        <version>1.0.4</version>
       </dependency>
       --><!-- #endif scala-2.13 -->
       <dependency>
@@ -454,13 +467,19 @@
         <artifactId>chill-java</artifactId>
         <version>${chill.version}</version>
       </dependency>
+      <dependency>
+        <groupId>com.github.jnr</groupId>
+        <artifactId>jnr-posix</artifactId>
+        <version>3.1.15</version>
+        <scope>test</scope>
+      </dependency>
       <!-- This artifact is a shaded version of ASM 9.x. The POM that was used to produce this
            is at https://github.com/apache/geronimo-xbean/tree/trunk/xbean-asm9-shaded
            For context on why we shade ASM, see SPARK-782 and SPARK-6152. -->
       <dependency>
         <groupId>org.apache.xbean</groupId>
         <artifactId>xbean-asm9-shaded</artifactId>
-        <version>4.20</version>
+        <version>4.22</version>
       </dependency>
 
       <!-- Shaded deps marked as provided. These are promoted to compile scope
@@ -590,7 +609,7 @@
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-text</artifactId>
-        <version>1.6</version>
+        <version>1.10.0</version>
       </dependency>
       <dependency>
         <groupId>commons-lang</groupId>
@@ -621,6 +640,11 @@
         <groupId>commons-collections</groupId>
         <artifactId>commons-collections</artifactId>
         <version>${commons.collections.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-collections4</artifactId>
+        <version>${commons.collections4.version}</version>
       </dependency>
       <dependency>
         <groupId>commons-beanutils</groupId>
@@ -659,6 +683,11 @@
         <version>${commons.httpcore.version}</version>
       </dependency>
       <dependency>
+        <groupId>org.rocksdb</groupId>
+        <artifactId>rocksdbjni</artifactId>
+        <version>7.8.3</version>
+      </dependency>
+      <dependency>
         <groupId>${leveldbjni.group}</groupId>
         <artifactId>leveldbjni-all</artifactId>
         <version>1.8</version>
@@ -674,8 +703,12 @@
             <artifactId>guava</artifactId>
           </exclusion>
           <exclusion>
+            <groupId>com.google.auto.service</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+          <exclusion>
             <groupId>io.netty</groupId>
-            <artifactId>netty</artifactId>
+            <artifactId>*</artifactId>
           </exclusion>
           <exclusion>
             <groupId>net.bytebuddy</groupId>
@@ -686,7 +719,7 @@
       <dependency>
         <groupId>org.seleniumhq.selenium</groupId>
         <artifactId>htmlunit-driver</artifactId>
-        <version>${htmlunit.version}</version>
+        <version>${htmlunit-driver.version}</version>
         <scope>test</scope>
       </dependency>
       <!-- Update htmlunit dependency that selenium uses for better JS support -->
@@ -708,15 +741,11 @@
         <artifactId>xml-apis</artifactId>
         <version>1.4.01</version>
       </dependency>
+
+      <!-- log4j -->
       <dependency>
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
-        <version>${slf4j.version}</version>
-        <scope>${hadoop.deps.scope}</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.slf4j</groupId>
-        <artifactId>slf4j-log4j12</artifactId>
         <version>${slf4j.version}</version>
         <scope>${hadoop.deps.scope}</scope>
       </dependency>
@@ -731,16 +760,37 @@
         <version>${slf4j.version}</version>
         <!-- runtime scope is appropriate, but causes SBT build problems -->
       </dependency>
+
       <dependency>
-        <groupId>log4j</groupId>
-        <artifactId>log4j</artifactId>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-slf4j2-impl</artifactId>
         <version>${log4j.version}</version>
         <scope>${hadoop.deps.scope}</scope>
       </dependency>
       <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-api</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-core</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
+      <dependency>
+        <!-- API bridge between log4j 1 and 2 -->
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-1.2-api</artifactId>
+        <version>${log4j.version}</version>
+        <scope>${hadoop.deps.scope}</scope>
+      </dependency>
+
+      <!-- end -->
+
+      <dependency>
         <groupId>com.ning</groupId>
         <artifactId>compress-lzf</artifactId>
-        <version>1.0.3</version>
+        <version>1.1</version>
       </dependency>
       <dependency>
         <groupId>org.xerial.snappy</groupId>
@@ -755,7 +805,7 @@
       <dependency>
         <groupId>com.github.luben</groupId>
         <artifactId>zstd-jni</artifactId>
-        <version>1.5.0-4</version>
+        <version>1.5.2-5</version>
       </dependency>
       <dependency>
         <groupId>com.clearspring.analytics</groupId>
@@ -777,24 +827,116 @@
       <dependency>
         <groupId>com.google.protobuf</groupId>
         <artifactId>protobuf-java</artifactId>
-        <version>${protobuf.version}</version>
+        <version>${protobuf.hadoopDependency.version}</version>
         <scope>${hadoop.deps.scope}</scope>
       </dependency>
       <dependency>
         <groupId>org.roaringbitmap</groupId>
         <artifactId>RoaringBitmap</artifactId>
-        <version>0.9.22</version>
+        <version>0.9.36</version>
       </dependency>
-      <dependency>
-        <groupId>commons-net</groupId>
-        <artifactId>commons-net</artifactId>
-        <version>3.1</version>
-      </dependency>
+
+      <!-- Netty Begin -->
       <dependency>
         <groupId>io.netty</groupId>
         <artifactId>netty-all</artifactId>
-        <version>4.1.68.Final</version>
+        <version>${netty.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-dns</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-haproxy</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-memcache</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-mqtt</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-redis</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-smtp</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-stomp</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-xml</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns-classes-macos</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns-native-macos</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-rxtx</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-sctp</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-udt</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler-ssl-ocsp</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.jctools</groupId>
+            <artifactId>jctools-core</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
+      <!-- SPARK-38885: After Netty 4.1.76, add the following `Netty` dependencies explicitly
+           to ensure `./dev/test-dependencies.sh` produce the same results on Linux and MacOS.
+      -->
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-native-epoll</artifactId>
+        <version>${netty.version}</version>
+        <classifier>linux-x86_64</classifier>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-native-epoll</artifactId>
+        <version>${netty.version}</version>
+        <classifier>linux-aarch_64</classifier>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-native-kqueue</artifactId>
+        <version>${netty.version}</version>
+        <classifier>osx-aarch_64</classifier>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-native-kqueue</artifactId>
+        <version>${netty.version}</version>
+        <classifier>osx-x86_64</classifier>
+      </dependency>
+      <!-- Netty End -->
+
       <dependency>
         <groupId>org.apache.derby</groupId>
         <artifactId>derby</artifactId>
@@ -833,25 +975,22 @@
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
-        <version>${fasterxml.jackson.version}</version>
+        <version>${fasterxml.jackson.databind.version}</version>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-annotations</artifactId>
         <version>${fasterxml.jackson.version}</version>
       </dependency>
-      <!-- Guava is excluded because of SPARK-6149.  The Guava version referenced in this module is
-           15.0, which causes runtime incompatibility issues. -->
+      <dependency>
+        <groupId>com.fasterxml.jackson.datatype</groupId>
+        <artifactId>jackson-datatype-jsr310</artifactId>
+        <version>${fasterxml.jackson.version}</version>
+      </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.module</groupId>
         <artifactId>jackson-module-scala_${scala.binary.version}</artifactId>
         <version>${fasterxml.jackson.version}</version>
-        <exclusions>
-          <exclusion>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-          </exclusion>
-        </exclusions>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.module</groupId>
@@ -926,13 +1065,18 @@
       <dependency>
         <groupId>org.scalanlp</groupId>
         <artifactId>breeze_${scala.binary.version}</artifactId>
-        <version>1.2</version>
+        <version>2.1.0</version>
         <exclusions>
           <exclusion>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
           </exclusion>
         </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>com.chuusai</groupId>
+        <artifactId>shapeless_${scala.binary.version}</artifactId>
+        <version>2.3.9</version>
       </dependency>
       <dependency>
         <groupId>org.json4s</groupId>
@@ -948,12 +1092,18 @@
       <dependency>
         <groupId>org.scala-lang.modules</groupId>
         <artifactId>scala-xml_${scala.binary.version}</artifactId>
-        <version>1.2.0</version>
+        <version>2.1.0</version>
       </dependency>
       <dependency>
         <groupId>org.scala-lang</groupId>
         <artifactId>scala-compiler</artifactId>
         <version>${scala.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.scala-lang.modules</groupId>
+            <artifactId>scala-xml_2.12</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
       <dependency>
         <groupId>org.scala-lang</groupId>
@@ -966,14 +1116,9 @@
         <version>${scala.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.scala-lang</groupId>
-        <artifactId>scala-actors</artifactId>
-        <version>${scala.version}</version>
-      </dependency>
-      <dependency>
         <groupId>org.scala-lang.modules</groupId>
         <artifactId>scala-parser-combinators_${scala.binary.version}</artifactId>
-        <version>1.1.2</version>
+        <version>2.1.1</version>
       </dependency>
       <dependency>
         <groupId>jline</groupId>
@@ -983,31 +1128,37 @@
       <dependency>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest_${scala.binary.version}</artifactId>
-        <version>3.2.9</version>
+        <version>3.2.14</version>
         <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>org.scalatestplus</groupId>
-        <artifactId>scalacheck-1-15_${scala.binary.version}</artifactId>
-        <version>3.2.9.0</version>
+        <artifactId>scalacheck-1-17_${scala.binary.version}</artifactId>
+        <version>3.2.14.0</version>
         <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>org.scalatestplus</groupId>
-        <artifactId>mockito-3-4_${scala.binary.version}</artifactId>
-        <version>3.2.9.0</version>
+        <artifactId>mockito-4-6_${scala.binary.version}</artifactId>
+        <version>3.2.14.0</version>
         <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>org.scalatestplus</groupId>
-        <artifactId>selenium-3-141_${scala.binary.version}</artifactId>
-        <version>3.2.9.0</version>
+        <artifactId>selenium-4-7_${scala.binary.version}</artifactId>
+        <version>3.2.14.0</version>
         <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>org.mockito</groupId>
         <artifactId>mockito-core</artifactId>
-        <version>3.4.6</version>
+        <version>4.6.1</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-inline</artifactId>
+        <version>4.6.1</version>
         <scope>test</scope>
       </dependency>
       <dependency>
@@ -1019,31 +1170,19 @@
       <dependency>
         <groupId>org.scalacheck</groupId>
         <artifactId>scalacheck_${scala.binary.version}</artifactId>
-        <version>1.15.4</version>
+        <version>1.17.0</version>
         <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>junit</groupId>
         <artifactId>junit</artifactId>
-        <version>4.13.1</version>
+        <version>4.13.2</version>
         <scope>test</scope>
       </dependency>
       <dependency>
-        <groupId>org.hamcrest</groupId>
-        <artifactId>hamcrest-core</artifactId>
-        <version>1.3</version>
-        <scope>test</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.hamcrest</groupId>
-        <artifactId>hamcrest-library</artifactId>
-        <version>1.3</version>
-        <scope>test</scope>
-      </dependency>
-      <dependency>
-        <groupId>com.novocode</groupId>
+        <groupId>com.github.sbt</groupId>
         <artifactId>junit-interface</artifactId>
-        <version>0.11</version>
+        <version>0.13.3</version>
         <scope>test</scope>
       </dependency>
       <dependency>
@@ -1064,9 +1203,9 @@
         </exclusions>
       </dependency>
       <dependency>
-        <groupId>mysql</groupId>
-        <artifactId>mysql-connector-java</artifactId>
-        <version>5.1.38</version>
+        <groupId>com.mysql</groupId>
+        <artifactId>mysql-connector-j</artifactId>
+        <version>8.0.31</version>
         <scope>test</scope>
       </dependency>
       <dependency>
@@ -1078,7 +1217,7 @@
       <dependency>
         <groupId>org.postgresql</groupId>
         <artifactId>postgresql</artifactId>
-        <version>42.3.0</version>
+        <version>42.5.1</version>
         <scope>test</scope>
       </dependency>
       <dependency>
@@ -1112,6 +1251,18 @@
           <exclusion>
             <groupId>jline</groupId>
             <artifactId>jline</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -1231,6 +1382,14 @@
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-webapp</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -1242,6 +1401,18 @@
           <exclusion>
             <groupId>org.apache.directory.api</groupId>
             <artifactId>api-ldap-schema-data</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -1261,7 +1432,7 @@
       <dependency>
         <groupId>xerces</groupId>
         <artifactId>xercesImpl</artifactId>
-        <version>2.12.0</version>
+        <version>2.12.2</version>
       </dependency>
       <dependency>
         <groupId>org.apache.avro</groupId>
@@ -1308,10 +1479,14 @@
           </exclusion>
         </exclusions>
       </dependency>
+      <!--
+        SPARK-41031: `xz` is marked as optional in the dependency tree of `avro`,
+        we need to manually check `xz` version when upgrading `avro`.
+      -->
       <dependency>
         <groupId>org.tukaani</groupId>
         <artifactId>xz</artifactId>
-        <version>1.8</version>
+        <version>1.9</version>
       </dependency>
       <!-- See SPARK-23654 for info on this dependency;
       It is used to keep javax.activation at v1.1.1 after dropping
@@ -1404,6 +1579,14 @@
           <exclusion>
             <groupId>com.sun.jersey.contribs</groupId>
             <artifactId>*</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -1583,6 +1766,14 @@
             <groupId>com.sun.jersey.contribs</groupId>
             <artifactId>*</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -1610,6 +1801,18 @@
           <exclusion>
             <groupId>com.github.spotbugs</groupId>
             <artifactId>spotbugs-annotations</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -1843,6 +2046,10 @@
           <exclusion>
             <groupId>${hive.group}</groupId>
             <artifactId>hive-ant</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>${hive.group}</groupId>
+            <artifactId>hive-vector-code-gen</artifactId>
           </exclusion>
           <!-- break the loop -->
           <exclusion>
@@ -2152,7 +2359,7 @@
             <groupId>${hive.group}</groupId>
             <artifactId>hive-service-rpc</artifactId>
           </exclusion>
-          <!-- parquet-hadoop-bundle:1.8.1 conflict with 1.12.0 -->
+          <!-- parquet-hadoop-bundle:1.8.1 conflict with 1.12.3 -->
           <exclusion>
             <groupId>org.apache.parquet</groupId>
             <artifactId>parquet-hadoop-bundle</artifactId>
@@ -2173,7 +2380,7 @@
       <dependency>
         <groupId>${hive.group}</groupId>
         <artifactId>hive-service-rpc</artifactId>
-        <version>3.1.2</version>
+        <version>3.1.3</version>
         <exclusions>
           <exclusion>
             <groupId>*</groupId>
@@ -2317,6 +2524,7 @@
         <groupId>org.apache.orc</groupId>
         <artifactId>orc-core</artifactId>
         <version>${orc.version}</version>
+        <classifier>${orc.classifier}</classifier>
         <scope>${orc.deps.scope}</scope>
         <exclusions>
           <exclusion>
@@ -2341,6 +2549,7 @@
         <groupId>org.apache.orc</groupId>
         <artifactId>orc-mapreduce</artifactId>
         <version>${orc.version}</version>
+        <classifier>${orc.classifier}</classifier>
         <scope>${orc.deps.scope}</scope>
         <exclusions>
           <exclusion>
@@ -2602,44 +2811,43 @@
             </execution>
           </executions>
         </plugin>
-	<plugin>
-	  <groupId>org.codehaus.mojo</groupId>
-	  <artifactId>build-helper-maven-plugin</artifactId>
-	  <version>3.2.0</version>
-	  <executions>
-	    <execution>
-	      <id>module-timestamp-property</id>
-	      <phase>validate</phase>
-	      <goals>
-		<goal>timestamp-property</goal>
-	      </goals>
-	      <configuration>
-		<name>module.build.timestamp</name>
-		<pattern>${maven.build.timestamp.format}</pattern>
-		<timeSource>current</timeSource>
-		<timeZone>America/Los_Angeles</timeZone>
-	      </configuration>
-	    </execution>
-	    <execution>
-	      <id>local-timestamp-property</id>
-	      <phase>validate</phase>
-	      <goals>
-		<goal>timestamp-property</goal>
-	      </goals>
-	      <configuration>
-		<name>local.build.timestamp</name>
-		<pattern>${maven.build.timestamp.format}</pattern>
-		<timeSource>build</timeSource>
-		<timeZone>America/Los_Angeles</timeZone>
-	      </configuration>
-	    </execution>
-	  </executions>
-	</plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>build-helper-maven-plugin</artifactId>
+          <version>3.2.0</version>
+          <executions>
+            <execution>
+              <id>module-timestamp-property</id>
+              <phase>validate</phase>
+              <goals>
+                <goal>timestamp-property</goal>
+              </goals>
+              <configuration>
+                <name>module.build.timestamp</name>
+                <pattern>${maven.build.timestamp.format}</pattern>
+                <timeSource>current</timeSource>
+                <timeZone>America/Los_Angeles</timeZone>
+              </configuration>
+            </execution>
+            <execution>
+              <id>local-timestamp-property</id>
+              <phase>validate</phase>
+              <goals>
+                <goal>timestamp-property</goal>
+              </goals>
+              <configuration>
+                <name>local.build.timestamp</name>
+                <pattern>${maven.build.timestamp.format}</pattern>
+                <timeSource>build</timeSource>
+                <timeZone>America/Los_Angeles</timeZone>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
         <plugin>
           <groupId>net.alchim31.maven</groupId>
           <artifactId>scala-maven-plugin</artifactId>
-          <!-- SPARK-36547: Please don't upgrade the version below, otherwise there will be an error on building Hadoop 2.7 package -->
-          <version>4.3.0</version>
+          <version>${scala-maven-plugin.version}</version>
           <executions>
             <execution>
               <id>eclipse-add-source</id>
@@ -2700,7 +2908,7 @@
               <compilerPlugin>
                 <groupId>com.github.ghik</groupId>
                 <artifactId>silencer-plugin_${scala.version}</artifactId>
-                <version>1.7.6</version>
+                <version>1.7.10</version>
               </compilerPlugin>
             </compilerPlugins>
           </configuration>
@@ -2708,7 +2916,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.8.1</version>
+          <version>3.10.1</version>
           <configuration>
             <source>${java.version}</source>
             <target>${java.version}</target>
@@ -2725,7 +2933,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
-          <version>3.0.0-M5</version>
+          <version>3.0.0-M7</version>
           <!-- Note config is repeated in scalatest config -->
           <configuration>
             <includes>
@@ -2746,9 +2954,10 @@
               <SPARK_SCALA_VERSION>${scala.binary.version}</SPARK_SCALA_VERSION>
               <SPARK_TESTING>1</SPARK_TESTING>
               <JAVA_HOME>${test.java.home}</JAVA_HOME>
+              <SPARK_BEELINE_OPTS>-DmyKey=yourValue</SPARK_BEELINE_OPTS>
             </environmentVariables>
             <systemProperties>
-              <log4j.configuration>file:src/test/resources/log4j.properties</log4j.configuration>
+              <log4j.configurationFile>file:src/test/resources/log4j2.properties</log4j.configurationFile>
               <derby.system.durability>test</derby.system.durability>
               <java.awt.headless>true</java.awt.headless>
               <java.io.tmpdir>${project.build.directory}/tmp</java.io.tmpdir>
@@ -2764,6 +2973,7 @@
               <test.src.tables>src</test.src.tables>
             </systemProperties>
             <failIfNoTests>false</failIfNoTests>
+            <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
             <excludedGroups>${test.exclude.tags}</excludedGroups>
             <groups>${test.include.tags}</groups>
           </configuration>
@@ -2800,7 +3010,7 @@
               <JAVA_HOME>${test.java.home}</JAVA_HOME>
             </environmentVariables>
             <systemProperties>
-              <log4j.configuration>file:src/test/resources/log4j.properties</log4j.configuration>
+              <log4j.configurationFile>file:src/test/resources/log4j2.properties</log4j.configurationFile>
               <derby.system.durability>test</derby.system.durability>
               <java.awt.headless>true</java.awt.headless>
               <java.io.tmpdir>${project.build.directory}/tmp</java.io.tmpdir>
@@ -2830,7 +3040,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-jar-plugin</artifactId>
-          <version>3.1.2</version>
+          <version>3.2.2</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -2875,13 +3085,16 @@
               <fileset>
                 <directory>spark-warehouse</directory>
               </fileset>
+              <fileset>
+                <directory>dist</directory>
+              </fileset>
             </filesets>
           </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-javadoc-plugin</artifactId>
-          <version>3.1.1</version>
+          <version>3.4.1</version>
           <configuration>
             <additionalJOptions>
               <additionalJOption>-Xdoclint:all</additionalJOption>
@@ -2942,29 +3155,29 @@
             <dependency>
               <groupId>org.ow2.asm</groupId>
               <artifactId>asm</artifactId>
-              <version>9.1</version>
+              <version>9.4</version>
             </dependency>
             <dependency>
               <groupId>org.ow2.asm</groupId>
               <artifactId>asm-commons</artifactId>
-              <version>9.1</version>
+              <version>9.4</version>
             </dependency>
           </dependencies>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-install-plugin</artifactId>
-          <version>3.0.0-M1</version>
+          <version>3.1.0</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-deploy-plugin</artifactId>
-          <version>3.0.0-M1</version>
+          <version>3.0.0</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-dependency-plugin</artifactId>
-          <version>3.1.1</version>
+          <version>3.3.0</version>
           <executions>
             <execution>
               <id>default-cli</id>
@@ -2978,58 +3191,6 @@
               </configuration>
             </execution>
           </executions>
-        </plugin>
-        <!-- This plugin's configuration is used to store Eclipse m2e settings only. -->
-        <!-- It has no influence on the Maven build itself. -->
-        <plugin>
-          <groupId>org.eclipse.m2e</groupId>
-          <artifactId>lifecycle-mapping</artifactId>
-          <version>1.0.0</version>
-          <configuration>
-            <lifecycleMappingMetadata>
-              <pluginExecutions>
-                <pluginExecution>
-                  <pluginExecutionFilter>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-dependency-plugin</artifactId>
-                    <versionRange>[2.8,)</versionRange>
-                    <goals>
-                      <goal>build-classpath</goal>
-                    </goals>
-                  </pluginExecutionFilter>
-                  <action>
-                    <ignore></ignore>
-                  </action>
-                </pluginExecution>
-                <pluginExecution>
-                  <pluginExecutionFilter>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-jar-plugin</artifactId>
-                    <versionRange>3.1.2</versionRange>
-                    <goals>
-                      <goal>test-jar</goal>
-                    </goals>
-                  </pluginExecutionFilter>
-                  <action>
-                    <ignore></ignore>
-                  </action>
-                </pluginExecution>
-                <pluginExecution>
-                  <pluginExecutionFilter>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-antrun-plugin</artifactId>
-                    <versionRange>[${maven-antrun.version},)</versionRange>
-                    <goals>
-                      <goal>run</goal>
-                    </goals>
-                  </pluginExecutionFilter>
-                  <action>
-                    <ignore></ignore>
-                  </action>
-                </pluginExecution>
-              </pluginExecutions>
-            </lifecycleMappingMetadata>
-          </configuration>
         </plugin>
       </plugins>
     </pluginManagement>
@@ -3077,17 +3238,6 @@
           <artifactSet>
             <includes>
               <include>org.spark-project.spark:unused</include>
-              <include>org.eclipse.jetty:jetty-io</include>
-              <include>org.eclipse.jetty:jetty-http</include>
-              <include>org.eclipse.jetty:jetty-proxy</include>
-              <include>org.eclipse.jetty:jetty-client</include>
-              <include>org.eclipse.jetty:jetty-continuation</include>
-              <include>org.eclipse.jetty:jetty-servlet</include>
-              <include>org.eclipse.jetty:jetty-servlets</include>
-              <include>org.eclipse.jetty:jetty-plus</include>
-              <include>org.eclipse.jetty:jetty-security</include>
-              <include>org.eclipse.jetty:jetty-util</include>
-              <include>org.eclipse.jetty:jetty-server</include>
               <include>com.google.guava:guava</include>
               <include>org.jpmml:*</include>
             </includes>
@@ -3162,7 +3312,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
-        <version>3.1.2</version>
+        <version>3.2.0</version>
         <configuration>
           <failOnViolation>false</failOnViolation>
           <includeTestSourceDirectory>true</includeTestSourceDirectory>
@@ -3186,7 +3336,7 @@
             -->
             <groupId>com.puppycrawl.tools</groupId>
             <artifactId>checkstyle</artifactId>
-            <version>8.43</version>
+            <version>9.3</version>
           </dependency>
         </dependencies>
         <executions>
@@ -3239,7 +3389,7 @@
             </goals>
             <configuration>
               <excludes>
-                <exclude>log4j.properties</exclude>
+                <exclude>log4j2.properties</exclude>
               </excludes>
             </configuration>
           </execution>
@@ -3248,14 +3398,13 @@
       <plugin>
         <groupId>org.antipathy</groupId>
         <artifactId>mvn-scalafmt_${scala.binary.version}</artifactId>
-        <version>1.0.4</version>
+        <version>1.1.1640084764.9f463a9</version>
         <configuration>
-          <parameters>${scalafmt.parameters}</parameters> <!-- (Optional) Additional command line arguments -->
-          <skip>${scalafmt.skip}</skip> <!-- (Optional) skip formatting -->
+          <validateOnly>${scalafmt.validateOnly}</validateOnly> <!-- (Optional) skip formatting -->
           <skipSources>${scalafmt.skip}</skipSources>
           <skipTestSources>${scalafmt.skip}</skipTestSources>
           <configLocation>dev/.scalafmt.conf</configLocation> <!-- (Optional) config location -->
-          <onlyChangedFiles>true</onlyChangedFiles>
+          <onlyChangedFiles>${scalafmt.changedOnly}</onlyChangedFiles>
         </configuration>
         <executions>
           <execution>
@@ -3307,7 +3456,7 @@
     <profile>
       <id>spark-ganglia-lgpl</id>
       <modules>
-        <module>external/spark-ganglia-lgpl</module>
+        <module>connector/spark-ganglia-lgpl</module>
       </modules>
     </profile>
 
@@ -3315,15 +3464,15 @@
     <profile>
       <id>kinesis-asl</id>
       <modules>
-        <module>external/kinesis-asl</module>
-        <module>external/kinesis-asl-assembly</module>
+        <module>connector/kinesis-asl</module>
+        <module>connector/kinesis-asl-assembly</module>
       </modules>
     </profile>
 
     <profile>
       <id>docker-integration-tests</id>
       <modules>
-        <module>external/docker-integration-tests</module>
+        <module>connector/docker-integration-tests</module>
       </modules>
     </profile>
 
@@ -3336,6 +3485,7 @@
     <profile>
       <id>hadoop-2</id>
       <properties>
+        <!-- make sure to update IsolatedClientLoader whenever this version is changed -->
         <hadoop.version>2.7.4</hadoop.version>
         <curator.version>2.7.1</curator.version>
         <commons-io.version>2.4</commons-io.version>
@@ -3345,6 +3495,9 @@
         <hadoop-client-api.artifact>hadoop-client</hadoop-client-api.artifact>
         <hadoop-client-runtime.artifact>hadoop-yarn-api</hadoop-client-runtime.artifact>
         <hadoop-client-minicluster.artifact>hadoop-client</hadoop-client-minicluster.artifact>
+        <gcs-connector.version>hadoop2-2.2.7</gcs-connector.version>
+        <!-- SPARK-36547: Please don't upgrade the version below, otherwise there will be an error on building Hadoop 2.7 package -->
+        <scala-maven-plugin.version>4.3.0</scala-maven-plugin.version>
       </properties>
     </profile>
 
@@ -3410,11 +3563,11 @@
     <profile>
       <id>scala-2.12</id>
       <properties>
-        <!-- 
+        <!--
          SPARK-34774 Add this property to ensure change-scala-version.sh can replace the public `scala.version`
-         property correctly. 
+         property correctly.
         -->
-        <scala.version>2.12.15</scala.version>
+        <scala.version>2.12.17</scala.version>
       </properties>
       <build>
         <pluginManagement>
@@ -3427,7 +3580,7 @@
     <profile>
       <id>scala-2.13</id>
       <properties>
-        <scala.version>2.13.7</scala.version>
+        <scala.version>2.13.8</scala.version>
         <scala.binary.version>2.13</scala.binary.version>
       </properties>
       <build>
@@ -3584,25 +3737,72 @@
         <debugForkedProcess>${test.debug.suite}</debugForkedProcess>
       </properties>
     </profile>
-
-    <!--
-      Deprecated: com.github.fommil.netlib has been replaced by dev.ludovic.netlib which
-      doesn't package or distribute any GPL/LGPL dependencies. There should now be hardware
-      acceleration out-of-the-box without enabling any additional profile.
-      However, we need to keep the dependency for now because the last release of
-      org.scalanlp:breeze still depends on `com.github.fommil.netlib`. It's been updated with
-      https://github.com/scalanlp/breeze/pull/811 but it hasn't been released yet.
-    -->
     <profile>
-      <id>netlib-lgpl</id>
-      <dependencies>
-        <dependency>
-          <groupId>com.github.fommil.netlib</groupId>
-          <artifactId>all</artifactId>
-          <version>${netlib.java.version}</version>
-          <type>pom</type>
-        </dependency>
-      </dependencies>
+      <id>only-eclipse</id>
+      <activation>
+        <property>
+          <!-- Eclipse M2E plugin exports this property and auto-activates this profile -->
+          <name>m2e.version</name>
+        </property>
+      </activation>
+      <build>
+        <pluginManagement>
+          <plugins>
+            <!-- This plugin's configuration is used to store Eclipse m2e settings only. -->
+            <!-- It has no influence on the Maven build itself. -->
+            <plugin>
+              <groupId>org.eclipse.m2e</groupId>
+              <artifactId>lifecycle-mapping</artifactId>
+              <version>1.0.0</version>
+              <configuration>
+                <lifecycleMappingMetadata>
+                  <pluginExecutions>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <versionRange>[2.8,)</versionRange>
+                        <goals>
+                          <goal>build-classpath</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore></ignore>
+                      </action>
+                    </pluginExecution>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <versionRange>3.3.0</versionRange>
+                        <goals>
+                          <goal>test-jar</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore></ignore>
+                      </action>
+                    </pluginExecution>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <versionRange>[${maven-antrun.version},)</versionRange>
+                        <goals>
+                          <goal>run</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore></ignore>
+                      </action>
+                    </pluginExecution>
+                  </pluginExecutions>
+                </lifecycleMappingMetadata>
+              </configuration>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+      </build>
     </profile>
   </profiles>
 </project>

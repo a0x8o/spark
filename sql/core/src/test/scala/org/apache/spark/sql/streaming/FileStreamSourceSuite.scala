@@ -32,6 +32,7 @@ import org.apache.hadoop.util.Progressable
 import org.scalatest.PrivateMethodTester
 import org.scalatest.time.SpanSugar._
 
+import org.apache.spark.SparkUnsupportedOperationException
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.util._
@@ -192,7 +193,7 @@ abstract class FileStreamSourceTest
 
   protected def getSourcesFromStreamingQuery(query: StreamExecution): Seq[FileStreamSource] = {
     query.logicalPlan.collect {
-      case StreamingExecutionRelation(source, _) if source.isInstanceOf[FileStreamSource] =>
+      case StreamingExecutionRelation(source, _, _) if source.isInstanceOf[FileStreamSource] =>
         source.asInstanceOf[FileStreamSource]
     }
   }
@@ -257,7 +258,7 @@ class FileStreamSourceSuite extends FileStreamSourceTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.sessionState.conf.setConf(SQLConf.ORC_IMPLEMENTATION, "native")
+    spark.conf.set(SQLConf.ORC_IMPLEMENTATION, "native")
   }
 
   override def afterAll(): Unit = {
@@ -1273,6 +1274,7 @@ class FileStreamSourceSuite extends FileStreamSourceTest {
         .text(src.getCanonicalPath)
 
       def startQuery(): StreamingQuery = {
+        // NOTE: the test uses the deprecated Trigger.Once() by intention, do not change.
         df.writeStream
           .format("parquet")
           .trigger(Trigger.Once)
@@ -1328,6 +1330,7 @@ class FileStreamSourceSuite extends FileStreamSourceTest {
         .text(src.getCanonicalPath)
 
       def startTriggerOnceQuery(): StreamingQuery = {
+        // NOTE: the test uses the deprecated Trigger.Once() by intention, do not change.
         df.writeStream
           .foreachBatch((_: Dataset[Row], _: Long) => {})
           .trigger(Trigger.Once)
@@ -1433,7 +1436,7 @@ class FileStreamSourceSuite extends FileStreamSourceTest {
 
     // This is to avoid running a spark job to list of files in parallel
     // by the InMemoryFileIndex.
-    spark.sessionState.conf.setConf(SQLConf.PARALLEL_PARTITION_DISCOVERY_THRESHOLD, numFiles * 2)
+    spark.conf.set(SQLConf.PARALLEL_PARTITION_DISCOVERY_THRESHOLD, numFiles * 2)
 
     withTempDirs { case (root, tmp) =>
       val src = new File(root, "a=1")
@@ -2053,7 +2056,7 @@ class FileStreamSourceSuite extends FileStreamSourceTest {
             AddFilesToFileStreamSinkLog(fileSystem, srcPath, sinkLog, 0) { path =>
               path.getName.startsWith("keep1")
             },
-            ExpectFailure[UnsupportedOperationException](
+            ExpectFailure[SparkUnsupportedOperationException](
               t => assert(t.getMessage.startsWith("Clean up source files is not supported")),
               isFatalError = false)
           )
@@ -2332,7 +2335,7 @@ class FileStreamSourceSuite extends FileStreamSourceTest {
     ).foreach { schema =>
       withTempDir { dir =>
         val colName = "col"
-        val msg = "can only contain StringType as a key type for a MapType"
+        val msg = "can only contain STRING as a key type for a MAP"
 
         val thrown1 = intercept[AnalysisException](
           spark.readStream.schema(StructType(Seq(StructField(colName, schema))))

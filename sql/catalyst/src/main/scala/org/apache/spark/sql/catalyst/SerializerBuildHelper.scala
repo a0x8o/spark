@@ -74,6 +74,15 @@ object SerializerBuildHelper {
       returnNullable = false)
   }
 
+  def createSerializerForScalaEnum(inputObject: Expression): Expression = {
+    createSerializerForString(
+      Invoke(
+        inputObject,
+        "toString",
+        ObjectType(classOf[String]),
+        returnNullable = false))
+  }
+
   def createSerializerForJavaEnum(inputObject: Expression): Expression =
     createSerializerForString(Invoke(inputObject, "name", ObjectType(classOf[String])))
 
@@ -82,6 +91,15 @@ object SerializerBuildHelper {
       DateTimeUtils.getClass,
       TimestampType,
       "fromJavaTimestamp",
+      inputObject :: Nil,
+      returnNullable = false)
+  }
+
+  def createSerializerForAnyTimestamp(inputObject: Expression): Expression = {
+    StaticInvoke(
+      DateTimeUtils.getClass,
+      TimestampType,
+      "anyToMicros",
       inputObject :: Nil,
       returnNullable = false)
   }
@@ -109,6 +127,15 @@ object SerializerBuildHelper {
       DateTimeUtils.getClass,
       DateType,
       "fromJavaDate",
+      inputObject :: Nil,
+      returnNullable = false)
+  }
+
+  def createSerializerForAnyDate(inputObject: Expression): Expression = {
+    StaticInvoke(
+      DateTimeUtils.getClass,
+      DateType,
+      "anyToDays",
       inputObject :: Nil,
       returnNullable = false)
   }

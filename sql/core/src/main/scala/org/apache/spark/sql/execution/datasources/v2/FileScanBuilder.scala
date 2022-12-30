@@ -20,6 +20,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.{sources, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.connector.expressions.filter.Predicate
 import org.apache.spark.sql.connector.read.{ScanBuilder, SupportsPushDownRequiredColumns}
 import org.apache.spark.sql.execution.datasources.{DataSourceStrategy, DataSourceUtils, PartitioningAwareFileIndex, PartitioningUtils}
 import org.apache.spark.sql.internal.connector.SupportsPushDownCatalystFilters
@@ -69,8 +70,9 @@ abstract class FileScanBuilder(
   }
 
   override def pushFilters(filters: Seq[Expression]): Seq[Expression] = {
+    val (deterministicFilters, nonDeterminsticFilters) = filters.partition(_.deterministic)
     val (partitionFilters, dataFilters) =
-      DataSourceUtils.getPartitionFiltersAndDataFilters(partitionSchema, filters)
+      DataSourceUtils.getPartitionFiltersAndDataFilters(partitionSchema, deterministicFilters)
     this.partitionFilters = partitionFilters
     this.dataFilters = dataFilters
     val translatedFilters = mutable.ArrayBuffer.empty[sources.Filter]
@@ -81,10 +83,10 @@ abstract class FileScanBuilder(
       }
     }
     pushedDataFilters = pushDataFilters(translatedFilters.toArray)
-    dataFilters
+    dataFilters ++ nonDeterminsticFilters
   }
 
-  override def pushedFilters: Array[Filter] = pushedDataFilters
+  override def pushedFilters: Array[Predicate] = pushedDataFilters.map(_.toV2)
 
   /*
    * Push down data filters to the file source, so the data filters can be evaluated there to

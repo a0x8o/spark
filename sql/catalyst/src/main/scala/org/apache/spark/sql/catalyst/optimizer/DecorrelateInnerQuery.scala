@@ -19,12 +19,14 @@ package org.apache.spark.sql.catalyst.optimizer
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.SubExprUtils._
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.trees.TreePattern.OUTER_REFERENCE
-import org.apache.spark.sql.errors.QueryExecutionErrors
+import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
+import org.apache.spark.util.collection.Utils
 
 /**
  * Decorrelate the inner query by eliminating outer references and create domain joins.
@@ -87,25 +89,35 @@ object DecorrelateInnerQuery extends PredicateHelper {
    * leaf node and will not be found here.
    */
   private def containsAttribute(expression: Expression): Boolean = {
-    expression.find(_.isInstanceOf[Attribute]).isDefined
+    expression.exists(_.isInstanceOf[Attribute])
   }
 
   /**
    * Check if an expression can be pulled up over an [[Aggregate]] without changing the
    * semantics of the plan. The expression must be an equality predicate that guarantees
-   * one-to-one mapping between inner and outer attributes. More specifically, one side
-   * of the predicate must be an attribute and another side of the predicate must not
-   * contain other attributes from the inner query.
+   * one-to-one mapping between inner and outer attributes.
    * For example:
    *   (a = outer(c)) -> true
    *   (a > outer(c)) -> false
    *   (a + b = outer(c)) -> false
    *   (a = outer(c) - b) -> false
    */
-  private def canPullUpOverAgg(expression: Expression): Boolean = expression match {
-    case Equality(_: Attribute, b) => !containsAttribute(b)
-    case Equality(a, _: Attribute) => !containsAttribute(a)
-    case o => !containsAttribute(o)
+  def canPullUpOverAgg(expression: Expression): Boolean = {
+    def isSupported(e: Expression): Boolean = e match {
+      case _: Attribute => true
+      // Allow Cast expressions that guarantee 1:1 mapping.
+      case Cast(a: Attribute, dataType, _, _) => Cast.canUpCast(a.dataType, dataType)
+      case _ => false
+    }
+
+    // Only allow equality condition with one side being an attribute or an expression that
+    // guarantees 1:1 mapping and another side being an expression without attributes from
+    // the inner query.
+    expression match {
+      case Equality(a, b) if isSupported(a) => !containsAttribute(b)
+      case Equality(a, b) if isSupported(b) => !containsAttribute(a)
+      case o => !containsAttribute(o)
+    }
   }
 
   /**
@@ -197,7 +209,7 @@ object DecorrelateInnerQuery extends PredicateHelper {
     if (duplicates.nonEmpty) {
       val aliasMap = AttributeMap(duplicates.map { dup =>
         dup -> Alias(dup, dup.toString)()
-      }.toSeq)
+      })
       val aliasedExpressions = innerPlan.output.map { ref =>
         aliasMap.getOrElse(ref, ref)
       }
@@ -258,7 +270,7 @@ object DecorrelateInnerQuery extends PredicateHelper {
           // The decorrelation framework adds domain inner joins by traversing down the plan tree
           // recursively until it reaches a node that is not correlated with the outer query.
           // So the child node of a domain inner join shouldn't contain another domain join.
-          assert(child.find(_.isInstanceOf[DomainJoin]).isEmpty,
+          assert(!child.exists(_.isInstanceOf[DomainJoin]),
             s"Child of a domain inner join shouldn't contain another domain join.\n$child")
           child
         case o =>
@@ -288,7 +300,8 @@ object DecorrelateInnerQuery extends PredicateHelper {
           case _ => Join(domain, newChild, joinType, condition, JoinHint.NONE)
         }
       } else {
-        throw QueryExecutionErrors.cannotRewriteDomainJoinWithConditionsError(conditions, d)
+        throw new IllegalStateException(
+          s"Unable to rewrite domain join with conditions: $conditions\n$d.")
       }
     case p: LogicalPlan =>
       p.mapChildren(rewriteDomainJoins(outerPlan, _, conditions))
@@ -335,7 +348,7 @@ object DecorrelateInnerQuery extends PredicateHelper {
           val domains = attributes.map(_.newInstance())
           // A placeholder to be rewritten into domain join.
           val domainJoin = DomainJoin(domains, plan)
-          val outerReferenceMap = attributes.zip(domains).toMap
+          val outerReferenceMap = Utils.toMap(attributes, domains)
           // Build join conditions between domain attributes and outer references.
           // EqualNullSafe is used to make sure null key can be joined together. Note
           // outer referenced attributes can be changed during the outer query optimization.
@@ -348,7 +361,20 @@ object DecorrelateInnerQuery extends PredicateHelper {
           //                        +- Aggregate [a1] [a1 AS a']
           //                           +- OuterQuery
           val conditions = outerReferenceMap.map {
-            case (o, a) => EqualNullSafe(a, OuterReference(o))
+            case (o, a) =>
+              val cond = EqualNullSafe(a, OuterReference(o))
+              // SPARK-40615: Certain data types (e.g. MapType) do not support ordering, so
+              // the EqualNullSafe join condition can become unresolved.
+              if (!cond.resolved) {
+                if (!RowOrdering.isOrderable(a.dataType)) {
+                  throw QueryCompilationErrors.unsupportedCorrelatedReferenceDataTypeError(
+                    o, a.dataType, plan.origin)
+                } else {
+                  throw SparkException.internalError(s"Unable to decorrelate subquery: " +
+                    s"join condition '${cond.sql}' cannot be resolved.")
+                }
+              }
+              cond
           }
           (domainJoin, conditions.toSeq, AttributeMap(outerReferenceMap))
         }
@@ -599,6 +625,11 @@ object DecorrelateInnerQuery extends PredicateHelper {
               (newAggregate, joinCond, outerReferenceMap)
             }
 
+          case d: Distinct =>
+            val (newChild, joinCond, outerReferenceMap) =
+              decorrelate(d.child, parentOuterReferences, aggregated = true)
+            (d.copy(child = newChild), joinCond, outerReferenceMap)
+
           case j @ Join(left, right, joinType, condition, _) =>
             val outerReferences = collectOuterReferences(j.expressions)
             // Join condition containing outer references is not supported.
@@ -635,6 +666,18 @@ object DecorrelateInnerQuery extends PredicateHelper {
             val newCondition = (condition ++ augmentedConditions).reduceOption(And)
             val newJoin = j.copy(left = newLeft, right = newRight, condition = newCondition)
             (newJoin, newJoinCond, newOuterReferenceMap)
+
+          case g: Generate if g.requiredChildOutput.isEmpty =>
+            // Generate with non-empty required child output cannot host
+            // outer reference. It is blocked by CheckAnalysis.
+            val outerReferences = collectOuterReferences(g.expressions)
+            val newOuterReferences = parentOuterReferences ++ outerReferences
+            val (newChild, joinCond, outerReferenceMap) =
+              decorrelate(g.child, newOuterReferences, aggregated)
+            // Replace all outer references in the original generator expression.
+            val newGenerator = replaceOuterReference(g.generator, outerReferenceMap)
+            val newGenerate = g.copy(generator = newGenerator, child = newChild)
+            (newGenerate, joinCond, outerReferenceMap)
 
           case u: UnaryNode =>
             val outerReferences = collectOuterReferences(u.expressions)

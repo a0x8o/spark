@@ -187,7 +187,7 @@ private[spark] class ApplicationMaster(
     val visibilities = distCacheConf.get(CACHED_FILES_VISIBILITIES)
     val resTypes = distCacheConf.get(CACHED_FILES_TYPES)
 
-    for (i <- 0 to distFiles.size - 1) {
+    for (i <- distFiles.indices) {
       val resType = LocalResourceType.valueOf(resTypes(i))
       setupDistributedCache(distFiles(i), resType, timeStamps(i).toString, fileSizes(i).toString,
       visibilities(i))
@@ -240,6 +240,9 @@ private[spark] class ApplicationMaster(
 
       logInfo("ApplicationAttemptId: " + appAttemptId)
 
+      // During shutdown, we may not be able to create an FileSystem object. So, pre-create here.
+      val stagingDirPath = new Path(System.getenv("SPARK_YARN_STAGING_DIR"))
+      val stagingDirFs = stagingDirPath.getFileSystem(yarnConf)
       // This shutdown hook should run *after* the SparkContext is shut down.
       val priority = ShutdownHookManager.SPARK_CONTEXT_SHUTDOWN_PRIORITY - 1
       ShutdownHookManager.addShutdownHook(priority) { () =>
@@ -260,9 +263,15 @@ private[spark] class ApplicationMaster(
 
           if (!unregistered) {
             // we only want to unregister if we don't want the RM to retry
-            if (finalStatus == FinalApplicationStatus.SUCCEEDED || isLastAttempt) {
+            if (isLastAttempt) {
+              cleanupStagingDir(stagingDirFs, stagingDirPath)
               unregister(finalStatus, finalMsg)
-              cleanupStagingDir(new Path(System.getenv("SPARK_YARN_STAGING_DIR")))
+            } else if (finalStatus == FinalApplicationStatus.SUCCEEDED) {
+              // When it's not the last attempt, if unregister failed caused by timeout exception,
+              // YARN will rerun the application, AM should not clean staging dir before unregister
+              // success.
+              unregister(finalStatus, finalMsg)
+              cleanupStagingDir(stagingDirFs, stagingDirPath)
             }
           }
         } catch {
@@ -313,7 +322,7 @@ private[spark] class ApplicationMaster(
           sparkConf.get(DRIVER_PORT)),
         YarnSchedulerBackend.ENDPOINT_NAME)
       // The client-mode AM doesn't listen for incoming connections, so report an invalid port.
-      registerAM(Utils.localHostName, -1, sparkConf,
+      registerAM(Utils.localHostNameForURI(), -1, sparkConf,
         sparkConf.getOption("spark.driver.appUIAddress"), appAttemptId)
       val encodedAppId = URLEncoder.encode(appAttemptId.getApplicationId.toString, "UTF-8")
       addAmIpFilter(Some(driverRef), s"/proxy/$encodedAppId")
@@ -327,8 +336,9 @@ private[spark] class ApplicationMaster(
           ApplicationMaster.EXIT_UNCAUGHT_EXCEPTION,
           "Uncaught exception: " + StringUtils.stringifyException(e))
         if (!unregistered) {
-          unregister(finalStatus, finalMsg)
+          // It's ok to clean staging dir first because unmanaged AM can't be retried.
           cleanupStagingDir(stagingDir)
+          unregister(finalStatus, finalMsg)
         }
     } finally {
       try {
@@ -348,8 +358,9 @@ private[spark] class ApplicationMaster(
       finish(FinalApplicationStatus.SUCCEEDED, ApplicationMaster.EXIT_SUCCESS)
     }
     if (!unregistered) {
-      unregister(finalStatus, finalMsg)
+      // It's ok to clean staging dir first because unmanaged AM can't be retried.
       cleanupStagingDir(stagingDir)
+      unregister(finalStatus, finalMsg)
     }
   }
 
@@ -542,7 +553,7 @@ private[spark] class ApplicationMaster(
   }
 
   private def runExecutorLauncher(): Unit = {
-    val hostname = Utils.localHostName
+    val hostname = Utils.localHostNameForURI()
     val amCores = sparkConf.get(AM_CORES)
     val rpcEnv = RpcEnv.create("sparkYarnAM", hostname, hostname, -1, sparkConf, securityMgr,
       amCores, true)
@@ -678,11 +689,15 @@ private[spark] class ApplicationMaster(
    * Clean up the staging directory.
    */
   private def cleanupStagingDir(stagingDirPath: Path): Unit = {
+    val stagingDirFs = stagingDirPath.getFileSystem(yarnConf)
+    cleanupStagingDir(stagingDirFs, stagingDirPath)
+  }
+
+  private def cleanupStagingDir(fs: FileSystem, stagingDirPath: Path): Unit = {
     try {
       val preserveFiles = sparkConf.get(PRESERVE_STAGING_FILES)
       if (!preserveFiles) {
         logInfo("Deleting staging directory " + stagingDirPath)
-        val fs = stagingDirPath.getFileSystem(yarnConf)
         fs.delete(stagingDirPath, true)
       }
     } catch {
@@ -750,7 +765,7 @@ private[spark] class ApplicationMaster(
                 logError(msg)
                 finish(FinalApplicationStatus.FAILED, exitCode, msg)
               case cause: Throwable =>
-                logError("User class threw exception: " + cause, cause)
+                logError("User class threw exception: ", cause)
                 finish(FinalApplicationStatus.FAILED,
                   ApplicationMaster.EXIT_EXCEPTION_USER_CLASS,
                   "User class threw exception: " + StringUtils.stringifyException(cause))
@@ -782,6 +797,8 @@ private[spark] class ApplicationMaster(
   private class AMEndpoint(override val rpcEnv: RpcEnv, driver: RpcEndpointRef)
     extends RpcEndpoint with Logging {
     @volatile private var shutdown = false
+    @volatile private var exitCode = 0
+
     private val clientModeTreatDisconnectAsFailed =
       sparkConf.get(AM_CLIENT_MODE_TREAT_DISCONNECT_AS_FAILED)
 
@@ -802,7 +819,10 @@ private[spark] class ApplicationMaster(
       case UpdateDelegationTokens(tokens) =>
         SparkHadoopUtil.get.addDelegationTokens(tokens, sparkConf)
 
-      case Shutdown => shutdown = true
+      case Shutdown(code) =>
+        exitCode = code
+        shutdown = true
+        allocator.setShutdown(true)
     }
 
     override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
@@ -846,8 +866,13 @@ private[spark] class ApplicationMaster(
       // This avoids potentially reporting incorrect exit codes if the driver fails
       if (!(isClusterMode || sparkConf.get(YARN_UNMANAGED_AM))) {
         if (shutdown || !clientModeTreatDisconnectAsFailed) {
-          logInfo(s"Driver terminated or disconnected! Shutting down. $remoteAddress")
-          finish(FinalApplicationStatus.SUCCEEDED, ApplicationMaster.EXIT_SUCCESS)
+          if (exitCode == 0) {
+            logInfo(s"Driver terminated or disconnected! Shutting down. $remoteAddress")
+            finish(FinalApplicationStatus.SUCCEEDED, ApplicationMaster.EXIT_SUCCESS)
+          } else {
+            logError(s"Driver terminated with exit code ${exitCode}! Shutting down. $remoteAddress")
+            finish(FinalApplicationStatus.FAILED, exitCode)
+          }
         } else {
           logError(s"Application Master lost connection with driver! Shutting down. $remoteAddress")
           finish(FinalApplicationStatus.FAILED, ApplicationMaster.EXIT_DISCONNECTED)

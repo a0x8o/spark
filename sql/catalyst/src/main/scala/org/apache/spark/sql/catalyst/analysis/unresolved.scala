@@ -106,7 +106,7 @@ case class UnresolvedInlineTable(
  *                    adds [[Project]] to rename the output columns.
  */
 case class UnresolvedTableValuedFunction(
-    name: FunctionIdentifier,
+    name: Seq[String],
     functionArgs: Seq[Expression],
     outputNames: Seq[String])
   extends LeafNode {
@@ -114,14 +114,25 @@ case class UnresolvedTableValuedFunction(
   override def output: Seq[Attribute] = Nil
 
   override lazy val resolved = false
+
+  final override val nodePatterns: Seq[TreePattern] = Seq(UNRESOLVED_TABLE_VALUED_FUNCTION)
 }
 
 object UnresolvedTableValuedFunction {
+  import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+
   def apply(
       name: String,
       functionArgs: Seq[Expression],
       outputNames: Seq[String]): UnresolvedTableValuedFunction = {
-    UnresolvedTableValuedFunction(FunctionIdentifier(name), functionArgs, outputNames)
+    UnresolvedTableValuedFunction(Seq(name), functionArgs, outputNames)
+  }
+
+  def apply(
+      name: FunctionIdentifier,
+      functionArgs: Seq[Expression],
+      outputNames: Seq[String]): UnresolvedTableValuedFunction = {
+    UnresolvedTableValuedFunction(name.asMultipart, functionArgs, outputNames)
   }
 }
 
@@ -151,6 +162,14 @@ case class UnresolvedAttribute(nameParts: Seq[String]) extends Attribute with Un
   override def toString: String = s"'$name"
 
   override def sql: String = nameParts.map(quoteIfNeeded(_)).mkString(".")
+
+  /**
+   * Returns true if this matches the token. This requires the attribute to only have one part in
+   * its name and that matches the given token in a case insensitive way.
+   */
+  def equalsIgnoreCase(token: String): Boolean = {
+    nameParts.length == 1 && nameParts.head.equalsIgnoreCase(token)
+  }
 }
 
 object UnresolvedAttribute {
@@ -250,6 +269,11 @@ case class UnresolvedGenerator(name: FunctionIdentifier, children: Seq[Expressio
     newChildren: IndexedSeq[Expression]): UnresolvedGenerator = copy(children = newChildren)
 }
 
+/**
+ * Represents an unresolved function that is being invoked. The analyzer will resolve the function
+ * arguments first, then look up the function by name and arguments, and return an expression that
+ * can be evaluated to get the result of this function invocation.
+ */
 case class UnresolvedFunction(
     nameParts: Seq[String],
     arguments: Seq[Expression],
@@ -363,7 +387,7 @@ case class UnresolvedStar(target: Option[Seq[String]]) extends Star with Unevalu
     if (target.isEmpty) return input.output
 
     // If there is a table specified, use hidden input attributes as well
-    val hiddenOutput = input.metadataOutput.filter(_.supportsQualifiedStar)
+    val hiddenOutput = input.metadataOutput.filter(_.qualifiedAccessOnly)
     val expandedAttributes = (hiddenOutput ++ input.output).filter(
       matchedQualifier(_, target.get, resolver))
 
@@ -591,7 +615,7 @@ case class GetViewColumnByNameAndOrdinal(
   override def dataType: DataType = throw new UnresolvedException("dataType")
   override def nullable: Boolean = throw new UnresolvedException("nullable")
   override lazy val resolved = false
-  override def stringArgs: Iterator[Any] = super.stringArgs.toSeq.dropRight(1).toIterator
+  override def stringArgs: Iterator[Any] = super.stringArgs.toSeq.dropRight(1).iterator
 }
 
 /**
@@ -645,4 +669,5 @@ case class TempResolvedColumn(child: Expression, nameParts: Seq[String]) extends
   override def dataType: DataType = child.dataType
   override protected def withNewChildInternal(newChild: Expression): Expression =
     copy(child = newChild)
+  override def sql: String = child.sql
 }

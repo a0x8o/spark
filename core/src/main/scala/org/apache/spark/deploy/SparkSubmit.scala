@@ -20,6 +20,7 @@ package org.apache.spark.deploy
 import java.io._
 import java.lang.reflect.{InvocationTargetException, UndeclaredThrowableException}
 import java.net.{URI, URL}
+import java.nio.file.Files
 import java.security.PrivilegedExceptionAction
 import java.text.ParseException
 import java.util.{ServiceLoader, UUID}
@@ -228,15 +229,20 @@ private[spark] class SparkSubmit extends Logging {
     var childMainClass = ""
 
     // Set the cluster manager
-    val clusterManager: Int = args.master match {
-      case "yarn" => YARN
-      case m if m.startsWith("spark") => STANDALONE
-      case m if m.startsWith("mesos") => MESOS
-      case m if m.startsWith("k8s") => KUBERNETES
-      case m if m.startsWith("local") => LOCAL
-      case _ =>
-        error("Master must either be yarn or start with spark, mesos, k8s, or local")
-        -1
+    val clusterManager: Int = args.maybeMaster match {
+      case Some(v) =>
+        assert(args.maybeRemote.isEmpty)
+        v match {
+          case "yarn" => YARN
+          case m if m.startsWith("spark") => STANDALONE
+          case m if m.startsWith("mesos") => MESOS
+          case m if m.startsWith("k8s") => KUBERNETES
+          case m if m.startsWith("local") => LOCAL
+          case _ =>
+            error("Master must either be yarn or start with spark, mesos, k8s, or local")
+            -1
+        }
+      case None => LOCAL // default master or remote mode.
     }
 
     // Set the deploy mode; default is client mode
@@ -258,7 +264,7 @@ private[spark] class SparkSubmit extends Logging {
     }
 
     if (clusterManager == KUBERNETES) {
-      args.master = Utils.checkAndGetK8sMasterUrl(args.master)
+      args.maybeMaster = Option(Utils.checkAndGetK8sMasterUrl(args.master))
       // Make sure KUBERNETES is included in our build if we're trying to use it
       if (!Utils.classIsLoadable(KUBERNETES_CLUSTER_SUBMIT_CLASS) && !Utils.isTesting) {
         error(
@@ -383,43 +389,55 @@ private[spark] class SparkSubmit extends Logging {
       }.orNull
 
       if (isKubernetesClusterModeDriver) {
-        // Replace with the downloaded local jar path to avoid propagating hadoop compatible uris.
-        // Executors will get the jars from the Spark file server.
-        // Explicitly download the related files here
-        args.jars = localJars
-        val filesLocalFiles = Option(args.files).map {
-          downloadFileList(_, targetDir, sparkConf, hadoopConf)
-        }.orNull
-        val archiveLocalFiles = Option(args.archives).map { uris =>
+        // SPARK-33748: this mimics the behaviour of Yarn cluster mode. If the driver is running
+        // in cluster mode, the archives should be available in the driver's current working
+        // directory too.
+        // SPARK-33782 : This downloads all the files , jars , archiveFiles and pyfiles to current
+        // working directory
+        def downloadResourcesToCurrentDirectory(uris: String, isArchive: Boolean = false):
+        String = {
           val resolvedUris = Utils.stringToSeq(uris).map(Utils.resolveURI)
-          val localArchives = downloadFileList(
+          val localResources = downloadFileList(
             resolvedUris.map(
               UriBuilder.fromUri(_).fragment(null).build().toString).mkString(","),
             targetDir, sparkConf, hadoopConf)
-
-          // SPARK-33748: this mimics the behaviour of Yarn cluster mode. If the driver is running
-          // in cluster mode, the archives should be available in the driver's current working
-          // directory too.
-          Utils.stringToSeq(localArchives).map(Utils.resolveURI).zip(resolvedUris).map {
-            case (localArchive, resolvedUri) =>
-              val source = new File(localArchive.getPath)
+          Utils.stringToSeq(localResources).map(Utils.resolveURI).zip(resolvedUris).map {
+            case (localResources, resolvedUri) =>
+              val source = new File(localResources.getPath)
               val dest = new File(
                 ".",
                 if (resolvedUri.getFragment != null) resolvedUri.getFragment else source.getName)
               logInfo(
-                s"Unpacking an archive $resolvedUri " +
+                s"Files  $resolvedUri " +
                   s"from ${source.getAbsolutePath} to ${dest.getAbsolutePath}")
               Utils.deleteRecursively(dest)
-              Utils.unpack(source, dest)
-
+              if (isArchive) {
+                Utils.unpack(source, dest)
+              } else {
+                Files.copy(source.toPath, dest.toPath)
+              }
               // Keep the URIs of local files with the given fragments.
               UriBuilder.fromUri(
-                localArchive).fragment(resolvedUri.getFragment).build().toString
+                localResources).fragment(resolvedUri.getFragment).build().toString
           }.mkString(",")
+        }
+
+        val filesLocalFiles = Option(args.files).map {
+          downloadResourcesToCurrentDirectory(_)
+        }.orNull
+        val jarsLocalJars = Option(args.jars).map {
+          downloadResourcesToCurrentDirectory(_)
+        }.orNull
+        val archiveLocalFiles = Option(args.archives).map {
+          downloadResourcesToCurrentDirectory(_, true)
+        }.orNull
+        val pyLocalFiles = Option(args.pyFiles).map {
+          downloadResourcesToCurrentDirectory(_)
         }.orNull
         args.files = filesLocalFiles
         args.archives = archiveLocalFiles
-        args.pyFiles = localPyFiles
+        args.pyFiles = pyLocalFiles
+        args.jars = jarsLocalJars
       }
     }
 
@@ -584,7 +602,11 @@ private[spark] class SparkSubmit extends Logging {
     val options = List[OptionAssigner](
 
       // All cluster managers
-      OptionAssigner(args.master, ALL_CLUSTER_MGRS, ALL_DEPLOY_MODES, confKey = "spark.master"),
+      OptionAssigner(
+        if (args.maybeRemote.isDefined) args.maybeMaster.orNull else args.master,
+        ALL_CLUSTER_MGRS, ALL_DEPLOY_MODES, confKey = "spark.master"),
+      OptionAssigner(
+        args.maybeRemote.orNull, ALL_CLUSTER_MGRS, ALL_DEPLOY_MODES, confKey = "spark.remote"),
       OptionAssigner(args.deployMode, ALL_CLUSTER_MGRS, ALL_DEPLOY_MODES,
         confKey = SUBMIT_DEPLOY_MODE.key),
       OptionAssigner(args.name, ALL_CLUSTER_MGRS, ALL_DEPLOY_MODES, confKey = "spark.app.name"),
@@ -856,6 +878,9 @@ private[spark] class SparkSubmit extends Logging {
     if (args.verbose && isSqlShell(childMainClass)) {
       childArgs ++= Seq("--verbose")
     }
+
+    sparkConf.set("spark.app.submitTime", System.currentTimeMillis().toString)
+
     (childArgs.toSeq, childClasspath.toSeq, sparkConf, childMainClass)
   }
 
@@ -905,7 +930,7 @@ private[spark] class SparkSubmit extends Logging {
       logInfo(s"Main class:\n$childMainClass")
       logInfo(s"Arguments:\n${childArgs.mkString("\n")}")
       // sysProps may contain sensitive information, so redact before printing
-      logInfo(s"Spark config:\n${Utils.redact(sparkConf.getAll.toMap).mkString("\n")}")
+      logInfo(s"Spark config:\n${Utils.redact(sparkConf.getAll.toMap).sorted.mkString("\n")}")
       logInfo(s"Classpath elements:\n${childClasspath.mkString("\n")}")
       logInfo("\n")
     }
@@ -1019,6 +1044,8 @@ object SparkSubmit extends CommandLineUtils with Logging {
     "org.apache.spark.deploy.k8s.submit.KubernetesClientApplication"
 
   override def main(args: Array[String]): Unit = {
+    Option(System.getenv("SPARK_PREFER_IPV6"))
+      .foreach(System.setProperty("java.net.preferIPv6Addresses", _))
     val submit = new SparkSubmit() {
       self =>
 
@@ -1453,9 +1480,9 @@ private[spark] object SparkSubmitUtils extends Logging {
           throw new RuntimeException(rr.getAllProblemMessages.toString)
         }
         // retrieve all resolved dependencies
+        retrieveOptions.setDestArtifactPattern(packagesDirectory.getAbsolutePath + File.separator +
+          "[organization]_[artifact]-[revision](-[classifier]).[ext]")
         ivy.retrieve(rr.getModuleDescriptor.getModuleRevisionId,
-          packagesDirectory.getAbsolutePath + File.separator +
-            "[organization]_[artifact]-[revision](-[classifier]).[ext]",
           retrieveOptions.setConfs(Array(ivyConfName)))
         resolveDependencyPaths(rr.getArtifacts.toArray, packagesDirectory)
       } finally {

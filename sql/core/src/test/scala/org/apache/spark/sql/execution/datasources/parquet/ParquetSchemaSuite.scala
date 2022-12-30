@@ -28,7 +28,6 @@ import org.apache.parquet.schema.Type._
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.catalyst.ScalaReflection
-import org.apache.spark.sql.execution.QueryExecutionException
 import org.apache.spark.sql.execution.datasources.SchemaColumnConvertNotSupportedException
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.ParquetOutputTimestampType._
@@ -64,12 +63,14 @@ abstract class ParquetSchemaTest extends ParquetTest with SharedSparkSession {
       binaryAsString: Boolean,
       int96AsTimestamp: Boolean,
       caseSensitive: Boolean = false,
+      timestampNTZEnabled: Boolean = true,
       sparkReadSchema: Option[StructType] = None,
       expectedParquetColumn: Option[ParquetColumn] = None): Unit = {
     val converter = new ParquetToSparkSchemaConverter(
       assumeBinaryIsString = binaryAsString,
       assumeInt96IsTimestamp = int96AsTimestamp,
-      caseSensitive = caseSensitive)
+      caseSensitive = caseSensitive,
+      timestampNTZEnabled = timestampNTZEnabled)
 
     test(s"sql <= parquet: $testName") {
       val actualParquetColumn = converter.convertParquetColumn(
@@ -95,10 +96,12 @@ abstract class ParquetSchemaTest extends ParquetTest with SharedSparkSession {
       parquetSchema: String,
       writeLegacyParquetFormat: Boolean,
       outputTimestampType: SQLConf.ParquetOutputTimestampType.Value =
-        SQLConf.ParquetOutputTimestampType.INT96): Unit = {
+        SQLConf.ParquetOutputTimestampType.INT96,
+      timestampNTZEnabled: Boolean = true): Unit = {
     val converter = new SparkToParquetSchemaConverter(
       writeLegacyParquetFormat = writeLegacyParquetFormat,
-      outputTimestampType = outputTimestampType)
+      outputTimestampType = outputTimestampType,
+      timestampNTZEnabled = timestampNTZEnabled)
 
     test(s"sql => parquet: $testName") {
       val actual = converter.convert(sqlSchema)
@@ -944,7 +947,8 @@ class ParquetSchemaSuite extends ParquetSchemaTest {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
       spark.range(3).write.parquet(s"$path/p=1")
-      spark.range(3).select('id cast IntegerType as 'id).write.parquet(s"$path/p=2")
+      spark.range(3).select($"id" cast IntegerType as Symbol("id"))
+        .write.parquet(s"$path/p=2")
 
       val message = intercept[SparkException] {
         spark.read.option("mergeSchema", "true").parquet(path).schema
@@ -977,7 +981,7 @@ class ParquetSchemaSuite extends ParquetSchemaTest {
     withTempPath { dir =>
       val e = testSchemaMismatch(dir.getCanonicalPath, vectorizedReaderEnabled = false)
       val expectedMessage = "Encountered error while reading file"
-      assert(e.getCause.isInstanceOf[QueryExecutionException])
+      assert(e.getCause.isInstanceOf[SparkException])
       assert(e.getCause.getCause.isInstanceOf[ParquetDecodingException])
       assert(e.getCause.getMessage.contains(expectedMessage))
     }
@@ -986,7 +990,7 @@ class ParquetSchemaSuite extends ParquetSchemaTest {
   test("schema mismatch failure error message for parquet vectorized reader") {
     withTempPath { dir =>
       val e = testSchemaMismatch(dir.getCanonicalPath, vectorizedReaderEnabled = true)
-      assert(e.getCause.isInstanceOf[QueryExecutionException])
+      assert(e.getCause.isInstanceOf[SparkException])
       assert(e.getCause.getCause.isInstanceOf[SchemaColumnConvertNotSupportedException])
 
       // Check if the physical type is reporting correctly
@@ -2236,7 +2240,62 @@ class ParquetSchemaSuite extends ParquetSchemaTest {
         |}
         """.stripMargin,
       binaryAsString = true,
-      int96AsTimestamp = int96AsTimestamp)
+      int96AsTimestamp = int96AsTimestamp,
+      timestampNTZEnabled = true)
+  }
+
+  testCatalystToParquet(
+    "TimestampNTZ Spark to Parquet conversion for complex types",
+    StructType(
+      Seq(
+        StructField("f1", TimestampNTZType),
+        StructField("f2", ArrayType(TimestampNTZType)),
+        StructField("f3", StructType(Seq(StructField("f4", TimestampNTZType))))
+      )
+    ),
+    """message spark_schema {
+      |  optional int64 f1 (TIMESTAMP(MICROS,false));
+      |  optional group f2 (LIST) {
+      |    repeated group list {
+      |      optional int64 element (TIMESTAMP(MICROS,false));
+      |    }
+      |  }
+      |  optional group f3 {
+      |    optional int64 f4 (TIMESTAMP(MICROS,false));
+      |  }
+      |}
+      """.stripMargin,
+    writeLegacyParquetFormat = false,
+    timestampNTZEnabled = true)
+
+  for (timestampNTZEnabled <- Seq(true, false)) {
+    val dataType = if (timestampNTZEnabled) TimestampNTZType else TimestampType
+
+    testParquetToCatalyst(
+      "TimestampNTZ Parquet to Spark conversion for complex types, " +
+        s"timestampNTZEnabled: $timestampNTZEnabled",
+      StructType(
+        Seq(
+          StructField("f1", dataType),
+          StructField("f2", ArrayType(dataType)),
+          StructField("f3", StructType(Seq(StructField("f4", dataType))))
+        )
+      ),
+      """message spark_schema {
+        |  optional int64 f1 (TIMESTAMP(MICROS,false));
+        |  optional group f2 (LIST) {
+        |    repeated group list {
+        |      optional int64 element (TIMESTAMP(MICROS,false));
+        |    }
+        |  }
+        |  optional group f3 {
+        |    optional int64 f4 (TIMESTAMP(MICROS,false));
+        |  }
+        |}
+        """.stripMargin,
+      binaryAsString = true,
+      int96AsTimestamp = false,
+      timestampNTZEnabled = timestampNTZEnabled)
   }
 
   private def testSchemaClipping(
@@ -2257,7 +2316,11 @@ class ParquetSchemaSuite extends ParquetSchemaTest {
       caseSensitive: Boolean): Unit = {
     test(s"Clipping - $testName") {
       val actual = ParquetReadSupport.clipParquetSchema(
-        MessageTypeParser.parseMessageType(parquetSchema), catalystSchema, caseSensitive)
+        MessageTypeParser.parseMessageType(parquetSchema),
+        catalystSchema,
+        caseSensitive,
+        useFieldId = false,
+        timestampNTZEnabled = true)
 
       try {
         expectedSchema.checkContains(actual)
@@ -2821,7 +2884,11 @@ class ParquetSchemaSuite extends ParquetSchemaTest {
       }
       assertThrows[RuntimeException] {
         ParquetReadSupport.clipParquetSchema(
-          MessageTypeParser.parseMessageType(parquetSchema), catalystSchema, caseSensitive = false)
+         MessageTypeParser.parseMessageType(parquetSchema),
+          catalystSchema,
+          caseSensitive = false,
+          useFieldId = false,
+          timestampNTZEnabled = false)
       }
     }
 }

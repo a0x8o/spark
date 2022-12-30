@@ -32,7 +32,7 @@ import org.apache.spark.sql.connector.catalog.{CatalogV2Util, SessionConfigSuppo
 import org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{LongType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 private[sql] object DataSourceV2Utils extends Logging {
@@ -124,9 +124,17 @@ private[sql] object DataSourceV2Utils extends Logging {
         val timestamp = hasCatalog.extractTimeTravelTimestamp(dsOptions)
 
         val timeTravelVersion = if (version.isPresent) Some(version.get) else None
-        val timeTravelTimestamp = if (timestamp.isPresent) Some(Literal(timestamp.get)) else None
+        val timeTravelTimestamp = if (timestamp.isPresent) {
+          if (timestamp.get.forall(_.isDigit)) {
+            Some(Literal(timestamp.get.toLong, LongType))
+          } else {
+            Some(Literal(timestamp.get))
+          }
+        } else {
+          None
+        }
         val timeTravel = TimeTravelSpec.create(timeTravelTimestamp, timeTravelVersion, conf)
-        (CatalogV2Util.loadTable(catalog, ident, timeTravel).get, Some(catalog), Some(ident))
+        (CatalogV2Util.getTable(catalog, ident, timeTravel), Some(catalog), Some(ident))
       case _ =>
         // TODO: Non-catalog paths for DSV2 are currently not well defined.
         val tbl = DataSourceV2Utils.getTableFromProvider(provider, dsOptions, userSpecifiedSchema)
@@ -142,6 +150,7 @@ private[sql] object DataSourceV2Utils extends Logging {
     }
   }
 
+  private lazy val objectMapper = new ObjectMapper()
   private def getOptionsWithPaths(
       extraOptions: CaseInsensitiveMap[String],
       paths: String*): CaseInsensitiveMap[String] = {
@@ -150,7 +159,6 @@ private[sql] object DataSourceV2Utils extends Logging {
     } else if (paths.length == 1) {
       extraOptions + ("path" -> paths.head)
     } else {
-      val objectMapper = new ObjectMapper()
       extraOptions + ("paths" -> objectMapper.writeValueAsString(paths.toArray))
     }
   }

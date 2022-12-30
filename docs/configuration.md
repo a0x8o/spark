@@ -28,7 +28,7 @@ Spark provides three locations to configure the system:
   system properties.
 * [Environment variables](#environment-variables) can be used to set per-machine settings, such as
   the IP address, through the `conf/spark-env.sh` script on each node.
-* [Logging](#configuring-logging) can be configured through `log4j.properties`.
+* [Logging](#configuring-logging) can be configured through `log4j2.properties`.
 
 # Spark Properties
 
@@ -183,7 +183,7 @@ of the most common options to set are:
 </tr>
 <tr>
   <td><code>spark.driver.memoryOverhead</code></td>
-  <td>driverMemory * 0.10, with minimum of 384 </td>
+  <td>driverMemory * <code>spark.driver.memoryOverheadFactor</code>, with minimum of 384 </td>
   <td>
     Amount of non-heap memory to be allocated per driver process in cluster mode, in MiB unless
     otherwise specified. This is memory that accounts for things like VM overheads, interned strings,
@@ -197,6 +197,21 @@ of the most common options to set are:
     and <code>spark.driver.memory</code>.
   </td>
   <td>2.3.0</td>
+</tr>
+<tr>
+  <td><code>spark.driver.memoryOverheadFactor</code></td>
+  <td>0.10</td>
+  <td>
+    Fraction of driver memory to be allocated as additional non-heap memory per driver process in cluster mode.
+    This is memory that accounts for things like VM overheads, interned strings,
+    other native overheads, etc. This tends to grow with the container size.
+    This value defaults to 0.10 except for Kubernetes non-JVM jobs, which defaults to
+    0.40. This is done as non-JVM tasks need more non-JVM heap space and such tasks
+    commonly fail with "Memory Overhead Exceeded" errors. This preempts this error
+    with a higher default.
+    This value is ignored if <code>spark.driver.memoryOverhead</code> is set directly.
+  </td>
+  <td>3.3.0</td>
 </tr>
 <tr>
  <td><code>spark.driver.resource.{resourceName}.amount</code></td>
@@ -272,7 +287,7 @@ of the most common options to set are:
 </tr>
 <tr>
  <td><code>spark.executor.memoryOverhead</code></td>
-  <td>executorMemory * 0.10, with minimum of 384 </td>
+  <td>executorMemory * <code>spark.executor.memoryOverheadFactor</code>, with minimum of 384 </td>
   <td>
     Amount of additional memory to be allocated per executor process, in MiB unless otherwise specified.
     This is memory that accounts for things like VM overheads, interned strings, other native overheads, etc.
@@ -286,6 +301,21 @@ of the most common options to set are:
     <code>spark.executor.pyspark.memory</code>.
   </td>
   <td>2.3.0</td>
+</tr>
+<tr>
+  <td><code>spark.executor.memoryOverheadFactor</code></td>
+  <td>0.10</td>
+  <td>
+    Fraction of executor memory to be allocated as additional non-heap memory per executor process.
+    This is memory that accounts for things like VM overheads, interned strings,
+    other native overheads, etc. This tends to grow with the container size.
+    This value defaults to 0.10 except for Kubernetes non-JVM jobs, which defaults to
+    0.40. This is done as non-JVM tasks need more non-JVM heap space and such tasks
+    commonly fail with "Memory Overhead Exceeded" errors. This preempts this error
+    with a higher default.
+    This value is ignored if <code>spark.executor.memoryOverhead</code> is set directly.
+  </td>
+  <td>3.3.0</td>
 </tr>
 <tr>
  <td><code>spark.executor.resource.{resourceName}.amount</code></td>
@@ -419,10 +449,10 @@ of the most common options to set are:
 </tr>
 <tr>
   <td><code>spark.driver.log.layout</code></td>
-  <td>%d{yy/MM/dd HH:mm:ss.SSS} %t %p %c{1}: %m%n</td>
+  <td>%d{yy/MM/dd HH:mm:ss.SSS} %t %p %c{1}: %m%n%ex</td>
   <td>
     The layout for the driver logs that are synced to <code>spark.driver.log.dfsDir</code>. If this is not configured,
-    it uses the layout for the first appender defined in log4j.properties. If that is also not configured, driver logs
+    it uses the layout for the first appender defined in log4j2.properties. If that is also not configured, driver logs
     use the default layout.
   </td>
   <td>3.0.0</td>
@@ -437,6 +467,43 @@ of the most common options to set are:
     file to use erasure coding, it will simply use file system defaults.
   </td>
   <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.decommission.enabled</code></td>
+  <td>false</td>
+  <td>
+    When decommission enabled, Spark will try its best to shut down the executor gracefully. 
+    Spark will try to migrate all the RDD blocks (controlled by <code>spark.storage.decommission.rddBlocks.enabled</code>)
+    and shuffle blocks (controlled by <code>spark.storage.decommission.shuffleBlocks.enabled</code>) from the decommissioning 
+    executor to a remote executor when <code>spark.storage.decommission.enabled</code> is enabled. 
+    With decommission enabled, Spark will also decommission an executor instead of killing when <code>spark.dynamicAllocation.enabled</code> enabled.
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.executor.decommission.killInterval</code></td>
+  <td>(none)</td>
+  <td>
+    Duration after which a decommissioned executor will be killed forcefully by an outside (e.g. non-spark) service.
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.executor.decommission.forceKillTimeout</code></td>
+  <td>(none)</td>
+  <td>
+    Duration after which a Spark will force a decommissioning executor to exit. 
+    This should be set to a high value in most situations as low values will prevent block migrations from having enough time to complete.
+  </td>
+  <td>3.2.0</td>
+</tr>
+<tr>
+  <td><code>spark.executor.decommission.signal</code></td>
+  <td>PWR</td>
+  <td>
+    The signal that used to trigger the executor to start decommission.
+  </td>
+  <td>3.2.0</td>
 </tr>
 </table>
 
@@ -651,13 +718,23 @@ Apart from these, the following properties are also available, and may be useful
 </tr>
 <tr>
   <td><code>spark.redaction.regex</code></td>
-  <td>(?i)secret|password|token</td>
+  <td>(?i)secret|password|token|access[.]key</td>
   <td>
     Regex to decide which Spark configuration properties and environment variables in driver and
     executor environments contain sensitive information. When this regex matches a property key or
     value, the value is redacted from the environment UI and various logs like YARN and event logs.
   </td>
   <td>2.1.2</td>
+</tr>
+<tr>
+  <td><code>spark.redaction.string.regex</code></td>
+  <td>(none)</td>
+  <td>
+    Regex to decide which parts of strings produced by Spark contain sensitive information. 
+    When this regex matches a string part, that string part is replaced by a dummy value. 
+    This is currently used to redact the output of SQL explain commands.
+  </td>
+  <td>2.2.0</td>
 </tr>
 <tr>
   <td><code>spark.python.profile</code></td>
@@ -877,6 +954,23 @@ Apart from these, the following properties are also available, and may be useful
   <td>1.4.0</td>
 </tr>
 <tr>
+  <td><code>spark.shuffle.unsafe.file.output.buffer</code></td>
+  <td>32k</td>
+  <td>
+    The file system for this buffer size after each partition is written in unsafe shuffle writer. 
+    In KiB unless otherwise specified.
+  </td>
+  <td>2.3.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.spill.diskWriteBufferSize</code></td>
+  <td>1024 * 1024</td>
+  <td>
+    The buffer size, in bytes, to use when writing the sorted records to an on-disk file. 
+  </td>
+  <td>2.3.0</td>
+</tr>
+<tr>
   <td><code>spark.shuffle.io.maxRetries</code></td>
   <td>3</td>
   <td>
@@ -959,12 +1053,34 @@ Apart from these, the following properties are also available, and may be useful
   <td>1.2.0</td>
 </tr>
 <tr>
+  <td><code>spark.shuffle.service.name</code></td>
+  <td>spark_shuffle</td>
+  <td>
+    The configured name of the Spark shuffle service the client should communicate with. 
+    This must match the name used to configure the Shuffle within the YARN NodeManager configuration 
+    (<code>yarn.nodemanager.aux-services</code>). Only takes effect 
+    when <code>spark.shuffle.service.enabled</code> is set to true.
+  </td>
+  <td>3.2.0</td>
+</tr>
+<tr>
   <td><code>spark.shuffle.service.index.cache.size</code></td>
   <td>100m</td>
   <td>
     Cache entries limited to the specified memory footprint, in bytes unless otherwise specified.
   </td>
   <td>2.3.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.service.removeShuffle</code></td>
+  <td>false</td>
+  <td>
+    Whether to use the ExternalShuffleService for deleting shuffle blocks for
+    deallocated executors when the shuffle is no longer needed. Without this enabled,
+    shuffle data on executors that are deallocated will remain on disk until the
+    application ends.
+  </td>
+  <td>3.3.0</td>
 </tr>
 <tr>
   <td><code>spark.shuffle.maxChunksBeingTransferred</code></td>
@@ -986,6 +1102,14 @@ Apart from these, the following properties are also available, and may be useful
     map-side aggregation and there are at most this many reduce partitions.
   </td>
   <td>1.1.1</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.sort.io.plugin.class</code></td>
+  <td>org.apache.spark.shuffle.sort.io.LocalDiskShuffleDataIO</td>
+  <td>
+    Name of the class to use for shuffle IO.
+  </td>
+  <td>3.0.0</td>
 </tr>
 <tr>
   <td><code>spark.shuffle.spill.compress</code></td>
@@ -1021,6 +1145,58 @@ Apart from these, the following properties are also available, and may be useful
     When we fail to register to the external shuffle service, we will retry for maxAttempts times.
   </td>
   <td>2.3.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.reduceLocality.enabled</code></td>
+  <td>true</td>
+  <td>
+    Whether to compute locality preferences for reduce tasks.
+  </td>
+  <td>1.5.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.mapOutput.minSizeForBroadcast</code></td>
+  <td>512k</td>
+  <td>
+    The size at which we use Broadcast to send the map output statuses to the executors.
+  </td>
+  <td>2.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.detectCorrupt</code></td>
+  <td>true</td>
+  <td>
+    Whether to detect any corruption in fetched blocks.
+  </td>
+  <td>2.2.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.detectCorrupt.useExtraMemory</code></td>
+  <td>false</td>
+  <td>
+    If enabled, part of a compressed/encrypted stream will be de-compressed/de-crypted by using extra memory 
+    to detect early corruption. Any IOException thrown will cause the task to be retried once 
+    and if it fails again with same exception, then FetchFailedException will be thrown to retry previous stage.
+  </td>
+  <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.useOldFetchProtocol</code></td>
+  <td>false</td>
+  <td>
+    Whether to use the old protocol while doing the shuffle block fetching. It is only enabled while we need the 
+    compatibility in the scenario of new Spark version job fetching shuffle blocks from old version external shuffle service.
+  </td>
+  <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.readHostLocalDisk</code></td>
+  <td>true</td>
+  <td>
+    If enabled (and <code>spark.shuffle.useOldFetchProtocol</code> is disabled, shuffle blocks requested from those block managers 
+    which are running on the same host are read from the disk directly instead of being fetched as remote blocks over the network.
+  </td>
+  <td>3.0.0</td>
 </tr>
 <tr>
   <td><code>spark.files.io.connectionTimeout</code></td>
@@ -1060,6 +1236,22 @@ Apart from these, the following properties are also available, and may be useful
     <code>spark.dynamicAllocation.executorIdleTimeout</code> and will be released accordingly.
   </td>
   <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.service.db.enabled</code></td>
+  <td>true</td>
+  <td>
+    Whether to use db in ExternalShuffleService. Note that this only affects standalone mode.
+  </td>
+  <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.service.db.backend</code></td>
+  <td>LEVELDB</td>
+  <td>
+    Specifies a disk-based store used in shuffle service local db. Setting as LEVELDB or ROCKSDB.
+  </td>
+  <td>3.4.0</td>
 </tr>
 </table>
 
@@ -1188,6 +1380,15 @@ Apart from these, the following properties are also available, and may be useful
   <td>1.1.1</td>
 </tr>
 <tr>
+  <td><code>spark.ui.store.path</code></td>
+  <td>None</td>
+  <td>
+    Local directory where to cache application information for live UI.
+    By default this is not set, meaning all application information will be kept in memory.
+  </td>
+  <td>3.4.0</td>
+</tr>
+<tr>
   <td><code>spark.ui.killEnabled</code></td>
   <td>true</td>
   <td>
@@ -1283,7 +1484,9 @@ Apart from these, the following properties are also available, and may be useful
     This setting affects all the workers and application UIs running in the cluster and must be set
     identically on all the workers, drivers and masters. In is only effective when
     <code>spark.ui.reverseProxy</code> is turned on. This setting is not needed when the Spark
-    master web UI is directly reachable.  </td>
+    master web UI is directly reachable.<br/>
+    Note that the value of the setting can't contain the keyword `proxy` or `history` after split by "/". Spark UI relies on both keywords for getting REST API endpoints from URIs.
+  </td>
   <td>2.1.0</td>
 </tr>
 <tr>
@@ -1395,6 +1598,14 @@ Apart from these, the following properties are also available, and may be useful
   <td>2.2.3</td>
 </tr>
 <tr>
+  <td><code>spark.ui.timelineEnabled</code></td>
+  <td>true</td>
+  <td>
+    Whether to display event timeline data on UI pages.
+  </td>
+  <td>3.4.0</td>
+</tr>
+<tr>
   <td><code>spark.ui.timeline.executors.maximum</code></td>
   <td>250</td>
   <td>
@@ -1425,6 +1636,14 @@ Apart from these, the following properties are also available, and may be useful
     The maximum number of tasks shown in the event timeline.
   </td>
   <td>1.4.0</td>
+</tr>
+<tr>
+  <td><code>spark.appStatusStore.diskStoreDir</code></td>
+  <td>None</td>
+  <td>
+    Local directory where to store diagnostic information of SQL executions. This configuration is only for live UI.
+  </td>
+  <td>3.4.0</td>
 </tr>
 </table>
 
@@ -1471,7 +1690,8 @@ Apart from these, the following properties are also available, and may be useful
   <td>
     Block size used in LZ4 compression, in the case when LZ4 compression codec
     is used. Lowering this block size will also lower shuffle memory usage when LZ4 is used.
-    Default unit is bytes, unless otherwise specified.
+    Default unit is bytes, unless otherwise specified. This configuration only applies to
+    `spark.io.compression.codec`.
   </td>
   <td>1.4.0</td>
 </tr>
@@ -1481,7 +1701,8 @@ Apart from these, the following properties are also available, and may be useful
   <td>
     Block size in Snappy compression, in the case when Snappy compression codec is used. 
     Lowering this block size will also lower shuffle memory usage when Snappy is used.
-    Default unit is bytes, unless otherwise specified.
+    Default unit is bytes, unless otherwise specified. This configuration only applies
+    to `spark.io.compression.codec`.
   </td>
   <td>1.4.0</td>
 </tr>
@@ -1490,7 +1711,8 @@ Apart from these, the following properties are also available, and may be useful
   <td>1</td>
   <td>
     Compression level for Zstd compression codec. Increasing the compression level will result in better
-    compression at the expense of more CPU and memory.
+    compression at the expense of more CPU and memory. This configuration only applies to 
+    `spark.io.compression.codec`.
   </td>
   <td>2.3.0</td>
 </tr>
@@ -1500,7 +1722,8 @@ Apart from these, the following properties are also available, and may be useful
   <td>
     Buffer size in bytes used in Zstd compression, in the case when Zstd compression codec
     is used. Lowering this size will lower the shuffle memory usage when Zstd is used, but it
-    might increase the compression cost because of excessive JNI call overhead.
+    might increase the compression cost because of excessive JNI call overhead. This
+    configuration only applies to `spark.io.compression.codec`.
   </td>
   <td>2.3.0</td>
 </tr>
@@ -1673,6 +1896,14 @@ Apart from these, the following properties are also available, and may be useful
   <td>1.6.0</td>
 </tr>
 <tr>
+  <td><code>spark.storage.unrollMemoryThreshold</code></td>
+  <td>1024 * 1024</td>
+  <td>
+    Initial memory to request before unrolling any block.
+  </td>
+  <td>1.1.0</td>
+</tr>
+<tr>
   <td><code>spark.storage.replication.proactive</code></td>
   <td>false</td>
   <td>
@@ -1681,6 +1912,16 @@ Apart from these, the following properties are also available, and may be useful
     to get the replication level of the block to the initial number.
   </td>
   <td>2.2.0</td>
+</tr>
+<tr>
+  <td><code>spark.storage.localDiskByExecutors.cacheSize</code></td>
+  <td>1000</td>
+  <td>
+    The max number of executors for which the local dirs are stored. This size is both applied for the driver and 
+    both for the executors side to avoid having an unbounded store. This cache will be used to avoid the network 
+    in case of fetching disk persisted RDD blocks or shuffle blocks (when <code>spark.shuffle.readHostLocalDisk</code> is set) from the same host.
+  </td>
+  <td>3.0.0</td>
 </tr>
 <tr>
   <td><code>spark.cleaner.periodicGC.interval</code></td>
@@ -1754,6 +1995,14 @@ Apart from these, the following properties are also available, and may be useful
   <td>2.1.1</td>
 </tr>
 <tr>
+  <td><code>spark.broadcast.UDFCompressionThreshold</code></td>
+  <td>1 * 1024 * 1024</td>
+  <td>
+    The threshold at which user-defined functions (UDFs) and Python RDD commands are compressed by broadcast in bytes unless otherwise specified.
+  </td>
+  <td>3.0.0</td>
+</tr>
+<tr>
   <td><code>spark.executor.cores</code></td>
   <td>
     1 in YARN mode, all the available cores on the worker in
@@ -1822,10 +2071,29 @@ Apart from these, the following properties are also available, and may be useful
   <td><code>spark.files.overwrite</code></td>
   <td>false</td>
   <td>
-    Whether to overwrite files added through SparkContext.addFile() when the target file exists and
-    its contents do not match those of the source.
+    Whether to overwrite any files which exist at the startup. Users can not overwrite the files added by
+    <code>SparkContext.addFile</code> or <code>SparkContext.addJar</code> before even if this option is set 
+    <code>true</code>.
   </td>
   <td>1.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.files.ignoreCorruptFiles</code></td>
+  <td>false</td>
+  <td>
+    Whether to ignore corrupt files. If true, the Spark jobs will continue to run when encountering corrupted or 
+    non-existing files and contents that have been read will still be returned.
+  </td>
+  <td>2.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.files.ignoreMissingFiles</code></td>
+  <td>false</td>
+  <td>
+    Whether to ignore missing files. If true, the Spark jobs will continue to run when encountering missing files and 
+    the contents that have been read will still be returned.
+  </td>
+  <td>2.4.0</td>
 </tr>
 <tr>
   <td><code>spark.files.maxPartitionBytes</code></td>
@@ -1881,6 +2149,67 @@ Apart from these, the following properties are also available, and may be useful
   <td>0.9.2</td>
 </tr>
 <tr>
+  <td><code>spark.storage.decommission.enabled</code></td>
+  <td>false</td>
+  <td>
+    Whether to decommission the block manager when decommissioning executor.
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.storage.decommission.shuffleBlocks.enabled</code></td>
+  <td>true</td>
+  <td>
+    Whether to transfer shuffle blocks during block manager decommissioning. Requires a migratable shuffle resolver 
+    (like sort based shuffle).
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.storage.decommission.shuffleBlocks.maxThreads</code></td>
+  <td>8</td>
+  <td>
+    Maximum number of threads to use in migrating shuffle files.
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.storage.decommission.rddBlocks.enabled</code></td>
+  <td>true</td>
+  <td>
+    Whether to transfer RDD blocks during block manager decommissioning.
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.storage.decommission.fallbackStorage.path</code></td>
+  <td>(none)</td>
+  <td>
+    The location for fallback storage during block manager decommissioning. For example, <code>s3a://spark-storage/</code>. 
+    In case of empty, fallback storage is disabled. The storage should be managed by TTL because Spark will not clean it up.
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
+  <td><code>spark.storage.decommission.fallbackStorage.cleanUp</code></td>
+  <td>false</td>
+  <td>
+    If true, Spark cleans up its fallback storage data during shutting down.
+  </td>
+  <td>3.2.0</td>
+</tr>
+<tr>
+  <td><code>spark.storage.decommission.shuffleBlocks.maxDiskSize</code></td>
+  <td>(none)</td>
+  <td>
+    Maximum disk space to use to store shuffle blocks before rejecting remote shuffle blocks. 
+    Rejecting remote shuffle blocks means that an executor will not receive any shuffle migrations, 
+    and if there are no other executors available for migration then shuffle blocks will be lost unless 
+    <code>spark.storage.decommission.fallbackStorage.path</code> is configured.
+  </td>
+  <td>3.2.0</td>
+</tr>
+<tr>
   <td><code>spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version</code></td>
   <td>1</td>
   <td>
@@ -1907,6 +2236,7 @@ Apart from these, the following properties are also available, and may be useful
   </td>
   <td>3.0.0</td>
 </tr>
+<tr>
   <td><code>spark.executor.processTreeMetrics.enabled</code></td>
   <td>false</td>
   <td>
@@ -1917,6 +2247,7 @@ Apart from these, the following properties are also available, and may be useful
     exists.
   </td>
   <td>3.0.0</td>
+</tr>
 <tr>
   <td><code>spark.executor.metrics.pollingInterval</code></td>
   <td>0</td>
@@ -1928,6 +2259,32 @@ Apart from these, the following properties are also available, and may be useful
     If positive, the polling is done at this interval.
   </td>
   <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.eventLog.gcMetrics.youngGenerationGarbageCollectors</code></td>
+  <td>Copy,PS Scavenge,ParNew,G1 Young Generation</td>
+  <td>
+    Names of supported young generation garbage collector. A name usually is the return of GarbageCollectorMXBean.getName.
+    The built-in young generation garbage collectors are Copy,PS Scavenge,ParNew,G1 Young Generation.
+  </td>
+  <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.eventLog.gcMetrics.oldGenerationGarbageCollectors</code></td>
+  <td>MarkSweepCompact,PS MarkSweep,ConcurrentMarkSweep,G1 Old Generation</td>
+  <td>
+    Names of supported old generation garbage collector. A name usually is the return of GarbageCollectorMXBean.getName.
+    The built-in old generation garbage collectors are MarkSweepCompact,PS MarkSweep,ConcurrentMarkSweep,G1 Old Generation.
+  </td>
+  <td>3.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.executor.metrics.fileSystemSchemes</code></td>
+  <td>file,hdfs</td>
+  <td>
+    The file system schemes to report in executor metrics.
+  </td>
+  <td>3.1.0</td>
 </tr>
 </table>
 
@@ -2037,23 +2394,6 @@ Apart from these, the following properties are also available, and may be useful
     to port + maxRetries.
   </td>
   <td>1.1.1</td>
-</tr>
-<tr>
-  <td><code>spark.rpc.numRetries</code></td>
-  <td>3</td>
-  <td>
-    Number of times to retry before an RPC task gives up.
-    An RPC task will run at most times of this number.
-  </td>
-  <td>1.4.0</td>
-</tr>
-<tr>
-  <td><code>spark.rpc.retry.wait</code></td>
-  <td>3s</td>
-  <td>
-    Duration for an RPC ask operation to wait before retrying.
-  </td>
-  <td>1.4.0</td>
 </tr>
 <tr>
   <td><code>spark.rpc.askTimeout</code></td>
@@ -2275,6 +2615,16 @@ Apart from these, the following properties are also available, and may be useful
   <td>2.4.1</td>
 </tr>
 <tr>
+  <td><code>spark.standalone.submit.waitAppCompletion</code></td>
+  <td>false</td>
+  <td>
+    If set to true, Spark will merge ResourceProfiles when different profiles are specified in RDDs that get combined into a single stage. 
+    When they are merged, Spark chooses the maximum of each resource and creates a new ResourceProfile. 
+    The default of false results in Spark throwing an exception if multiple different ResourceProfiles are found in RDDs going into the same stage.
+  </td>
+  <td>3.1.0</td>
+</tr>
+<tr>
   <td><code>spark.excludeOnFailure.enabled</code></td>
   <td>
     false
@@ -2434,6 +2784,41 @@ Apart from these, the following properties are also available, and may be useful
   <td>3.0.0</td>
 </tr>
 <tr>
+  <td><code>spark.speculation.efficiency.processRateMultiplier</code></td>
+  <td>0.75</td>
+  <td>
+    A multiplier that used when evaluating inefficient tasks. The higher the multiplier
+    is, the more tasks will be possibly considered as inefficient.
+  </td>
+  <td>3.4.0</td>
+</tr>
+<tr>
+  <td><code>spark.speculation.efficiency.longRunTaskFactor</code></td>
+  <td>2</td>
+  <td>
+    A task will be speculated anyway as long as its duration has exceeded the value of multiplying
+    the factor and the time threshold (either be <code>spark.speculation.multiplier</code>
+    * successfulTaskDurations.median or <code>spark.speculation.minTaskRuntime</code>) regardless
+    of it's data process rate is good or not. This avoids missing the inefficient tasks when task
+    slow isn't related to data process rate.
+  </td>
+  <td>3.4.0</td>
+</tr>
+<tr>
+  <td><code>spark.speculation.efficiency.enabled</code></td>
+  <td>true</td>
+  <td>
+    When set to true, spark will evaluate the efficiency of task processing through the stage task
+    metrics or its duration, and only need to speculate the inefficient tasks. A task is inefficient
+    when 1)its data process rate is less than the average data process rate of all successful tasks
+    in the stage multiplied by a multiplier or 2)its duration has exceeded the value of multiplying
+     <code>spark.speculation.efficiency.longRunTaskFactor</code> and the time threshold (either be
+     <code>spark.speculation.multiplier</code> * successfulTaskDurations.median or
+    <code>spark.speculation.minTaskRuntime</code>).
+  </td>
+  <td>3.4.0</td>
+</tr>
+<tr>
   <td><code>spark.task.cpus</code></td>
   <td>1</td>
   <td>
@@ -2461,9 +2846,10 @@ Apart from these, the following properties are also available, and may be useful
   <td><code>spark.task.maxFailures</code></td>
   <td>4</td>
   <td>
-    Number of failures of any particular task before giving up on the job.
+    Number of continuous failures of any particular task before giving up on the job.
     The total number of failures spread across different tasks will not cause the job
-    to fail; a particular task has to fail this number of attempts.
+    to fail; a particular task has to fail this number of attempts continuously.
+    If any attempt succeeds, the failure count for the task will be reset.
     Should be greater than or equal to 1. Number of allowed retries = this value - 1.
   </td>
   <td>0.8.0</td>
@@ -2521,6 +2907,15 @@ Apart from these, the following properties are also available, and may be useful
     Number of consecutive stage attempts allowed before a stage is aborted.
   </td>
   <td>2.2.0</td>
+</tr>
+<tr>
+  <td><code>spark.stage.ignoreDecommissionFetchFailure</code></td>
+  <td>false</td>
+  <td>
+    Whether ignore stage fetch failure caused by executor decommission when
+    count <code>spark.stage.maxConsecutiveAttempts</code>
+  </td>
+  <td>3.4.0</td>
 </tr>
 </table>
 
@@ -2681,9 +3076,9 @@ Apart from these, the following properties are also available, and may be useful
 </tr>
 <tr>
   <td><code>spark.dynamicAllocation.shuffleTracking.enabled</code></td>
-  <td><code>false</code></td>
+  <td><code>true</code></td>
   <td>
-    Experimental. Enables shuffle file tracking for executors, which allows dynamic allocation
+    Enables shuffle file tracking for executors, which allows dynamic allocation
     without the need for an external shuffle service. This option will try to keep alive executors
     that are storing shuffle data for active jobs.
   </td>
@@ -3080,8 +3475,8 @@ Note: When running Spark on YARN in `cluster` mode, environment variables need t
 # Configuring Logging
 
 Spark uses [log4j](http://logging.apache.org/log4j/) for logging. You can configure it by adding a
-`log4j.properties` file in the `conf` directory. One way to start is to copy the existing
-`log4j.properties.template` located there.
+`log4j2.properties` file in the `conf` directory. One way to start is to copy the existing
+`log4j2.properties.template` located there.
 
 By default, Spark adds 1 record to the MDC (Mapped Diagnostic Context): `mdc.taskName`, which shows something
 like `task 1.0 in stage 0.0`. You can add `%X{mdc.taskName}` to your patternLayout in
@@ -3092,7 +3487,7 @@ The key in MDC will be the string of "mdc.$name".
 # Overriding configuration directory
 
 To specify a different configuration directory other than the default "SPARK_HOME/conf",
-you can set SPARK_CONF_DIR. Spark will use the configuration files (spark-defaults.conf, spark-env.sh, log4j.properties, etc)
+you can set SPARK_CONF_DIR. Spark will use the configuration files (spark-defaults.conf, spark-env.sh, log4j2.properties, etc)
 from this directory.
 
 # Inheriting Hadoop Cluster Configuration
@@ -3160,9 +3555,9 @@ See your cluster manager specific page for requirements and details on each of -
 # Stage Level Scheduling Overview
 
 The stage level scheduling feature allows users to specify task and executor resource requirements at the stage level. This allows for different stages to run with executors that have different resources. A prime example of this is one ETL stage runs with executors with just CPUs, the next stage is an ML stage that needs GPUs. Stage level scheduling allows for user to request different executors that have GPUs when the ML stage runs rather then having to acquire executors with GPUs at the start of the application and them be idle while the ETL stage is being run.
-This is only available for the RDD API in Scala, Java, and Python.  It is available on YARN and Kubernetes when dynamic allocation is enabled. See the [YARN](running-on-yarn.html#stage-level-scheduling-overview) page or [Kubernetes](running-on-kubernetes.html#stage-level-scheduling-overview) page for more implementation details.
+This is only available for the RDD API in Scala, Java, and Python.  It is available on YARN, Kubernetes and Standalone when dynamic allocation is enabled. When dynamic allocation is disabled, it allows users to specify different task resource requirements at stage level, and this is supported on Standalone cluster right now. See the [YARN](running-on-yarn.html#stage-level-scheduling-overview) page or [Kubernetes](running-on-kubernetes.html#stage-level-scheduling-overview) page or [Standalone](spark-standalone.html#stage-level-scheduling-overview) page for more implementation details.
 
-See the `RDD.withResources` and `ResourceProfileBuilder` API's for using this feature. The current implementation acquires new executors for each `ResourceProfile`  created and currently has to be an exact match. Spark does not try to fit tasks into an executor that require a different ResourceProfile than the executor was created with. Executors that are not in use will idle timeout with the dynamic allocation logic. The default configuration for this feature is to only allow one ResourceProfile per stage. If the user associates more then 1 ResourceProfile to an RDD, Spark will throw an exception by default. See config `spark.scheduler.resource.profileMergeConflicts` to control that behavior. The current merge strategy Spark implements when `spark.scheduler.resource.profileMergeConflicts` is enabled is a simple max of each resource within the conflicting ResourceProfiles. Spark will create a new ResourceProfile with the max of each of the resources.
+See the `RDD.withResources` and `ResourceProfileBuilder` API's for using this feature. When dynamic allocation is disabled, tasks with different task resource requirements will share executors with `DEFAULT_RESOURCE_PROFILE`. While when dynamic allocation is enabled, the current implementation acquires new executors for each `ResourceProfile`  created and currently has to be an exact match. Spark does not try to fit tasks into an executor that require a different ResourceProfile than the executor was created with. Executors that are not in use will idle timeout with the dynamic allocation logic. The default configuration for this feature is to only allow one ResourceProfile per stage. If the user associates more then 1 ResourceProfile to an RDD, Spark will throw an exception by default. See config `spark.scheduler.resource.profileMergeConflicts` to control that behavior. The current merge strategy Spark implements when `spark.scheduler.resource.profileMergeConflicts` is enabled is a simple max of each resource within the conflicting ResourceProfiles. Spark will create a new ResourceProfile with the max of each of the resources.
 
 # Push-based shuffle overview
 
@@ -3251,6 +3646,15 @@ Push-based shuffle helps improve the reliability and performance of spark shuffl
   <td>3.2.0</td>
 </tr>
 <tr>
+  <td><code>spark.shuffle.push.numPushThreads</code></td>
+  <td>(none)</td>
+  <td>
+    Specify the number of threads in the block pusher pool. These threads assist in creating connections and pushing blocks to remote external shuffle services. 
+    By default, the threadpool size is equal to the number of spark executor cores.
+  </td>
+  <td>3.2.0</td>
+</tr>
+<tr>
   <td><code>spark.shuffle.push.maxBlockSizeToPush</code></td>
   <td><code>1m</code></td>
   <td>
@@ -3267,5 +3671,30 @@ Push-based shuffle helps improve the reliability and performance of spark shuffl
     The max size of a batch of shuffle blocks to be grouped into a single push request. Default is set to <code>3m</code> in order to keep it slightly higher than <code>spark.storage.memoryMapThreshold</code> default which is <code>2m</code> as it is very likely that each batch of block gets memory mapped which incurs higher overhead.
   </td>
   <td>3.2.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.push.merge.finalizeThreads</code></td>
+  <td>8</td>
+  <td>
+    Number of threads used by driver to finalize shuffle merge. Since it could potentially take seconds for a large shuffle to finalize, 
+    having multiple threads helps driver to handle concurrent shuffle merge finalize requests when push-based shuffle is enabled.
+  </td>
+  <td>3.3.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.push.minShuffleSizeToWait</code></td>
+  <td><code>500m</code></td>
+  <td>
+    Driver will wait for merge finalization to complete only if total shuffle data size is more than this threshold. If total shuffle size is less, driver will immediately finalize the shuffle output.
+  </td>
+  <td>3.3.0</td>
+</tr>
+<tr>
+  <td><code>spark.shuffle.push.minCompletedPushRatio</code></td>
+  <td><code>1.0</code></td>
+  <td>
+    Fraction of minimum map partitions that should be push complete before driver starts shuffle merge finalization during push based shuffle.
+  </td>
+  <td>3.3.0</td>
 </tr>
 </table>

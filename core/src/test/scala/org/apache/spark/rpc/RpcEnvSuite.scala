@@ -30,7 +30,6 @@ import scala.concurrent.duration._
 import com.google.common.io.Files
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.{mock, never, verify, when}
-import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually._
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkFunSuite}
@@ -41,7 +40,7 @@ import org.apache.spark.util.{ThreadUtils, Utils}
 /**
  * Common tests for an RpcEnv implementation.
  */
-abstract class RpcEnvSuite extends SparkFunSuite with BeforeAndAfterAll {
+abstract class RpcEnvSuite extends SparkFunSuite {
 
   var env: RpcEnv = _
 
@@ -171,8 +170,6 @@ abstract class RpcEnvSuite extends SparkFunSuite with BeforeAndAfterAll {
 
     val conf = new SparkConf()
     val shortProp = "spark.rpc.short.timeout"
-    conf.set(Network.RPC_RETRY_WAIT, 0L)
-    conf.set(Network.RPC_NUM_RETRIES, 1)
     val anotherEnv = createRpcEnv(conf, "remote", 0, clientMode = true)
     // Use anotherEnv to find out the RpcEndpointRef
     val rpcEndpointRef = anotherEnv.setupEndpointRef(env.address, "ask-timeout")
@@ -203,8 +200,6 @@ abstract class RpcEnvSuite extends SparkFunSuite with BeforeAndAfterAll {
 
     val conf = new SparkConf()
     val shortProp = "spark.rpc.short.timeout"
-    conf.set(Network.RPC_RETRY_WAIT, 0L)
-    conf.set(Network.RPC_NUM_RETRIES, 1)
     val anotherEnv = createRpcEnv(conf, "remote", 0, clientMode = true)
     // Use anotherEnv to find out the RpcEndpointRef
     val rpcEndpointRef = anotherEnv.setupEndpointRef(env.address, "ask-abort")
@@ -967,7 +962,8 @@ abstract class RpcEnvSuite extends SparkFunSuite with BeforeAndAfterAll {
     val singleThreadedEnv = createRpcEnv(
       new SparkConf().set(Network.RPC_NETTY_DISPATCHER_NUM_THREADS, 1), "singleThread", 0)
     try {
-      val blockingEndpoint = singleThreadedEnv.setupEndpoint("blocking", new IsolatedRpcEndpoint {
+      val blockingEndpoint = singleThreadedEnv
+        .setupEndpoint("blocking", new IsolatedThreadSafeRpcEndpoint {
         override val rpcEnv: RpcEnv = singleThreadedEnv
 
         override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {

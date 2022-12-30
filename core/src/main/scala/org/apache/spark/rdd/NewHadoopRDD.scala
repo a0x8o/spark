@@ -156,7 +156,7 @@ class NewHadoopRDD[K, V](
       }
 
       val result = new Array[Partition](rawSplits.size)
-      for (i <- 0 until rawSplits.size) {
+      for (i <- rawSplits.indices) {
         result(i) =
             new NewHadoopPartition(id, i, rawSplits(i).asInstanceOf[InputSplit with Writable])
       }
@@ -244,7 +244,6 @@ class NewHadoopRDD[K, V](
       }
 
       private var havePair = false
-      private var recordsSinceMetricsUpdate = 0
 
       override def hasNext: Boolean = {
         if (!finished && !havePair) {

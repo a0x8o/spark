@@ -17,12 +17,15 @@
 
 package org.apache.spark.resource
 
-import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.mockito.Mockito.when
+import org.scalatestplus.mockito.MockitoSugar
+
+import org.apache.spark.{SparkConf, SparkEnv, SparkFunSuite}
 import org.apache.spark.internal.config._
 import org.apache.spark.internal.config.Python.PYSPARK_EXECUTOR_MEMORY
 import org.apache.spark.resource.TestResourceIDs._
 
-class ResourceProfileSuite extends SparkFunSuite {
+class ResourceProfileSuite extends SparkFunSuite with MockitoSugar {
 
   override def beforeAll(): Unit = {
     try {
@@ -63,6 +66,42 @@ class ResourceProfileSuite extends SparkFunSuite {
       "Task resources should have 1 cpu")
     assert(rprof.getTaskCpus.get === 1,
       "Task resources should have 1 cpu")
+  }
+
+  test("Executor cores should be None by default for standalone cluster") {
+    val sparkConf = new SparkConf()
+      .setMaster("spark://ut.cluster")
+      .remove(EXECUTOR_CORES.key)
+    val rprof = ResourceProfile.getOrCreateDefaultProfile(sparkConf)
+    assert(rprof.id === ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID)
+    assert(!rprof.executorResources.contains(ResourceProfile.CORES),
+      "Executor cores should be None by default for standalone cluster")
+    assert(rprof.getExecutorCores.isEmpty,
+      "Executor cores should be None by default for standalone cluster")
+  }
+
+  test("Get resource for standalone cluster") {
+    val sparkConf = new SparkConf()
+      .setMaster("spark://ut.cluster")
+      .remove(EXECUTOR_CORES.key)
+    val defaultExecutorResource = ResourceProfile.getDefaultProfileExecutorResources(sparkConf)
+    assert(defaultExecutorResource.cores.isEmpty)
+    assert(defaultExecutorResource.executorMemoryMiB === 1024L)
+    assert(defaultExecutorResource.memoryOffHeapMiB === 0L)
+    assert(defaultExecutorResource.memoryOverheadMiB.isEmpty)
+    assert(defaultExecutorResource.pysparkMemoryMiB.isEmpty)
+    assert(defaultExecutorResource.customResources.isEmpty)
+
+    val rpBuilder = new ResourceProfileBuilder()
+    val taskReq = new TaskResourceRequests().resource("cpu", 2)
+    val execReq =
+      new ExecutorResourceRequests().cores(4)
+    val rp = rpBuilder.require(taskReq).require(execReq).build()
+    val executorResourceForRp = ResourceProfile.getResourcesForClusterManager(
+      rp.id, rp.executorResources, 0.0, sparkConf, false, Map.empty)
+    // Standalone cluster only take cores and executor memory as built-in resources.
+    assert(executorResourceForRp.cores.get === 4)
+    assert(executorResourceForRp.executorMemoryMiB === 1024L)
   }
 
   test("Default ResourceProfile with app level resources specified") {
@@ -154,6 +193,33 @@ class ResourceProfileSuite extends SparkFunSuite {
     assert(immrprof.isCoresLimitKnown == true)
   }
 
+  test("tasks and limit resource for task resource profile") {
+    val sparkConf = new SparkConf().setMaster("spark://testing")
+      .set(EXECUTOR_CORES, 2)
+      .set("spark.dynamicAllocation.enabled", "false")
+      .set("spark.executor.resource.gpu.amount", "2")
+      .set("spark.executor.resource.gpu.discoveryScript", "myscript")
+
+    withMockSparkEnv(sparkConf) {
+      val rpBuilder1 = new ResourceProfileBuilder()
+      val rp1 = rpBuilder1
+        .require(new TaskResourceRequests().resource("gpu", 1))
+        .build()
+      assert(rp1.isInstanceOf[TaskResourceProfile])
+      assert(rp1.limitingResource(sparkConf) == ResourceProfile.CPUS)
+      assert(rp1.maxTasksPerExecutor(sparkConf) == 2)
+      assert(rp1.isCoresLimitKnown)
+
+      val rpBuilder2 = new ResourceProfileBuilder()
+      val rp2 = rpBuilder2
+        .require(new TaskResourceRequests().resource("gpu", 2))
+        .build()
+      assert(rp1.isInstanceOf[TaskResourceProfile])
+      assert(rp2.limitingResource(sparkConf) == "gpu")
+      assert(rp2.maxTasksPerExecutor(sparkConf) == 1)
+      assert(rp2.isCoresLimitKnown)
+    }
+  }
 
   test("Create ResourceProfile") {
     val rprof = new ResourceProfileBuilder()
@@ -221,6 +287,22 @@ class ResourceProfileSuite extends SparkFunSuite {
     assert(rprof.resourcesEqual(rprof2), "resource profile resourcesEqual not working")
   }
 
+  test("test TaskResourceProfiles equal") {
+    val rprofBuilder = new ResourceProfileBuilder()
+    val taskReq = new TaskResourceRequests().resource("gpu", 1)
+    rprofBuilder.require(taskReq)
+    val rprof = rprofBuilder.build()
+
+    val taskReq1 = new TaskResourceRequests().resource("gpu", 1)
+    val rprof1 = new ResourceProfile(Map.empty, taskReq1.requests)
+    assert(!rprof.resourcesEqual(rprof1),
+      "resource profiles having different types should not equal")
+
+    val taskReq2 = new TaskResourceRequests().resource("gpu", 1)
+    val rprof2 = new TaskResourceProfile(taskReq2.requests)
+    assert(rprof.resourcesEqual(rprof2), "task resource profile resourcesEqual not working")
+  }
+
   test("Test ExecutorResourceRequests memory helpers") {
     val rprof = new ResourceProfileBuilder()
     val ereqs = new ExecutorResourceRequests()
@@ -278,7 +360,7 @@ class ResourceProfileSuite extends SparkFunSuite {
     // Update this if new resource type added
     assert(ResourceProfile.allSupportedExecutorResources.size === 5,
       "Executor resources should have 5 supported resources")
-    assert(ResourceProfile.getCustomExecutorResources(rprof.build).size === 1,
+    assert(rprof.build().getCustomExecutorResources().size === 1,
       "Executor resources should have 1 custom resource")
   }
 
@@ -291,7 +373,18 @@ class ResourceProfileSuite extends SparkFunSuite {
       .memoryOverhead("2048").pysparkMemory("1024").offHeapMemory("3072")
     rprof.require(taskReq).require(eReq)
 
-    assert(ResourceProfile.getCustomTaskResources(rprof.build).size === 1,
+    assert(rprof.build().getCustomTaskResources().size === 1,
       "Task resources should have 1 custom resource")
+  }
+
+  private def withMockSparkEnv(conf: SparkConf)(f: => Unit): Unit = {
+    val previousEnv = SparkEnv.get
+    val mockEnv = mock[SparkEnv]
+    when(mockEnv.conf).thenReturn(conf)
+    SparkEnv.set(mockEnv)
+
+    try f finally {
+      SparkEnv.set(previousEnv)
+    }
   }
 }

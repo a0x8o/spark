@@ -160,6 +160,14 @@ public class NettyUtils {
     if (numCores == 0) {
       numCores = Runtime.getRuntime().availableProcessors();
     }
+    // SPARK-38541: After upgrade to Netty 4.1.75, there are 2 behavior changes of this method:
+    // 1. `PooledByteBufAllocator.defaultMaxOrder()` change from 11 to 9, this means the default
+    //    `PooledByteBufAllocator` chunk size reduce from 16 MiB to 4 MiB, we need use
+    //    `-Dio.netty.allocator.maxOrder=11` to keep the chunk size of PooledByteBufAllocator
+    //    to 16m.
+    // 2. `PooledByteBufAllocator.defaultUseCacheForAllThreads()` change from true to false, we need
+    //    to use `-Dio.netty.allocator.useCacheForAllThreads=true` to
+    //    enable `useCacheForAllThreads`.
     return new PooledByteBufAllocator(
       allowDirectBufs && PlatformDependent.directBufferPreferred(),
       Math.min(PooledByteBufAllocator.defaultNumHeapArena(), numCores),
@@ -170,5 +178,19 @@ public class NettyUtils {
       allowCache ? PooledByteBufAllocator.defaultNormalCacheSize() : 0,
       allowCache ? PooledByteBufAllocator.defaultUseCacheForAllThreads() : false
     );
+  }
+
+  /**
+   * ByteBuf allocator prefers to allocate direct ByteBuf iif both Spark allows to create direct
+   * ByteBuf and Netty enables directBufferPreferred.
+   */
+  public static boolean preferDirectBufs(TransportConf conf) {
+    boolean allowDirectBufs;
+    if (conf.sharedByteBufAllocators()) {
+      allowDirectBufs = conf.preferDirectBufsForSharedByteBufAllocators();
+    } else {
+      allowDirectBufs = conf.preferDirectBufs();
+    }
+    return allowDirectBufs && PlatformDependent.directBufferPreferred();
   }
 }

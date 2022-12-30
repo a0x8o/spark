@@ -22,7 +22,7 @@ import org.apache.spark.sql.internal.SQLConf
 /** A class that contains configuration parameters for [[StateStore]]s. */
 class StateStoreConf(
     @transient private val sqlConf: SQLConf,
-    extraOptions: Map[String, String] = Map.empty)
+    val extraOptions: Map[String, String] = Map.empty)
   extends Serializable {
 
   def this() = this(new SQLConf)
@@ -48,9 +48,17 @@ class StateStoreConf(
   /** Whether validate the underlying format or not. */
   val formatValidationEnabled: Boolean = sqlConf.stateStoreFormatValidationEnabled
 
-  /** Whether validate the value format when the format invalidation enabled. */
+  /**
+   * Whether to validate the value side. This config is applied to both validators as below:
+   *
+   * - whether to validate the value format when the format validation is enabled.
+   * - whether to validate the value schema when the state schema check is enabled.
+   */
   val formatValidationCheckValue: Boolean =
     extraOptions.getOrElse(StateStoreConf.FORMAT_VALIDATION_CHECK_VALUE_CONFIG, "true") == "true"
+
+  /** Whether to skip null values for hash based stream-stream joins. */
+  val skipNullsForStreamStreamJoins: Boolean = sqlConf.stateStoreSkipNullsForStreamStreamJoins
 
   /** The compression codec used to compress delta and snapshot files. */
   val compressionCodec: String = sqlConf.stateStoreCompressionCodec
@@ -63,11 +71,10 @@ class StateStoreConf(
 
   /**
    * Additional configurations related to state store. This will capture all configs in
-   * SQLConf that start with `spark.sql.streaming.stateStore.` and extraOptions for a specific
-   * operator.
+   * SQLConf that start with `spark.sql.streaming.stateStore.`
    */
-  val confs: Map[String, String] =
-    sqlConf.getAllConfs.filter(_._1.startsWith("spark.sql.streaming.stateStore.")) ++ extraOptions
+  val sqlConfs: Map[String, String] =
+    sqlConf.getAllConfs.filter(_._1.startsWith("spark.sql.streaming.stateStore."))
 }
 
 object StateStoreConf {

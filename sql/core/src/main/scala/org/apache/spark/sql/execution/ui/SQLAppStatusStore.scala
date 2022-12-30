@@ -20,13 +20,13 @@ package org.apache.spark.sql.execution.ui
 import java.lang.{Long => JLong}
 import java.util.Date
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.JobExecutionStatus
+import org.apache.spark.status.KVUtils
 import org.apache.spark.status.KVUtils.KVIndexParam
 import org.apache.spark.util.kvstore.{KVIndex, KVStore}
 
@@ -39,11 +39,11 @@ class SQLAppStatusStore(
     val listener: Option[SQLAppStatusListener] = None) {
 
   def executionsList(): Seq[SQLExecutionUIData] = {
-    store.view(classOf[SQLExecutionUIData]).asScala.toSeq
+    KVUtils.viewToSeq(store.view(classOf[SQLExecutionUIData]))
   }
 
   def executionsList(offset: Int, length: Int): Seq[SQLExecutionUIData] = {
-    store.view(classOf[SQLExecutionUIData]).skip(offset).max(length).asScala.toSeq
+    KVUtils.viewToSeq(store.view(classOf[SQLExecutionUIData]).skip(offset).max(length))
   }
 
   def execution(executionId: Long): Option[SQLExecutionUIData] = {
@@ -87,9 +87,10 @@ class SQLExecutionUIData(
     val details: String,
     val physicalPlanDescription: String,
     val modifiedConfigs: Map[String, String],
-    val metrics: Seq[SQLPlanMetric],
+    val metrics: collection.Seq[SQLPlanMetric],
     val submissionTime: Long,
     val completionTime: Option[Date],
+    val errorMessage: Option[String],
     @JsonDeserialize(keyAs = classOf[Integer])
     val jobs: Map[Int, JobExecutionStatus],
     @JsonDeserialize(contentAs = classOf[Integer])

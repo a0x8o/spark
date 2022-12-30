@@ -17,10 +17,12 @@
 
 import pandas as pd
 
+from pyspark.pandas.indexes.base import Index
 from pyspark.pandas.utils import (
     lazy_property,
     validate_arguments_and_invoke_function,
     validate_bool_kwarg,
+    validate_index_loc,
     validate_mode,
 )
 from pyspark.testing.pandasutils import PandasOnSparkTestCase
@@ -92,6 +94,17 @@ class UtilsTest(PandasOnSparkTestCase, SQLTestUtils):
         with self.assertRaises(ValueError):
             validate_mode("r")
 
+    def test_validate_index_loc(self):
+        psidx = Index([1, 2, 3])
+        validate_index_loc(psidx, -1)
+        validate_index_loc(psidx, -3)
+        err_msg = "index 4 is out of bounds for axis 0 with size 3"
+        with self.assertRaisesRegex(IndexError, err_msg):
+            validate_index_loc(psidx, 4)
+        err_msg = "index -4 is out of bounds for axis 0 with size 3"
+        with self.assertRaisesRegex(IndexError, err_msg):
+            validate_index_loc(psidx, -4)
+
 
 class TestClassForLazyProp:
     def __init__(self):
@@ -108,7 +121,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.test_utils import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

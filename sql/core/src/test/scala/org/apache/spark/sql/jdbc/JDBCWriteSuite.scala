@@ -184,10 +184,15 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
     df.write.jdbc(url, "TEST.APPENDTEST", new Properties())
 
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
-      val m = intercept[AnalysisException] {
-        df2.write.mode(SaveMode.Append).jdbc(url, "TEST.APPENDTEST", new Properties())
-      }.getMessage
-      assert(m.contains("Column \"NAME\" not found"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          df2.write.mode(SaveMode.Append).jdbc(url, "TEST.APPENDTEST", new Properties())
+        },
+        errorClass = "_LEGACY_ERROR_TEMP_1156",
+        parameters = Map(
+          "colName" -> "NAME",
+          "tableSchema" ->
+            "Some(StructType(StructField(name,StringType,true),StructField(id,IntegerType,true)))"))
     }
 
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
@@ -211,12 +216,16 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
       assert(1 === spark.read.jdbc(url1, "TEST.TRUNCATETEST", properties).count())
       assert(2 === spark.read.jdbc(url1, "TEST.TRUNCATETEST", properties).collect()(0).length)
 
-      val m = intercept[AnalysisException] {
-        df3.write.mode(SaveMode.Overwrite).option("truncate", true)
-          .jdbc(url1, "TEST.TRUNCATETEST", properties)
-      }.getMessage
-      assert(m.contains("Column \"seq\" not found"))
-      assert(0 === spark.read.jdbc(url1, "TEST.TRUNCATETEST", properties).count())
+      checkError(
+        exception = intercept[AnalysisException] {
+          df3.write.mode(SaveMode.Overwrite).option("truncate", true)
+            .jdbc(url1, "TEST.TRUNCATETEST", properties)
+        },
+        errorClass = "_LEGACY_ERROR_TEMP_1156",
+        parameters = Map(
+          "colName" -> "seq",
+          "tableSchema" ->
+            "Some(StructType(StructField(name,StringType,true),StructField(id,IntegerType,true)))"))
     } finally {
       JdbcDialects.unregisterDialect(testH2Dialect)
       JdbcDialects.registerDialect(H2Dialect)
@@ -227,7 +236,7 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
     JdbcDialects.registerDialect(testH2Dialect)
     val df = spark.createDataFrame(sparkContext.parallelize(arr2x2), schema2)
 
-    val m = intercept[org.h2.jdbc.JdbcSQLException] {
+    val m = intercept[org.h2.jdbc.JdbcSQLSyntaxErrorException] {
       df.write.option("createTableOptions", "ENGINE tableEngineName")
       .jdbc(url1, "TEST.CREATETBLOPTS", properties)
     }.getMessage
@@ -240,10 +249,15 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
     val df2 = spark.createDataFrame(sparkContext.parallelize(arr2x3), schema3)
 
     df.write.jdbc(url, "TEST.INCOMPATIBLETEST", new Properties())
-    val m = intercept[AnalysisException] {
-      df2.write.mode(SaveMode.Append).jdbc(url, "TEST.INCOMPATIBLETEST", new Properties())
-    }.getMessage
-    assert(m.contains("Column \"seq\" not found"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df2.write.mode(SaveMode.Append).jdbc(url, "TEST.INCOMPATIBLETEST", new Properties())
+      },
+      errorClass = "_LEGACY_ERROR_TEMP_1156",
+      parameters = Map(
+        "colName" -> "seq",
+        "tableSchema" ->
+          "Some(StructType(StructField(name,StringType,true),StructField(id,IntegerType,true)))"))
   }
 
   test("INSERT to JDBC Datasource") {
@@ -326,7 +340,7 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
   test("save errors if wrong user/password combination") {
     val df = spark.createDataFrame(sparkContext.parallelize(arr2x2), schema2)
 
-    val e = intercept[org.h2.jdbc.JdbcSQLException] {
+    val e = intercept[org.h2.jdbc.JdbcSQLInvalidAuthorizationSpecException] {
       df.write.format("jdbc")
         .option("dbtable", "TEST.SAVETEST")
         .option("url", url1)
@@ -427,7 +441,7 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
       // verify the data types of the created table by reading the database catalog of H2
       val query =
         """
-          |(SELECT column_name, type_name, character_maximum_length
+          |(SELECT column_name, data_type, character_maximum_length
           | FROM information_schema.columns WHERE table_name = 'DBCOLTYPETEST')
         """.stripMargin
       val rows = spark.read.jdbc(url1, query, properties).collect()
@@ -436,7 +450,7 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
         val typeName = row.getString(1)
         // For CHAR and VARCHAR, we also compare the max length
         if (typeName.contains("CHAR")) {
-          val charMaxLength = row.getInt(2)
+          val charMaxLength = row.getLong(2)
           assert(expectedTypes(row.getString(0)) == s"$typeName($charMaxLength)")
         } else {
           assert(expectedTypes(row.getString(0)) == typeName)
@@ -452,15 +466,18 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
     val df = spark.createDataFrame(sparkContext.parallelize(data), schema)
 
     // out-of-order
-    val expected1 = Map("id" -> "BIGINT", "first#name" -> "VARCHAR(123)", "city" -> "CHAR(20)")
+    val expected1 =
+      Map("id" -> "BIGINT", "first#name" -> "CHARACTER VARYING(123)", "city" -> "CHARACTER(20)")
     testUserSpecifiedColTypes(df, "`first#name` VARCHAR(123), id BIGINT, city CHAR(20)", expected1)
     // partial schema
-    val expected2 = Map("id" -> "INTEGER", "first#name" -> "VARCHAR(123)", "city" -> "CHAR(20)")
+    val expected2 =
+      Map("id" -> "INTEGER", "first#name" -> "CHARACTER VARYING(123)", "city" -> "CHARACTER(20)")
     testUserSpecifiedColTypes(df, "`first#name` VARCHAR(123), city CHAR(20)", expected2)
 
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
       // should still respect the original column names
-      val expected = Map("id" -> "INTEGER", "first#name" -> "VARCHAR(123)", "city" -> "CLOB")
+      val expected = Map("id" -> "INTEGER", "first#name" -> "CHARACTER VARYING(123)",
+        "city" -> "CHARACTER LARGE OBJECT(9223372036854775807)")
       testUserSpecifiedColTypes(df, "`FiRsT#NaMe` VARCHAR(123)", expected)
     }
 
@@ -470,41 +487,49 @@ class JDBCWriteSuite extends SharedSparkSession with BeforeAndAfter {
           StructField("First#Name", StringType) ::
           StructField("city", StringType) :: Nil)
       val df = spark.createDataFrame(sparkContext.parallelize(data), schema)
-      val expected = Map("id" -> "INTEGER", "First#Name" -> "VARCHAR(123)", "city" -> "CLOB")
+      val expected =
+        Map("id" -> "INTEGER", "First#Name" -> "CHARACTER VARYING(123)",
+          "city" -> "CHARACTER LARGE OBJECT(9223372036854775807)")
       testUserSpecifiedColTypes(df, "`First#Name` VARCHAR(123)", expected)
     }
   }
 
   test("SPARK-10849: jdbc CreateTableColumnTypes option with invalid data type") {
     val df = spark.createDataFrame(sparkContext.parallelize(arr2x2), schema2)
-    val msg = intercept[ParseException] {
-      df.write.mode(SaveMode.Overwrite)
-        .option("createTableColumnTypes", "name CLOB(2000)")
-        .jdbc(url1, "TEST.USERDBTYPETEST", properties)
-    }.getMessage()
-    assert(msg.contains("DataType clob(2000) is not supported."))
+    checkError(
+      exception = intercept[ParseException] {
+        df.write.mode(SaveMode.Overwrite)
+          .option("createTableColumnTypes", "name CLOB(2000)")
+          .jdbc(url1, "TEST.USERDBTYPETEST", properties)
+      },
+      errorClass = "UNSUPPORTED_DATATYPE",
+      parameters = Map("typeName" -> "\"CLOB(2000)\""))
   }
 
   test("SPARK-10849: jdbc CreateTableColumnTypes option with invalid syntax") {
     val df = spark.createDataFrame(sparkContext.parallelize(arr2x2), schema2)
-    val msg = intercept[ParseException] {
-      df.write.mode(SaveMode.Overwrite)
-        .option("createTableColumnTypes", "`name char(20)") // incorrectly quoted column
-        .jdbc(url1, "TEST.USERDBTYPETEST", properties)
-    }.getMessage()
-    assert(msg.contains("extraneous input"))
+    checkError(
+      exception = intercept[ParseException] {
+        df.write.mode(SaveMode.Overwrite)
+          .option("createTableColumnTypes", "`name char(20)") // incorrectly quoted column
+          .jdbc(url1, "TEST.USERDBTYPETEST", properties)
+      },
+      errorClass = "PARSE_SYNTAX_ERROR",
+      parameters = Map("error" -> "'`'", "hint" -> ": extra input '`'"))
   }
 
   test("SPARK-10849: jdbc CreateTableColumnTypes duplicate columns") {
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
       val df = spark.createDataFrame(sparkContext.parallelize(arr2x2), schema2)
-      val msg = intercept[AnalysisException] {
+      val e = intercept[AnalysisException] {
         df.write.mode(SaveMode.Overwrite)
           .option("createTableColumnTypes", "name CHAR(20), id int, NaMe VARCHAR(100)")
           .jdbc(url1, "TEST.USERDBTYPETEST", properties)
-      }.getMessage()
-      assert(msg.contains(
-        "Found duplicate column(s) in the createTableColumnTypes option value: `name`"))
+      }
+      checkError(
+        exception = e,
+        errorClass = "COLUMN_ALREADY_EXISTS",
+        parameters = Map("columnName" -> "`name`"))
     }
   }
 

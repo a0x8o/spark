@@ -20,6 +20,7 @@ package org.apache.spark.sql.execution.joins
 import scala.reflect.ClassTag
 
 import org.apache.spark.AccumulatorSuite
+import org.apache.spark.internal.config.EXECUTOR_MEMORY
 import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, BitwiseAnd, BitwiseOr, Cast, Expression, Literal, ShiftLeft}
 import org.apache.spark.sql.catalyst.optimizer.{BuildLeft, BuildRight, BuildSide}
@@ -56,7 +57,8 @@ abstract class BroadcastJoinSuiteBase extends QueryTest with SQLTestUtils
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark = SparkSession.builder()
-      .master("local-cluster[2,1,1024]")
+      .master("local-cluster[2,1,512]")
+      .config(EXECUTOR_MEMORY.key, "512m")
       .appName("testing")
       .getOrCreate()
   }
@@ -68,6 +70,11 @@ abstract class BroadcastJoinSuiteBase extends QueryTest with SQLTestUtils
     } finally {
       super.afterAll()
     }
+  }
+
+  override def beforeEach(): Unit = {
+    super.beforeEach()
+    System.gc()
   }
 
   /**
@@ -402,13 +409,12 @@ abstract class BroadcastJoinSuiteBase extends QueryTest with SQLTestUtils
         assert(b.buildSide === buildSide)
       case w: WholeStageCodegenExec =>
         assert(w.children.head.getClass.getSimpleName === joinMethod)
-        if (w.children.head.isInstanceOf[BroadcastNestedLoopJoinExec]) {
-          assert(
-            w.children.head.asInstanceOf[BroadcastNestedLoopJoinExec].buildSide === buildSide)
-        } else if (w.children.head.isInstanceOf[BroadcastHashJoinExec]) {
-          assert(w.children.head.asInstanceOf[BroadcastHashJoinExec].buildSide === buildSide)
-        } else {
-          fail()
+        w.children.head match {
+          case bnlj: BroadcastNestedLoopJoinExec =>
+            assert(bnlj.buildSide === buildSide)
+          case bhj: BroadcastHashJoinExec =>
+            assert(bhj.buildSide === buildSide)
+          case _ => fail()
         }
     }
   }
@@ -416,8 +422,8 @@ abstract class BroadcastJoinSuiteBase extends QueryTest with SQLTestUtils
   test("Broadcast timeout") {
     val timeout = 5
     val slowUDF = udf({ x: Int => Thread.sleep(timeout * 1000); x })
-    val df1 = spark.range(10).select($"id" as 'a)
-    val df2 = spark.range(5).select(slowUDF($"id") as 'a)
+    val df1 = spark.range(10).select($"id" as Symbol("a"))
+    val df2 = spark.range(5).select(slowUDF($"id") as Symbol("a"))
     val testDf = df1.join(broadcast(df2), "a")
     withSQLConf(SQLConf.BROADCAST_TIMEOUT.key -> timeout.toString) {
       if (!conf.adaptiveExecutionEnabled) {

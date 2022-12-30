@@ -77,7 +77,10 @@ class ResolveSQLOnFile(sparkSession: SparkSession) extends Rule[LogicalPlan] {
         case _: ClassNotFoundException => u
         case e: Exception =>
           // the provider is valid, but failed to create a logical plan
-          u.failAnalysis(e.getMessage, e)
+          u.failAnalysis(
+            errorClass = "_LEGACY_ERROR_TEMP_2332",
+            messageParameters = Map("msg" -> e.getMessage),
+            cause = e)
       }
   }
 }
@@ -247,7 +250,6 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
       val flattenedSchema = SchemaUtils.explodeNestedFieldNames(schema)
       SchemaUtils.checkColumnNameDuplication(
         flattenedSchema,
-        s"in the table definition of $identifier",
         isCaseSensitive)
 
       // Check that columns are not duplicated in the partitioning statement
@@ -286,7 +288,6 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
   private def normalizeCatalogTable(schema: StructType, table: CatalogTable): CatalogTable = {
     SchemaUtils.checkSchemaColumnNameDuplication(
       schema,
-      "in the table definition of " + table.identifier,
       conf.caseSensitiveAnalysis)
 
     val normalizedPartCols = normalizePartitionColumns(schema, table)
@@ -313,21 +314,10 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
       partCols = table.partitionColumnNames,
       resolver = conf.resolver)
 
-    SchemaUtils.checkColumnNameDuplication(
-      normalizedPartitionCols,
-      "in the partition schema",
-      conf.resolver)
+    SchemaUtils.checkColumnNameDuplication(normalizedPartitionCols, conf.resolver)
 
     if (schema.nonEmpty && normalizedPartitionCols.length == schema.length) {
-      if (DDLUtils.isHiveTable(table)) {
-        // When we hit this branch, it means users didn't specify schema for the table to be
-        // created, as we always include partition columns in table schema for hive serde tables.
-        // The real schema will be inferred at hive metastore by hive serde, plus the given
-        // partition columns, so we should not fail the analysis here.
-      } else {
-        failAnalysis("Cannot use all columns for partition columns")
-      }
-
+      failAnalysis("Cannot use all columns for partition columns")
     }
 
     schema.filter(f => normalizedPartitionCols.contains(f.name)).map(_.dataType).foreach {
@@ -349,11 +339,9 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
 
         SchemaUtils.checkColumnNameDuplication(
           normalizedBucketSpec.bucketColumnNames,
-          "in the bucket definition",
           conf.resolver)
         SchemaUtils.checkColumnNameDuplication(
           normalizedBucketSpec.sortColumnNames,
-          "in the sort definition",
           conf.resolver)
 
         normalizedBucketSpec.sortColumnNames.map(schema(_)).map(_.dataType).foreach {
@@ -484,7 +472,9 @@ object PreReadCheck extends (LogicalPlan => Unit) {
       case o =>
         val numInputFileBlockSources = o.children.map(checkNumInputFileBlockSources(e, _)).sum
         if (numInputFileBlockSources > 1) {
-          e.failAnalysis(s"'${e.prettyName}' does not support more than one sources")
+          e.failAnalysis(
+            errorClass = "_LEGACY_ERROR_TEMP_2302",
+            messageParameters = Map("name" -> e.prettyName))
         } else {
           numInputFileBlockSources
         }

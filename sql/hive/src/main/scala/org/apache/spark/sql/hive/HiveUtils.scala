@@ -72,7 +72,7 @@ private[spark] object HiveUtils extends Logging {
   val HIVE_METASTORE_VERSION = buildStaticConf("spark.sql.hive.metastore.version")
     .doc("Version of the Hive metastore. Available options are " +
         "<code>0.12.0</code> through <code>2.3.9</code> and " +
-        "<code>3.0.0</code> through <code>3.1.2</code>.")
+        "<code>3.0.0</code> through <code>3.1.3</code>.")
     .version("1.4.0")
     .stringConf
     .checkValue(isCompatibleHiveVersion, "Unsupported Hive Metastore version")
@@ -160,6 +160,15 @@ private[spark] object HiveUtils extends Logging {
     .booleanConf
     .createWithDefault(true)
 
+  val CONVERT_METASTORE_INSERT_DIR = buildConf("spark.sql.hive.convertMetastoreInsertDir")
+    .doc("When set to true,  Spark will try to use built-in data source writer " +
+      "instead of Hive serde in INSERT OVERWRITE DIRECTORY. This flag is effective only if " +
+      "`spark.sql.hive.convertMetastoreParquet` or `spark.sql.hive.convertMetastoreOrc` is " +
+      "enabled respectively for Parquet and ORC formats")
+    .version("3.3.0")
+    .booleanConf
+    .createWithDefault(true)
+
   val HIVE_METASTORE_SHARED_PREFIXES = buildStaticConf("spark.sql.hive.metastore.sharedPrefixes")
     .doc("A comma separated list of class prefixes that should be loaded using the classloader " +
       "that is shared between Spark SQL and a specific version of Hive. An example of classes " +
@@ -188,6 +197,15 @@ private[spark] object HiveUtils extends Logging {
     .version("1.5.0")
     .booleanConf
     .createWithDefault(true)
+
+  val USE_DELEGATE_FOR_SYMLINK_TEXT_INPUT_FORMAT =
+    buildConf("spark.sql.hive.useDelegateForSymlinkTextInputFormat")
+      .internal()
+      .doc("When true, SymlinkTextInputFormat is replaced with a similar delegate class during " +
+        "table scan in order to fix the issue of empty splits")
+      .version("3.4.0")
+      .booleanConf
+      .createWithDefault(true)
 
   /**
    * The version of the hive client that will be used to communicate with the metastore.  Note that
@@ -570,7 +588,7 @@ private[spark] object HiveUtils extends Logging {
       // partition columns are part of the schema
       val partCols = hiveTable.getPartCols.asScala.map(HiveClientImpl.fromHiveColumn)
       val dataCols = hiveTable.getCols.asScala.map(HiveClientImpl.fromHiveColumn)
-      table.copy(schema = StructType((dataCols ++ partCols).toSeq))
+      table.copy(schema = StructType((dataCols ++ partCols).toArray))
     }
   }
 }

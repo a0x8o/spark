@@ -28,7 +28,10 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern._
 import org.apache.spark.sql.execution.{LocalLimitExec, QueryExecution, SparkPlan, SparkPlanner, UnaryExecNode}
+import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, MergingSessionsExec, ObjectHashAggregateExec, SortAggregateExec, UpdatingSessionsExec}
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
+import org.apache.spark.sql.execution.python.FlatMapGroupsInPandasWithStateExec
+import org.apache.spark.sql.execution.streaming.sources.WriteToMicroBatchDataSourceV1
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.util.Utils
@@ -45,6 +48,7 @@ class IncrementalExecution(
     val queryId: UUID,
     val runId: UUID,
     val currentBatchId: Long,
+    val prevOffsetSeqMetadata: Option[OffsetSeqMetadata],
     val offsetSeqMetadata: OffsetSeqMetadata)
   extends QueryExecution(sparkSession, logicalPlan) with Logging {
 
@@ -60,6 +64,7 @@ class IncrementalExecution(
       StreamingJoinStrategy ::
       StatefulAggregationStrategy ::
       FlatMapGroupsWithStateStrategy ::
+      FlatMapGroupsInPandasWithStateStrategy ::
       StreamingRelationStrategy ::
       StreamingDeduplicationStrategy ::
       StreamingGlobalLimitStrategy(outputMode) :: Nil
@@ -76,7 +81,13 @@ class IncrementalExecution(
    */
   override
   lazy val optimizedPlan: LogicalPlan = executePhase(QueryPlanningTracker.OPTIMIZATION) {
-    sparkSession.sessionState.optimizer.executeAndTrack(withCachedData,
+    // Performing streaming specific pre-optimization.
+    val preOptimized = withCachedData.transform {
+      // We eliminate the "marker" node for writer on DSv1 as it's only used as representation
+      // of sink information.
+      case w: WriteToMicroBatchDataSourceV1 => w.child
+    }
+    sparkSession.sessionState.optimizer.executeAndTrack(preOptimized,
       tracker).transformAllExpressionsWithPruning(
       _.containsAnyPattern(CURRENT_LIKE, EXPRESSION_WITH_RANDOM_SEED)) {
       case ts @ CurrentBatchTimestamp(timestamp, _, _) =>
@@ -101,6 +112,17 @@ class IncrementalExecution(
       currentBatchId,
       numStateStores)
   }
+
+  // Watermarks to use for late record filtering and state eviction in stateful operators.
+  // Using the previous watermark for late record filtering is a Spark behavior change so we allow
+  // this to be disabled.
+  val eventTimeWatermarkForEviction = offsetSeqMetadata.batchWatermarkMs
+  val eventTimeWatermarkForLateEvents =
+    if (sparkSession.conf.get(SQLConf.STATEFUL_OPERATOR_ALLOW_MULTIPLE)) {
+      prevOffsetSeqMetadata.getOrElse(offsetSeqMetadata).batchWatermarkMs
+    } else {
+      eventTimeWatermarkForEviction
+    }
 
   /** Locates save/restore pairs surrounding aggregation. */
   val state = new Rule[SparkPlan] {
@@ -132,7 +154,23 @@ class IncrementalExecution(
     }
 
     override def apply(plan: SparkPlan): SparkPlan = plan transform {
-      case StateStoreSaveExec(keys, None, None, None, stateFormatVersion,
+      // NOTE: we should include all aggregate execs here which are used in streaming aggregations
+      case a: SortAggregateExec if a.isStreaming =>
+        a.copy(numShufflePartitions = Some(numStateStores))
+
+      case a: HashAggregateExec if a.isStreaming =>
+        a.copy(numShufflePartitions = Some(numStateStores))
+
+      case a: ObjectHashAggregateExec if a.isStreaming =>
+        a.copy(numShufflePartitions = Some(numStateStores))
+
+      case a: MergingSessionsExec if a.isStreaming =>
+        a.copy(numShufflePartitions = Some(numStateStores))
+
+      case a: UpdatingSessionsExec if a.isStreaming =>
+        a.copy(numShufflePartitions = Some(numStateStores))
+
+      case StateStoreSaveExec(keys, None, None, None, None, stateFormatVersion,
              UnaryExecNode(agg,
                StateStoreRestoreExec(_, None, _, child))) =>
         val aggStateInfo = nextStatefulOperationStateInfo
@@ -140,7 +178,8 @@ class IncrementalExecution(
           keys,
           Some(aggStateInfo),
           Some(outputMode),
-          Some(offsetSeqMetadata.batchWatermarkMs),
+          eventTimeWatermarkForLateEvents = Some(eventTimeWatermarkForLateEvents),
+          eventTimeWatermarkForEviction = Some(eventTimeWatermarkForEviction),
           stateFormatVersion,
           agg.withNewChildren(
             StateStoreRestoreExec(
@@ -149,32 +188,36 @@ class IncrementalExecution(
               stateFormatVersion,
               child) :: Nil))
 
-      case SessionWindowStateStoreSaveExec(keys, session, None, None, None, stateFormatVersion,
+      case SessionWindowStateStoreSaveExec(keys, session, None, None, None, None,
+        stateFormatVersion,
         UnaryExecNode(agg,
-        SessionWindowStateStoreRestoreExec(_, _, None, None, _, child))) =>
+        SessionWindowStateStoreRestoreExec(_, _, None, None, None, _, child))) =>
           val aggStateInfo = nextStatefulOperationStateInfo
           SessionWindowStateStoreSaveExec(
             keys,
             session,
             Some(aggStateInfo),
             Some(outputMode),
-            Some(offsetSeqMetadata.batchWatermarkMs),
+            eventTimeWatermarkForLateEvents = Some(eventTimeWatermarkForLateEvents),
+            eventTimeWatermarkForEviction = Some(eventTimeWatermarkForEviction),
             stateFormatVersion,
             agg.withNewChildren(
               SessionWindowStateStoreRestoreExec(
                 keys,
                 session,
                 Some(aggStateInfo),
-                Some(offsetSeqMetadata.batchWatermarkMs),
+                eventTimeWatermarkForLateEvents = Some(eventTimeWatermarkForLateEvents),
+                eventTimeWatermarkForEviction = Some(eventTimeWatermarkForEviction),
                 stateFormatVersion,
                 child) :: Nil))
 
-      case StreamingDeduplicateExec(keys, child, None, None) =>
+      case StreamingDeduplicateExec(keys, child, None, None, None) =>
         StreamingDeduplicateExec(
           keys,
           child,
           Some(nextStatefulOperationStateInfo),
-          Some(offsetSeqMetadata.batchWatermarkMs))
+          eventTimeWatermarkForLateEvents = Some(eventTimeWatermarkForLateEvents),
+          eventTimeWatermarkForEviction = Some(eventTimeWatermarkForEviction))
 
       case m: FlatMapGroupsWithStateExec =>
         // We set this to true only for the first batch of the streaming query.
@@ -182,18 +225,28 @@ class IncrementalExecution(
         m.copy(
           stateInfo = Some(nextStatefulOperationStateInfo),
           batchTimestampMs = Some(offsetSeqMetadata.batchTimestampMs),
-          eventTimeWatermark = Some(offsetSeqMetadata.batchWatermarkMs),
+          eventTimeWatermarkForLateEvents = Some(eventTimeWatermarkForLateEvents),
+          eventTimeWatermarkForEviction = Some(eventTimeWatermarkForEviction),
           hasInitialState = hasInitialState
+        )
+
+      case m: FlatMapGroupsInPandasWithStateExec =>
+        m.copy(
+          stateInfo = Some(nextStatefulOperationStateInfo),
+          batchTimestampMs = Some(offsetSeqMetadata.batchTimestampMs),
+          eventTimeWatermarkForLateEvents = Some(eventTimeWatermarkForLateEvents),
+          eventTimeWatermarkForEviction = Some(eventTimeWatermarkForEviction)
         )
 
       case j: StreamingSymmetricHashJoinExec =>
         j.copy(
           stateInfo = Some(nextStatefulOperationStateInfo),
-          eventTimeWatermark = Some(offsetSeqMetadata.batchWatermarkMs),
+          eventTimeWatermarkForLateEvents = Some(eventTimeWatermarkForLateEvents),
+          eventTimeWatermarkForEviction = Some(eventTimeWatermarkForEviction),
           stateWatermarkPredicates =
             StreamingSymmetricHashJoinHelper.getStateWatermarkPredicates(
               j.left.output, j.right.output, j.leftKeys, j.rightKeys, j.condition.full,
-              Some(offsetSeqMetadata.batchWatermarkMs)))
+              Some(eventTimeWatermarkForEviction)))
 
       case l: StreamingGlobalLimitExec =>
         l.copy(

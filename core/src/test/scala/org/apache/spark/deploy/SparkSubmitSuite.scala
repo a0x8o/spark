@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
 
 import scala.collection.mutable.ArrayBuffer
-import scala.io.Source
+import scala.io.{Codec, Source}
 
 import com.google.common.io.ByteStreams
 import org.apache.commons.io.FileUtils
@@ -486,6 +486,41 @@ class SparkSubmitSuite
     conf.get("spark.kubernetes.driver.container.image") should be ("bar")
   }
 
+  test("SPARK-33782: handles k8s files download to current directory") {
+    val clArgs = Seq(
+      "--deploy-mode", "client",
+      "--proxy-user", "test.user",
+      "--master", "k8s://host:port",
+      "--executor-memory", "5g",
+      "--class", "org.SomeClass",
+      "--driver-memory", "4g",
+      "--conf", "spark.kubernetes.namespace=spark",
+      "--conf", "spark.kubernetes.driver.container.image=bar",
+      "--conf", "spark.kubernetes.submitInDriver=true",
+      "--files", "src/test/resources/test_metrics_config.properties",
+      "--py-files", "src/test/resources/test_metrics_system.properties",
+      "--archives", "src/test/resources/log4j2.properties",
+      "--jars", "src/test/resources/TestUDTF.jar",
+      "/home/thejar.jar",
+      "arg1")
+    val appArgs = new SparkSubmitArguments(clArgs)
+    val (childArgs, classpath, conf, mainClass) = submit.prepareSubmitEnvironment(appArgs)
+    conf.get("spark.master") should be ("k8s://https://host:port")
+    conf.get("spark.executor.memory") should be ("5g")
+    conf.get("spark.driver.memory") should be ("4g")
+    conf.get("spark.kubernetes.namespace") should be ("spark")
+    conf.get("spark.kubernetes.driver.container.image") should be ("bar")
+
+    Files.exists(Paths.get("test_metrics_config.properties")) should be (true)
+    Files.exists(Paths.get("test_metrics_system.properties")) should be (true)
+    Files.exists(Paths.get("log4j2.properties")) should be (true)
+    Files.exists(Paths.get("TestUDTF.jar")) should be (true)
+    Files.delete(Paths.get("test_metrics_config.properties"))
+    Files.delete(Paths.get("test_metrics_system.properties"))
+    Files.delete(Paths.get("log4j2.properties"))
+    Files.delete(Paths.get("TestUDTF.jar"))
+  }
+
   /**
    * Helper function for testing main class resolution on remote JAR files.
    *
@@ -647,7 +682,7 @@ class SparkSubmitSuite
       runSparkSubmit(args)
       val listStatus = fileSystem.listStatus(testDirPath)
       val logData = EventLogFileReader.openEventLog(listStatus.last.getPath, fileSystem)
-      Source.fromInputStream(logData).getLines().foreach { line =>
+      Source.fromInputStream(logData)(Codec.UTF8).getLines().foreach { line =>
         assert(!line.contains("secret_password"))
       }
     }
@@ -1520,7 +1555,7 @@ class SparkSubmitSuite
 
 object JarCreationTest extends Logging {
   def main(args: Array[String]): Unit = {
-    TestUtils.configTestLog4j("INFO")
+    TestUtils.configTestLog4j2("INFO")
     val conf = new SparkConf()
     val sc = new SparkContext(conf)
     val result = sc.makeRDD(1 to 100, 10).mapPartitions { x =>
@@ -1544,7 +1579,7 @@ object JarCreationTest extends Logging {
 
 object SimpleApplicationTest {
   def main(args: Array[String]): Unit = {
-    TestUtils.configTestLog4j("INFO")
+    TestUtils.configTestLog4j2("INFO")
     val conf = new SparkConf()
     val sc = new SparkContext(conf)
     val configs = Seq("spark.master", "spark.app.name")
@@ -1556,7 +1591,8 @@ object SimpleApplicationTest {
         .collect()
         .distinct
       if (executorValues.size != 1) {
-        throw new SparkException(s"Inconsistent values for $config: $executorValues")
+        throw new SparkException(s"Inconsistent values for $config: " +
+          s"${executorValues.mkString("values(", ", ", ")")}")
       }
       val executorValue = executorValues(0)
       if (executorValue != masterValue) {

@@ -37,6 +37,7 @@ SERVICE_ACCOUNT=
 CONTEXT=
 INCLUDE_TAGS="k8s"
 EXCLUDE_TAGS=
+DEFAULT_EXCLUDE_TAGS="N/A"
 JAVA_VERSION="8"
 BUILD_DEPENDENCIES_MVN_FLAG="-am"
 HADOOP_PROFILE="hadoop-3"
@@ -99,6 +100,10 @@ while (( "$#" )); do
       ;;
     --exclude-tags)
       EXCLUDE_TAGS="$2"
+      shift
+      ;;
+    --default-exclude-tags)
+      DEFAULT_EXCLUDE_TAGS="$2"
       shift
       ;;
     --base-image-name)
@@ -180,6 +185,11 @@ then
   properties=( ${properties[@]} -Dtest.exclude.tags=$EXCLUDE_TAGS )
 fi
 
+if [ "$DEFAULT_EXCLUDE_TAGS" != "N/A" ];
+then
+  properties=( ${properties[@]} -Dtest.default.exclude.tags=$DEFAULT_EXCLUDE_TAGS )
+fi
+
 BASE_IMAGE_NAME=${BASE_IMAGE_NAME:-spark}
 JVM_IMAGE_NAME=${JVM_IMAGE_NAME:-${BASE_IMAGE_NAME}}
 PYTHON_IMAGE_NAME=${PYTHON_IMAGE_NAME:-${BASE_IMAGE_NAME}-py}
@@ -189,7 +199,6 @@ properties+=(
   -Dspark.kubernetes.test.jvmImage=$JVM_IMAGE_NAME
   -Dspark.kubernetes.test.pythonImage=$PYTHON_IMAGE_NAME
   -Dspark.kubernetes.test.rImage=$R_IMAGE_NAME
-  -Dlog4j.logger.org.apache.spark=DEBUG
 )
 
 (

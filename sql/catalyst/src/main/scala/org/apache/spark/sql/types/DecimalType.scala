@@ -19,10 +19,12 @@ package org.apache.spark.sql.types
 
 import java.util.Locale
 
+import scala.annotation.tailrec
 import scala.reflect.runtime.universe.typeTag
 
 import org.apache.spark.annotation.Stable
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.types.{PhysicalDataType, PhysicalDecimalType}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.internal.SQLConf
 
@@ -76,11 +78,14 @@ case class DecimalType(precision: Int, scale: Int) extends FractionalType {
    * Returns whether this DecimalType is wider than `other`. If yes, it means `other`
    * can be casted into `this` safely without losing any precision or range.
    */
-  private[sql] def isWiderThan(other: DataType): Boolean = other match {
+  private[sql] def isWiderThan(other: DataType): Boolean = isWiderThanInternal(other)
+
+  @tailrec
+  private def isWiderThanInternal(other: DataType): Boolean = other match {
     case dt: DecimalType =>
       (precision - scale) >= (dt.precision - dt.scale) && scale >= dt.scale
     case dt: IntegralType =>
-      isWiderThan(DecimalType.forType(dt))
+      isWiderThanInternal(DecimalType.forType(dt))
     case _ => false
   }
 
@@ -92,7 +97,11 @@ case class DecimalType(precision: Int, scale: Int) extends FractionalType {
     case dt: DecimalType =>
       (precision - scale) <= (dt.precision - dt.scale) && scale <= dt.scale
     case dt: IntegralType =>
-      isTighterThan(DecimalType.forType(dt))
+      val integerAsDecimal = DecimalType.forType(dt)
+      assert(integerAsDecimal.scale == 0)
+      // If the precision equals `integerAsDecimal.precision`, there can be integer overflow
+      // during casting.
+      precision < integerAsDecimal.precision && scale == 0
     case _ => false
   }
 
@@ -101,6 +110,8 @@ case class DecimalType(precision: Int, scale: Int) extends FractionalType {
    * and 16 bytes otherwise.
    */
   override def defaultSize: Int = if (precision <= Decimal.MAX_LONG_DIGITS) 8 else 16
+
+  override def physicalDataType: PhysicalDataType = PhysicalDecimalType(precision, scale)
 
   override def simpleString: String = s"decimal($precision,$scale)"
 
@@ -119,7 +130,8 @@ object DecimalType extends AbstractDataType {
 
   val MAX_PRECISION = 38
   val MAX_SCALE = 38
-  val SYSTEM_DEFAULT: DecimalType = DecimalType(MAX_PRECISION, 18)
+  val DEFAULT_SCALE = 18
+  val SYSTEM_DEFAULT: DecimalType = DecimalType(MAX_PRECISION, DEFAULT_SCALE)
   val USER_DEFAULT: DecimalType = DecimalType(10, 0)
   val MINIMUM_ADJUSTED_SCALE = 6
 

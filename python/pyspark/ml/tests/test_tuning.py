@@ -80,11 +80,7 @@ class InducedErrorEstimator(Estimator, HasInducedError):
 class ParamGridBuilderTests(SparkSessionTestCase):
     def test_addGrid(self):
         with self.assertRaises(TypeError):
-            grid = (
-                ParamGridBuilder()
-                .addGrid("must be an instance of Param", ["not", "string"])
-                .build()
-            )
+            (ParamGridBuilder().addGrid("must be an instance of Param", ["not", "string"]).build())
 
 
 class ValidatorTestUtilsMixin:
@@ -1031,7 +1027,7 @@ if __name__ == "__main__":
     from pyspark.ml.tests.test_tuning import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

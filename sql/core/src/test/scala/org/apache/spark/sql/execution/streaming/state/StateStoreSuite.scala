@@ -35,7 +35,6 @@ import org.scalatest.time.SpanSugar._
 
 import org.apache.spark._
 import org.apache.spark.LocalSparkContext._
-import org.apache.spark.internal.config.Network.RPC_NUM_RETRIES
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.util.quietly
@@ -250,9 +249,6 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     val conf = new SparkConf()
       .setMaster("local")
       .setAppName("test")
-      // Make sure that when SparkContext stops, the StateStore maintenance thread 'quickly'
-      // fails to talk to the StateStoreCoordinator and unloads all the StateStores
-      .set(RPC_NUM_RETRIES, 1)
     val opId = 0
     val dir1 = newDir()
     val storeProviderId1 = StateStoreProviderId(StateStoreId(dir1, opId, 0), UUID.randomUUID)
@@ -357,6 +353,77 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
         assert(!StateStore.isLoaded(storeProviderId1))
         assert(!StateStore.isLoaded(storeProviderId2))
         assert(!StateStore.isMaintenanceRunning)
+      }
+    }
+  }
+
+  test("SPARK-40492: maintenance before unload") {
+    val conf = new SparkConf()
+      .setMaster("local")
+      .setAppName("SPARK-40492")
+    val opId = 0
+    val dir1 = newDir()
+    val storeProviderId1 = StateStoreProviderId(StateStoreId(dir1, opId, 0), UUID.randomUUID)
+    val sqlConf = getDefaultSQLConf(SQLConf.STATE_STORE_MIN_DELTAS_FOR_SNAPSHOT.defaultValue.get,
+      SQLConf.MAX_BATCHES_TO_RETAIN_IN_MEMORY.defaultValue.get)
+    sqlConf.setConf(SQLConf.MIN_BATCHES_TO_RETAIN, 2)
+    // Make maintenance interval large so that maintenance is called after deactivating instances.
+    sqlConf.setConf(SQLConf.STREAMING_MAINTENANCE_INTERVAL, 1.minute.toMillis)
+    val storeConf = StateStoreConf(sqlConf)
+    val hadoopConf = new Configuration()
+
+    var latestStoreVersion = 0
+
+    def generateStoreVersions(): Unit = {
+      for (i <- 1 to 20) {
+        val store = StateStore.get(storeProviderId1, keySchema, valueSchema, numColsPrefixKey = 0,
+          latestStoreVersion, storeConf, hadoopConf)
+        put(store, "a", 0, i)
+        store.commit()
+        latestStoreVersion += 1
+      }
+    }
+
+    val timeoutDuration = 1.minute
+
+    quietly {
+      withSpark(new SparkContext(conf)) { sc =>
+        withCoordinatorRef(sc) { coordinatorRef =>
+          require(!StateStore.isMaintenanceRunning, "StateStore is unexpectedly running")
+
+          // Generate sufficient versions of store for snapshots
+          generateStoreVersions()
+          eventually(timeout(timeoutDuration)) {
+            // Store should have been reported to the coordinator
+            assert(coordinatorRef.getLocation(storeProviderId1).nonEmpty,
+              "active instance was not reported")
+            // Background maintenance should clean up and generate snapshots
+            assert(StateStore.isMaintenanceRunning, "Maintenance task is not running")
+            // Some snapshots should have been generated
+            tryWithProviderResource(newStoreProvider(storeProviderId1.storeId)) { provider =>
+              val snapshotVersions = (1 to latestStoreVersion).filter { version =>
+                fileExists(provider, version, isSnapshot = true)
+              }
+              assert(snapshotVersions.nonEmpty, "no snapshot file found")
+            }
+          }
+          // Generate more versions such that there is another snapshot.
+          generateStoreVersions()
+
+          // If driver decides to deactivate all stores related to a query run,
+          // then this instance should be unloaded.
+          coordinatorRef.deactivateInstances(storeProviderId1.queryRunId)
+          eventually(timeout(timeoutDuration)) {
+            assert(!StateStore.isLoaded(storeProviderId1))
+          }
+
+          // Earliest delta file should be scheduled a cleanup during unload.
+          tryWithProviderResource(newStoreProvider(storeProviderId1.storeId)) { provider =>
+            eventually(timeout(timeoutDuration)) {
+              assert(!fileExists(provider, 1, isSnapshot = false), "earliest file not deleted")
+            }
+          }
+        }
       }
     }
   }
@@ -1017,6 +1084,64 @@ abstract class StateStoreSuiteBase[ProviderClass <: StateStoreProvider]
     }
   }
 
+  // This test illustrates state store iterator behavior differences leading to SPARK-38320.
+  testWithAllCodec("SPARK-38320 - state store iterator behavior differences") {
+    val ROCKSDB_STATE_STORE = "RocksDBStateStore"
+    val dir = newDir()
+    val storeId = StateStoreId(dir, 0L, 1)
+    var version = 0L
+
+    tryWithProviderResource(newStoreProvider(storeId)) { provider =>
+      val store = provider.getStore(version)
+      logInfo(s"Running SPARK-38320 test with state store ${store.getClass.getName}")
+
+      val itr1 = store.iterator()  // itr1 is created before any writes to the store.
+      put(store, "1", 11, 100)
+      put(store, "2", 22, 200)
+      val itr2 = store.iterator()  // itr2 is created in the middle of the writes.
+      put(store, "1", 11, 101)  // Overwrite row (1, 11)
+      put(store, "3", 33, 300)
+      val itr3 = store.iterator()  // itr3 is created after all writes.
+
+      val expected = Set(("1", 11) -> 101, ("2", 22) -> 200, ("3", 33) -> 300)  // The final state.
+      // Itr1 does not see any updates - original state of the store (SPARK-38320)
+      assert(rowPairsToDataSet(itr1) === Set.empty[Set[((String, Int), Int)]])
+      assert(rowPairsToDataSet(itr2) === expected)
+      assert(rowPairsToDataSet(itr3) === expected)
+
+      version = store.commit()
+    }
+
+    // Reload the store from the commited version and repeat the above test.
+    tryWithProviderResource(newStoreProvider(storeId)) { provider =>
+      assert(version > 0)
+      val store = provider.getStore(version)
+
+      val itr1 = store.iterator()  // itr1 is created before any writes to the store.
+      put(store, "3", 33, 301)  // Overwrite row (3, 33)
+      put(store, "4", 44, 400)
+      val itr2 = store.iterator()  // itr2 is created in the middle of the writes.
+      put(store, "4", 44, 401)  // Overwrite row (4, 44)
+      put(store, "5", 55, 500)
+      val itr3 = store.iterator()  // itr3 is created after all writes.
+
+      // The final state.
+      val expected = Set(
+        ("1", 11) -> 101, ("2", 22) -> 200, ("3", 33) -> 301, ("4", 44) -> 401, ("5", 55) -> 500)
+      if (store.getClass.getName contains ROCKSDB_STATE_STORE) {
+        // RocksDB itr1 does not see any updates - original state of the store (SPARK-38320)
+        assert(rowPairsToDataSet(itr1) === Set(
+          ("1", 11) -> 101, ("2", 22) -> 200, ("3", 33) -> 300))
+      } else {
+        assert(rowPairsToDataSet(itr1) === expected)
+      }
+      assert(rowPairsToDataSet(itr2) === expected)
+      assert(rowPairsToDataSet(itr3) === expected)
+
+      version = store.commit()
+    }
+  }
+
   test("StateStore.get") {
     quietly {
       val dir = newDir()
@@ -1120,7 +1245,7 @@ abstract class StateStoreSuiteBase[ProviderClass <: StateStoreProvider]
     assert(metricNew.desc === "new desc", "incorrect description in copied instance")
     assert(metricNew.name === "m1", "incorrect name in copied instance")
 
-    val conf = new SparkConf().setMaster("local").setAppName("SPARK-35763").set(RPC_NUM_RETRIES, 1)
+    val conf = new SparkConf().setMaster("local").setAppName("SPARK-35763")
     withSpark(new SparkContext(conf)) { sc =>
       val sqlMetric = metric.createSQLMetric(sc)
       assert(sqlMetric != null)
@@ -1277,9 +1402,9 @@ object StateStoreTestsHelper {
 class RenameLikeHDFSFileSystem extends RawLocalFileSystem {
   override def rename(src: Path, dst: Path): Boolean = {
     if (exists(dst)) {
-      return false
+      false
     } else {
-      return super.rename(src, dst)
+      super.rename(src, dst)
     }
   }
 }

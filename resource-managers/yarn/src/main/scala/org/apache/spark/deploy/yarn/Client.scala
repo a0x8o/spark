@@ -54,6 +54,7 @@ import org.apache.spark.api.python.PythonUtils
 import org.apache.spark.deploy.{SparkApplication, SparkHadoopUtil}
 import org.apache.spark.deploy.security.HadoopDelegationTokenManager
 import org.apache.spark.deploy.yarn.ResourceRequestHelper._
+import org.apache.spark.deploy.yarn.YarnSparkHadoopUtil._
 import org.apache.spark.deploy.yarn.config._
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
@@ -70,7 +71,6 @@ private[spark] class Client(
   extends Logging {
 
   import Client._
-  import YarnSparkHadoopUtil._
 
   private val yarnClient = YarnClient.createYarnClient
   private val hadoopConf = new YarnConfiguration(SparkHadoopUtil.newConfiguration(sparkConf))
@@ -85,6 +85,12 @@ private[spark] class Client(
   private var appMaster: ApplicationMaster = _
   private var stagingDirPath: Path = _
 
+  private val amMemoryOverheadFactor = if (isClusterMode) {
+    sparkConf.get(DRIVER_MEMORY_OVERHEAD_FACTOR)
+  } else {
+    AM_MEMORY_OVERHEAD_FACTOR
+  }
+
   // AM related configurations
   private val amMemory = if (isClusterMode) {
     sparkConf.get(DRIVER_MEMORY).toInt
@@ -94,7 +100,7 @@ private[spark] class Client(
   private val amMemoryOverhead = {
     val amMemoryOverheadEntry = if (isClusterMode) DRIVER_MEMORY_OVERHEAD else AM_MEMORY_OVERHEAD
     sparkConf.get(amMemoryOverheadEntry).getOrElse(
-      math.max((MEMORY_OVERHEAD_FACTOR * amMemory).toLong,
+      math.max((amMemoryOverheadFactor * amMemory).toLong,
         ResourceProfile.MEMORY_OVERHEAD_MIN_MIB)).toInt
   }
   private val amCores = if (isClusterMode) {
@@ -107,8 +113,10 @@ private[spark] class Client(
   private val executorMemory = sparkConf.get(EXECUTOR_MEMORY)
   // Executor offHeap memory in MiB.
   protected val executorOffHeapMemory = Utils.executorOffHeapMemorySizeAsMb(sparkConf)
+
+  private val executorMemoryOvereadFactor = sparkConf.get(EXECUTOR_MEMORY_OVERHEAD_FACTOR)
   private val executorMemoryOverhead = sparkConf.get(EXECUTOR_MEMORY_OVERHEAD).getOrElse(
-    math.max((MEMORY_OVERHEAD_FACTOR * executorMemory).toLong,
+    math.max((executorMemoryOvereadFactor * executorMemory).toLong,
       ResourceProfile.MEMORY_OVERHEAD_MIN_MIB)).toInt
 
   private val isPython = sparkConf.get(IS_PYTHON_APP)
@@ -183,8 +191,10 @@ private[spark] class Client(
       yarnClient.init(hadoopConf)
       yarnClient.start()
 
-      logInfo("Requesting a new application from cluster with %d NodeManagers"
-        .format(yarnClient.getYarnClusterMetrics.getNumNodeManagers))
+      if (log.isDebugEnabled) {
+        logDebug("Requesting a new application from cluster with %d NodeManagers"
+          .format(yarnClient.getYarnClusterMetrics.getNumNodeManagers))
+      }
 
       // Get a new application from our RM
       val newApp = yarnClient.createApplication()
@@ -381,7 +391,7 @@ private[spark] class Client(
           throw new SparkException(s"Cannot find setTokensConf method in ${amContainer.getClass}." +
               s" Please check YARN version and make sure it is 2.9+ or 3.x")
       }
-      setTokensConfMethod.invoke(ByteBuffer.wrap(dob.getData))
+      setTokensConfMethod.invoke(amContainer, ByteBuffer.wrap(dob.getData))
     }
   }
 
@@ -839,16 +849,18 @@ private[spark] class Client(
     try {
       confStream.setLevel(0)
 
-      // Upload $SPARK_CONF_DIR/log4j.properties file to the distributed cache to make sure that
+      // Upload $SPARK_CONF_DIR/log4j2 configuration file to the distributed cache to make sure that
       // the executors will use the latest configurations instead of the default values. This is
-      // required when user changes log4j.properties directly to set the log configurations. If
+      // required when user changes log4j2 configuration directly to set the log configurations. If
       // configuration file is provided through --files then executors will be taking configurations
-      // from --files instead of $SPARK_CONF_DIR/log4j.properties.
+      // from --files instead of $SPARK_CONF_DIR/log4j2 configuration file.
 
       // Also upload metrics.properties to distributed cache if exists in classpath.
       // If user specify this file using --files then executors will use the one
       // from --files instead.
-      for { prop <- Seq("log4j.properties", "metrics.properties")
+      val log4j2ConfigFiles = Seq("log4j2.yaml", "log4j2.yml", "log4j2.json", "log4j2.jsn",
+        "log4j2.xml", "log4j2.properties")
+      for { prop <- log4j2ConfigFiles ++ Seq("metrics.properties")
             url <- Option(Utils.getContextOrSparkClassLoader.getResource(prop))
             if url.getProtocol == "file" } {
         val file = new File(url.getPath())
@@ -900,6 +912,7 @@ private[spark] class Client(
     populateClasspath(args, hadoopConf, sparkConf, env, sparkConf.get(DRIVER_CLASS_PATH))
     env("SPARK_YARN_STAGING_DIR") = stagingDirPath.toString
     env("SPARK_USER") = UserGroupInformation.getCurrentUser().getShortUserName()
+    env("SPARK_PREFER_IPV6") = Utils.preferIPv6.toString
 
     // Pick up any environment variables for the AM provided through spark.yarn.appMasterEnv.*
     val amEnvPrefix = "spark.yarn.appMasterEnv."
@@ -975,6 +988,8 @@ private[spark] class Client(
 
     val javaOpts = ListBuffer[String]()
 
+    javaOpts += s"-Djava.net.preferIPv6Addresses=${Utils.preferIPv6}"
+
     // SPARK-37106: To start AM with Java 17, `JavaModuleOptions.defaultModuleOptions`
     // is added by default. It will not affect Java 8 and Java 11 due to existence of
     // `-XX:+IgnoreUnrecognizedVMOptions`.
@@ -1047,7 +1062,7 @@ private[spark] class Client(
       }
     }
 
-    // For log4j configuration to reference
+    // For log4j2 configuration to reference
     javaOpts += ("-Dspark.yarn.app.container.log.dir=" + ApplicationConstants.LOG_DIR_EXPANSION_VAR)
 
     val userClass =
@@ -1455,6 +1470,11 @@ private[spark] object Client extends Logging {
       addClasspathEntry(getClusterPath(sparkConf, cp), env)
     }
 
+    val cpSet = extraClassPath match {
+      case Some(classPath) if Utils.isTesting => classPath.split(File.pathSeparator).toSet
+      case _ => Set.empty[String]
+    }
+
     addClasspathEntry(Environment.PWD.$$(), env)
 
     addClasspathEntry(Environment.PWD.$$() + Path.SEPARATOR + LOCALIZED_CONF_DIR, env)
@@ -1498,7 +1518,13 @@ private[spark] object Client extends Logging {
     }
 
     sys.env.get(ENV_DIST_CLASSPATH).foreach { cp =>
-      addClasspathEntry(getClusterPath(sparkConf, cp), env)
+      // SPARK-40635: during the test, add a jar de-duplication process to avoid
+      // that the startup command can't be executed due to the too long classpath.
+      val newCp = if (Utils.isTesting) {
+        cp.split(File.pathSeparator)
+          .filterNot(cpSet.contains).mkString(File.pathSeparator)
+      } else cp
+      addClasspathEntry(getClusterPath(sparkConf, newCp), env)
     }
 
     // Add the localized Hadoop config at the end of the classpath, in case it contains other

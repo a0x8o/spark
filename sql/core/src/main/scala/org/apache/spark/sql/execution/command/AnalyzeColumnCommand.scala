@@ -86,7 +86,7 @@ case class AnalyzeColumnCommand(
     } else {
       columnNames.get.map { col =>
         val exprOption = relation.output.find(attr => conf.resolver(attr.name, col))
-        exprOption.getOrElse(throw QueryCompilationErrors.columnDoesNotExistError(col))
+        exprOption.getOrElse(throw QueryCompilationErrors.columnNotFoundError(col))
       }
     }
     // Make sure the column types are supported for stats gathering.
@@ -109,7 +109,7 @@ case class AnalyzeColumnCommand(
         throw QueryCompilationErrors.analyzeTableNotSupportedOnViewsError()
       }
     } else {
-      val sizeInBytes = CommandUtils.calculateTotalSize(sparkSession, tableMeta)
+      val (sizeInBytes, _) = CommandUtils.calculateTotalSize(sparkSession, tableMeta)
       val relation = sparkSession.table(tableIdent).logicalPlan
       val columnsToAnalyze = getColumnsToAnalyze(tableIdent, relation, columnNames, allColumns)
 

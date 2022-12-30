@@ -20,9 +20,11 @@ import scala.io.Source
 
 import org.apache.spark.sql.{AnalysisException, FastOperator}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedNamespace
+import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{CommandResult, LogicalPlan, OneRowRelation, Project, ShowTables, SubqueryAlias}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.execution.datasources.v2.ShowTablesExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -227,7 +229,8 @@ class QueryExecutionSuite extends SharedSparkSession {
     }
     Seq("=== Applying Rule org.apache.spark.sql.execution",
         "=== Result of Batch Preparations ===").foreach { expectedMsg =>
-      assert(testAppender.loggingEvents.exists(_.getRenderedMessage.contains(expectedMsg)))
+      assert(testAppender.loggingEvents.exists(
+        _.getMessage.getFormattedMessage.contains(expectedMsg)))
     }
   }
 
@@ -235,7 +238,8 @@ class QueryExecutionSuite extends SharedSparkSession {
     withTable("spark_34129") {
       spark.sql("CREATE TABLE spark_34129(id INT) using parquet")
       val df = spark.table("spark_34129")
-      assert(df.queryExecution.optimizedPlan.toString.startsWith("Relation default.spark_34129["))
+      assert(df.queryExecution.optimizedPlan.toString.startsWith(
+        s"Relation $SESSION_CATALOG_NAME.default.spark_34129["))
     }
   }
 
@@ -259,5 +263,31 @@ class QueryExecutionSuite extends SharedSparkSession {
     assert(projectQe.executedPlan.isInstanceOf[CommandResultExec])
     val cmdResultExec = projectQe.executedPlan.asInstanceOf[CommandResultExec]
     assert(cmdResultExec.commandPhysicalPlan.isInstanceOf[ShowTablesExec])
+  }
+
+  test("SPARK-35378: Return UnsafeRow in CommandResultExecCheck execute methods") {
+    val plan = spark.sql("SHOW FUNCTIONS").queryExecution.executedPlan
+    assert(plan.isInstanceOf[CommandResultExec])
+    plan.executeCollect().foreach { row => assert(row.isInstanceOf[UnsafeRow]) }
+    plan.executeTake(10).foreach { row => assert(row.isInstanceOf[UnsafeRow]) }
+    plan.executeTail(10).foreach { row => assert(row.isInstanceOf[UnsafeRow]) }
+  }
+
+  test("SPARK-38198: check specify maxFields when call toFile method") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath + "/plans.txt"
+      // Define a dataset with 6 columns
+      val ds = spark.createDataset(Seq((0, 1, 2, 3, 4, 5), (6, 7, 8, 9, 10, 11)))
+      // `CodegenMode` and `FormattedMode` doesn't use the maxFields, so not tested in this case
+      Seq(SimpleMode.name, ExtendedMode.name, CostMode.name).foreach { modeName =>
+        val maxFields = 3
+        ds.queryExecution.debug.toFile(path, explainMode = Some(modeName), maxFields = maxFields)
+        Utils.tryWithResource(Source.fromFile(path)) { source =>
+          val tableScan = source.getLines().filter(_.contains("LocalTableScan"))
+          assert(tableScan.exists(_.contains("more fields")),
+            s"Specify maxFields = $maxFields doesn't take effect when explainMode is $modeName")
+        }
+      }
+    }
   }
 }

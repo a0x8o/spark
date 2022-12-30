@@ -81,25 +81,25 @@ class BlockManagerDecommissionIntegrationSuite extends SparkFunSuite with LocalS
     }
   }
 
-  testRetry(s"verify that an already running task which is going to cache data succeeds " +
-    s"on a decommissioned executor after task start") {
+  testRetry("verify that an already running task which is going to cache data succeeds " +
+    "on a decommissioned executor after task start") {
     runDecomTest(true, false, TaskStarted)
   }
 
-  test(s"verify that an already running task which is going to cache data succeeds " +
-    s"on a decommissioned executor after one task ends but before job ends") {
+  test("verify that an already running task which is going to cache data succeeds " +
+    "on a decommissioned executor after one task ends but before job ends") {
     runDecomTest(true, false, TaskEnded)
   }
 
-  test(s"verify that shuffle blocks are migrated") {
+  test("verify that shuffle blocks are migrated") {
     runDecomTest(false, true, JobEnded)
   }
 
-  test(s"verify that both migrations can work at the same time") {
+  test("verify that both migrations can work at the same time") {
     runDecomTest(true, true, JobEnded)
   }
 
-  test(s"SPARK-36782 not deadlock if MapOutput uses broadcast") {
+  test("SPARK-36782 not deadlock if MapOutput uses broadcast") {
     runDecomTest(false, true, JobEnded, forceMapOutputBroadcast = true)
   }
 
@@ -141,33 +141,34 @@ class BlockManagerDecommissionIntegrationSuite extends SparkFunSuite with LocalS
     val input = sc.parallelize(1 to numParts, numParts)
     val accum = sc.longAccumulator("mapperRunAccumulator")
 
-    val sleepIntervalMs = whenToDecom match {
-      // Increase the window of time b/w task started and ended so that we can decom within that.
-      case TaskStarted => 10000
-      // Make one task take a really short time so that we can decommission right after it is
-      // done but before its peers are done.
-      case TaskEnded =>
-        if (TaskContext.getPartitionId() == 0) {
-          100
-        } else {
-          1000
-        }
-      // No sleep otherwise
-      case _ => 0
-    }
-
     // Create a new RDD where we have sleep in each partition, we are also increasing
     // the value of accumulator in each partition
     val baseRdd = input.mapPartitions { x =>
       accum.add(1)
+
+      val sleepIntervalMs = whenToDecom match {
+        // Increase the window of time b/w task started and ended so that we can decom within that.
+        case "TASK_STARTED" => 10000
+        // Make one task take a really short time so that we can decommission right after it is
+        // done but before its peers are done.
+        case "TASK_ENDED" =>
+          if (TaskContext.getPartitionId() == 0) {
+            100
+          } else {
+            1000
+          }
+        // No sleep otherwise
+        case _ => 0
+      }
       if (sleepIntervalMs > 0) {
         Thread.sleep(sleepIntervalMs)
       }
       x.map(y => (y, y))
     }
-    val testRdd = shuffle match {
-      case true => baseRdd.reduceByKey(_ + _)
-      case false => baseRdd
+    val testRdd = if (shuffle) {
+      baseRdd.reduceByKey(_ + _)
+    } else {
+      baseRdd
     }
 
     // Listen for the job & block updates
@@ -182,9 +183,14 @@ class BlockManagerDecommissionIntegrationSuite extends SparkFunSuite with LocalS
       taskEndEvents.asScala.filter(_.taskInfo.successful).map(_.taskInfo.executorId).headOption
     }
 
-    sc.addSparkListener(new SparkListener {
+    val listener = new SparkListener {
+      var removeReasonValidated = false
+
       override def onExecutorRemoved(execRemoved: SparkListenerExecutorRemoved): Unit = {
         executorRemovedSem.release()
+        if (execRemoved.reason == ExecutorDecommission.msgPrefix + "test msg 0") {
+          removeReasonValidated = true
+        }
       }
 
       override def onTaskEnd(taskEnd: SparkListenerTaskEnd): Unit = {
@@ -210,7 +216,8 @@ class BlockManagerDecommissionIntegrationSuite extends SparkFunSuite with LocalS
           }
         }
       }
-    })
+    }
+    sc.addSparkListener(listener)
 
     // Cache the RDD lazily
     if (persist) {
@@ -246,7 +253,7 @@ class BlockManagerDecommissionIntegrationSuite extends SparkFunSuite with LocalS
     // Decommission executor and ensure it is not relaunched by setting adjustTargetNumExecutors
     sched.decommissionExecutor(
       execToDecommission,
-      ExecutorDecommissionInfo("", None),
+      ExecutorDecommissionInfo("test msg 0", None),
       adjustTargetNumExecutors = true)
     val decomTime = new SystemClock().getTimeMillis()
 
@@ -342,5 +349,7 @@ class BlockManagerDecommissionIntegrationSuite extends SparkFunSuite with LocalS
     // should have same value like before
     assert(testRdd.count() === numParts)
     assert(accum.value === numParts)
+    import scala.language.reflectiveCalls
+    assert(listener.removeReasonValidated)
   }
 }

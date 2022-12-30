@@ -21,11 +21,11 @@ import pandas as pd
 from pyspark import pandas as ps
 from pyspark.pandas import set_option, reset_option
 from pyspark.pandas.numpy_compat import unary_np_spark_mappings, binary_np_spark_mappings
-from pyspark.testing.pandasutils import PandasOnSparkTestCase
+from pyspark.testing.pandasutils import ComparisonTestBase
 from pyspark.testing.sqlutils import SQLTestUtils
 
 
-class NumPyCompatTest(PandasOnSparkTestCase, SQLTestUtils):
+class NumPyCompatTest(ComparisonTestBase, SQLTestUtils):
     blacklist = [
         # Koalas does not currently support
         "conj",
@@ -55,10 +55,6 @@ class NumPyCompatTest(PandasOnSparkTestCase, SQLTestUtils):
             index=[0, 1, 3, 5, 6, 8, 9, 9, 9],
         )
 
-    @property
-    def psdf(self):
-        return ps.from_pandas(self.pdf)
-
     def test_np_add_series(self):
         psdf = self.psdf
         pdf = self.pdf
@@ -83,6 +79,11 @@ class NumPyCompatTest(PandasOnSparkTestCase, SQLTestUtils):
         psdf = self.psdf
         with self.assertRaisesRegex(NotImplementedError, "on-Spark.*not.*support.*sqrt.*"):
             np.sqrt(psdf, psdf)
+
+        psdf1 = ps.DataFrame({"A": [1, 2, 3]})
+        psdf2 = ps.DataFrame({("A", "B"): [4, 5, 6]})
+        with self.assertRaisesRegex(ValueError, "cannot join with no overlapping index names"):
+            np.left_shift(psdf1, psdf2)
 
     def test_np_spark_compat_series(self):
         # Use randomly generated dataFrame
@@ -187,7 +188,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.test_numpy_compat import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

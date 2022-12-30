@@ -53,6 +53,7 @@ Spark Context APIs
 
     SparkContext.PACKAGE_EXTENSIONS
     SparkContext.accumulator
+    SparkContext.addArchive
     SparkContext.addFile
     SparkContext.addPyFile
     SparkContext.applicationId
@@ -71,6 +72,8 @@ Spark Context APIs
     SparkContext.getOrCreate
     SparkContext.hadoopFile
     SparkContext.hadoopRDD
+    SparkContext.listArchives
+    SparkContext.listFiles
     SparkContext.newAPIHadoopFile
     SparkContext.newAPIHadoopRDD
     SparkContext.parallelize
@@ -111,6 +114,7 @@ RDD APIs
     RDD.cache
     RDD.cartesian
     RDD.checkpoint
+    RDD.cleanShuffleDependencies
     RDD.coalesce
     RDD.cogroup
     RDD.collect
@@ -258,10 +262,12 @@ Management
     StorageLevel.DISK_ONLY_3
     StorageLevel.MEMORY_AND_DISK
     StorageLevel.MEMORY_AND_DISK_2
+    StorageLevel.MEMORY_AND_DISK_DESER
     StorageLevel.MEMORY_ONLY
     StorageLevel.MEMORY_ONLY_2
     StorageLevel.OFF_HEAP
     TaskContext.attemptNumber
+    TaskContext.cpus
     TaskContext.get
     TaskContext.getLocalProperty
     TaskContext.partitionId
@@ -273,6 +279,7 @@ Management
     BarrierTaskContext.allGather
     BarrierTaskContext.attemptNumber
     BarrierTaskContext.barrier
+    BarrierTaskContext.cpus
     BarrierTaskContext.get
     BarrierTaskContext.getLocalProperty
     BarrierTaskContext.getTaskInfos

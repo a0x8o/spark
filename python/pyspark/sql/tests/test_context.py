@@ -160,7 +160,7 @@ class HiveContextSQLTests(ReusedPySparkTestCase):
                 ).columns[0]
             )
 
-        for new_maxsize in [2 ** 31 - 1, 2 ** 63 - 1, 2 ** 127 - 1]:
+        for new_maxsize in [2**31 - 1, 2**63 - 1, 2**127 - 1]:
             old_maxsize = sys.maxsize
             sys.maxsize = new_maxsize
             try:
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     from pyspark.sql.tests.test_context import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

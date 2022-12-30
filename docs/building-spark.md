@@ -27,7 +27,7 @@ license: |
 ## Apache Maven
 
 The Maven-based build is the build of reference for Apache Spark.
-Building Spark using Maven requires Maven 3.6.3 and Java 8.
+Building Spark using Maven requires Maven 3.8.6 and Java 8.
 Spark requires Scala 2.12/2.13; support for Scala 2.11 was removed in Spark 3.0.0.
 
 ### Setting up Maven's Memory Usage
@@ -303,3 +303,35 @@ If use an individual repository or a repository on GitHub Enterprise, export bel
   </td>
 </tr>
 </table>
+
+### Building and testing on IPv6-only environment
+
+Use Apache Spark GitBox URL because GitHub doesn't support IPv6 yet.
+
+    https://gitbox.apache.org/repos/asf/spark.git
+
+To build and run tests on IPv6-only environment, the following configurations are required.
+
+    export SPARK_LOCAL_HOSTNAME="your-IPv6-address" # e.g. '[2600:1700:232e:3de0:...]'
+    export DEFAULT_ARTIFACT_REPOSITORY=https://ipv6.repo1.maven.org/maven2/
+    export MAVEN_OPTS="-Djava.net.preferIPv6Addresses=true"
+    export SBT_OPTS="-Djava.net.preferIPv6Addresses=true"
+    export SERIAL_SBT_TESTS=1
+
+### Building with user-defined `protoc`
+
+When the user cannot use the official `protoc` binary files to build the `core` module in the compilation environment, for example, compiling `core` module on CentOS 6 or CentOS 7 which the default `glibc` version is less than 2.14, we can try to compile and test by specifying the user-defined `protoc` binary files as follows:
+
+```bash
+export SPARK_PROTOC_EXEC_PATH=/path-to-protoc-exe
+./build/mvn -Puser-defined-protoc -DskipDefaultProtoc clean package
+```
+
+or
+
+```bash
+export SPARK_PROTOC_EXEC_PATH=/path-to-protoc-exe
+./build/sbt -Puser-defined-protoc clean package
+```
+
+The user-defined `protoc` binary files can be produced in the user's compilation environment by source code compilation, for compilation steps, please refer to [protobuf](https://github.com/protocolbuffers/protobuf).

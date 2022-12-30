@@ -103,7 +103,7 @@ private[spark] class KubernetesClusterManager extends ExternalClusterManager wit
     val subscribersExecutor = ThreadUtils
       .newDaemonThreadPoolScheduledExecutor(
         "kubernetes-executor-snapshots-subscribers", 2)
-    val snapshotsStore = new ExecutorPodsSnapshotsStoreImpl(subscribersExecutor)
+    val snapshotsStore = new ExecutorPodsSnapshotsStoreImpl(subscribersExecutor, conf = sc.conf)
 
     val executorPodsLifecycleEventHandler = new ExecutorPodsLifecycleManager(
       sc.conf,
@@ -114,7 +114,8 @@ private[spark] class KubernetesClusterManager extends ExternalClusterManager wit
 
     val podsWatchEventSource = new ExecutorPodsWatchSnapshotSource(
       snapshotsStore,
-      kubernetesClient)
+      kubernetesClient,
+      sc.conf)
 
     val eventsPollingExecutor = ThreadUtils.newDaemonSingleThreadScheduledExecutor(
       "kubernetes-executor-pod-polling-sync")
@@ -137,7 +138,7 @@ private[spark] class KubernetesClusterManager extends ExternalClusterManager wit
       snapshotsStore: ExecutorPodsSnapshotsStore) = {
     val executorPodsAllocatorName = sc.conf.get(KUBERNETES_ALLOCATION_PODS_ALLOCATOR) match {
       case "statefulset" =>
-        classOf[StatefulsetPodsAllocator].getName
+        classOf[StatefulSetPodsAllocator].getName
       case "direct" =>
         classOf[ExecutorPodsAllocator].getName
       case fullClass =>

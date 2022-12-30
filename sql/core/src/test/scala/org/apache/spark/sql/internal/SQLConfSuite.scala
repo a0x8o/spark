@@ -20,7 +20,7 @@ package org.apache.spark.sql.internal
 import java.util.TimeZone
 
 import org.apache.hadoop.fs.Path
-import org.apache.log4j.Level
+import org.apache.logging.log4j.Level
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.parser.ParseException
@@ -231,9 +231,10 @@ class SQLConfSuite extends QueryTest with SharedSparkSession {
     assert(spark.conf.get(SQLConf.PLAN_CHANGE_LOG_RULES).isEmpty)
 
     // static sql configs
-    val e2 = intercept[AnalysisException](sql(s"RESET ${StaticSQLConf.WAREHOUSE_PATH.key}"))
-    assert(e2.getMessage ===
-      s"Cannot modify the value of a static config: ${StaticSQLConf.WAREHOUSE_PATH.key}")
+    checkError(
+      exception = intercept[AnalysisException](sql(s"RESET ${StaticSQLConf.WAREHOUSE_PATH.key}")),
+      errorClass = "_LEGACY_ERROR_TEMP_1325",
+      parameters = Map("key" -> "spark.sql.warehouse.dir"))
 
   }
 
@@ -343,10 +344,10 @@ class SQLConfSuite extends QueryTest with SharedSparkSession {
     assert(spark.sessionState.conf.parquetOutputTimestampType ==
       SQLConf.ParquetOutputTimestampType.INT96)
 
-    spark.sessionState.conf.setConf(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE, "timestamp_micros")
+    spark.conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE, "timestamp_micros")
     assert(spark.sessionState.conf.parquetOutputTimestampType ==
       SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS)
-    spark.sessionState.conf.setConf(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE, "int96")
+    spark.conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE, "int96")
     assert(spark.sessionState.conf.parquetOutputTimestampType ==
       SQLConf.ParquetOutputTimestampType.INT96)
 
@@ -362,9 +363,9 @@ class SQLConfSuite extends QueryTest with SharedSparkSession {
     val fallback = SQLConf.buildConf("spark.sql.__test__.spark_22779")
       .fallbackConf(SQLConf.PARQUET_COMPRESSION)
 
-    assert(spark.sessionState.conf.getConfString(fallback.key) ===
+    assert(spark.conf.get(fallback.key) ===
       SQLConf.PARQUET_COMPRESSION.defaultValue.get)
-    assert(spark.sessionState.conf.getConfString(fallback.key, "lzo") === "lzo")
+    assert(spark.conf.get(fallback.key, "lzo") === "lzo")
 
     val displayValue = spark.sessionState.conf.getAllDefinedConfs
       .find { case (key, _, _, _) => key == fallback.key }
@@ -372,11 +373,11 @@ class SQLConfSuite extends QueryTest with SharedSparkSession {
       .get
     assert(displayValue === fallback.defaultValueString)
 
-    spark.sessionState.conf.setConf(SQLConf.PARQUET_COMPRESSION, "gzip")
-    assert(spark.sessionState.conf.getConfString(fallback.key) === "gzip")
+    spark.conf.set(SQLConf.PARQUET_COMPRESSION, "gzip")
+    assert(spark.conf.get(fallback.key) === "gzip")
 
-    spark.sessionState.conf.setConf(fallback, "lzo")
-    assert(spark.sessionState.conf.getConfString(fallback.key) === "lzo")
+    spark.conf.set(fallback, "lzo")
+    assert(spark.conf.get(fallback.key) === "lzo")
 
     val newDisplayValue = spark.sessionState.conf.getAllDefinedConfs
       .find { case (key, _, _, _) => key == fallback.key }
@@ -415,7 +416,7 @@ class SQLConfSuite extends QueryTest with SharedSparkSession {
     def check(config: String): Unit = {
       assert(logAppender.loggingEvents.exists(
         e => e.getLevel == Level.WARN &&
-        e.getRenderedMessage.contains(config)))
+        e.getMessage.getFormattedMessage.contains(config)))
     }
 
     val config1 = SQLConf.HIVE_VERIFY_PARTITION_PATH.key
@@ -469,11 +470,15 @@ class SQLConfSuite extends QueryTest with SharedSparkSession {
       if (i == 0) {
         assert(zone === "Z")
       } else {
-        assert(zone === String.format("%+03d:00", new Integer(i)))
+        assert(zone === String.format("%+03d:00", Integer.valueOf(i)))
       }
     }
-    val e2 = intercept[ParseException](sql("set time zone interval 19 hours"))
-    assert(e2.getMessage contains "The interval value must be in the range of [-18, +18] hours")
+    val sqlText = "set time zone interval 19 hours"
+    checkError(
+      exception = intercept[ParseException](sql(sqlText)),
+      errorClass = "_LEGACY_ERROR_TEMP_0044",
+      parameters = Map.empty,
+      context = ExpectedContext(sqlText, 0, 30))
   }
 
   test("SPARK-34454: configs from the legacy namespace should be internal") {

@@ -18,27 +18,20 @@
 import functools
 import shutil
 import tempfile
-import unittest
 import warnings
 from contextlib import contextmanager
 from distutils.version import LooseVersion
-
-import pandas as pd
-from pandas.api.types import is_list_like
-from pandas.core.dtypes.common import is_numeric_dtype
-from pandas.testing import assert_frame_equal, assert_index_equal, assert_series_equal
 
 from pyspark import pandas as ps
 from pyspark.pandas.frame import DataFrame
 from pyspark.pandas.indexes import Index
 from pyspark.pandas.series import Series
-from pyspark.pandas.utils import default_session, SPARK_CONF_ARROW_ENABLED
-from pyspark.testing.sqlutils import SQLTestUtils
-
+from pyspark.pandas.utils import SPARK_CONF_ARROW_ENABLED
+from pyspark.testing.sqlutils import ReusedSQLTestCase
 
 tabulate_requirement_message = None
 try:
-    from tabulate import tabulate  # noqa: F401
+    from tabulate import tabulate
 except ImportError as e:
     # If tabulate requirement is not satisfied, skip related tests.
     tabulate_requirement_message = str(e)
@@ -46,7 +39,7 @@ have_tabulate = tabulate_requirement_message is None
 
 matplotlib_requirement_message = None
 try:
-    import matplotlib  # type: ignore # noqa: F401
+    import matplotlib
 except ImportError as e:
     # If matplotlib requirement is not satisfied, skip related tests.
     matplotlib_requirement_message = str(e)
@@ -54,27 +47,30 @@ have_matplotlib = matplotlib_requirement_message is None
 
 plotly_requirement_message = None
 try:
-    import plotly  # type: ignore # noqa: F401
+    import plotly
 except ImportError as e:
     # If plotly requirement is not satisfied, skip related tests.
     plotly_requirement_message = str(e)
 have_plotly = plotly_requirement_message is None
 
 
-class PandasOnSparkTestCase(unittest.TestCase, SQLTestUtils):
+class PandasOnSparkTestCase(ReusedSQLTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.spark = default_session()
+        super(PandasOnSparkTestCase, cls).setUpClass()
         cls.spark.conf.set(SPARK_CONF_ARROW_ENABLED, True)
 
-    @classmethod
-    def tearDownClass(cls):
-        # We don't stop Spark session to reuse across all tests.
-        # The Spark session will be started and stopped at PyTest session level.
-        # Please see pyspark/pandas/conftest.py.
-        pass
+    def convert_str_to_lambda(self, func):
+        """
+        This function coverts `func` str to lambda call
+        """
+        return lambda x: getattr(x, func)()
 
     def assertPandasEqual(self, left, right, check_exact=True):
+        import pandas as pd
+        from pandas.core.dtypes.common import is_numeric_dtype
+        from pandas.testing import assert_frame_equal, assert_index_equal, assert_series_equal
+
         if isinstance(left, pd.DataFrame) and isinstance(right, pd.DataFrame):
             try:
                 if LooseVersion(pd.__version__) >= LooseVersion("1.1"):
@@ -160,6 +156,8 @@ class PandasOnSparkTestCase(unittest.TestCase, SQLTestUtils):
           - Compare floats rounding to the number of decimal places, 7 after
             dropping missing values (NaN, NaT, None)
         """
+        import pandas as pd
+
         if isinstance(left, pd.DataFrame) and isinstance(right, pd.DataFrame):
             msg = (
                 "DataFrames are not almost equal: "
@@ -220,6 +218,9 @@ class PandasOnSparkTestCase(unittest.TestCase, SQLTestUtils):
         :param almost: if this is enabled, the comparison is delegated to `unittest`'s
                        `assertAlmostEqual`. See its documentation for more details.
         """
+        import pandas as pd
+        from pandas.api.types import is_list_like
+
         lobj = self._to_pandas(left)
         robj = self._to_pandas(right)
         if isinstance(lobj, (pd.DataFrame, pd.Series, pd.Index)):
@@ -247,7 +248,7 @@ class PandasOnSparkTestCase(unittest.TestCase, SQLTestUtils):
             return obj
 
 
-class TestUtils(object):
+class TestUtils:
     @contextmanager
     def temp_dir(self):
         tmp = tempfile.mkdtemp()
@@ -259,7 +260,7 @@ class TestUtils(object):
     @contextmanager
     def temp_file(self):
         with self.temp_dir() as tmp:
-            yield tempfile.mktemp(dir=tmp)
+            yield tempfile.mkstemp(dir=tmp)[1]
 
 
 class ComparisonTestBase(PandasOnSparkTestCase):

@@ -18,7 +18,9 @@
 package org.apache.spark.serializer
 
 import scala.concurrent._
+// scalastyle:off executioncontextglobal
 import scala.concurrent.ExecutionContext.Implicits.global
+// scalastyle:on executioncontextglobal
 import scala.concurrent.duration._
 
 import org.apache.spark.{SparkConf, SparkContext}
@@ -36,9 +38,9 @@ import org.apache.spark.util.ThreadUtils
  * {{{
  *   1. without sbt:
  *      bin/spark-submit --class <this class> <spark core test jar>
- *   2. build/sbt "core/test:runMain <this class>"
+ *   2. build/sbt "core/Test/runMain <this class>"
  *   3. generate result:
- *      SPARK_GENERATE_BENCHMARK_FILES=1 build/sbt "core/test:runMain <this class>"
+ *      SPARK_GENERATE_BENCHMARK_FILES=1 build/sbt "core/Test/runMain <this class>"
  *      Results will be written to "benchmarks/KryoSerializerBenchmark-results.txt".
  * }}}
  */

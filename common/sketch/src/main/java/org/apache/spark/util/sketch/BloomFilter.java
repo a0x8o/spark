@@ -164,6 +164,13 @@ public abstract class BloomFilter {
   public abstract void writeTo(OutputStream out) throws IOException;
 
   /**
+   * @return the number of set bits in this {@link BloomFilter}.
+   */
+  public long cardinality() {
+    throw new UnsupportedOperationException("Not implemented");
+  }
+
+  /**
    * Reads in a {@link BloomFilter} from an input stream. It is the caller's responsibility to close
    * the stream.
    */
@@ -199,6 +206,15 @@ public abstract class BloomFilter {
   }
 
   static final double DEFAULT_FPP = 0.03;
+
+  /**
+   * Computes m (total bits of Bloom filter) which is expected to achieve.
+   * The smaller the expectedNumItems, the smaller the fpp.
+   */
+  public static long optimalNumOfBits(long expectedNumItems, long maxNumItems, long maxNumOfBits) {
+    double fpp = Math.min(expectedNumItems / (maxNumItems / DEFAULT_FPP), DEFAULT_FPP);
+    return Math.min(optimalNumOfBits(expectedNumItems, fpp), maxNumOfBits);
+  }
 
   /**
    * Creates a {@link BloomFilter} with the expected number of insertions and a default expected

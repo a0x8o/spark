@@ -30,7 +30,7 @@ class FakeTask(
     serializedTaskMetrics: Array[Byte] =
       SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array(),
     isBarrier: Boolean = false)
-  extends Task[Int](stageId, 0, partitionId, new Properties, serializedTaskMetrics,
+  extends Task[Int](stageId, 0, partitionId, 1, new Properties, serializedTaskMetrics,
     isBarrier = isBarrier) {
 
   override def runTask(context: TaskContext): Int = 0
@@ -73,7 +73,7 @@ object FakeTask {
     val tasks = Array.tabulate[Task[_]](numTasks) { i =>
       new FakeTask(stageId, i, if (prefLocs.size != 0) prefLocs(i) else Nil)
     }
-    new TaskSet(tasks, stageId, stageAttemptId, priority = priority, null, rpId)
+    new TaskSet(tasks, stageId, stageAttemptId, priority = priority, null, rpId, None)
   }
 
   def createShuffleMapTaskSet(
@@ -96,11 +96,11 @@ object FakeTask {
     val tasks = Array.tabulate[Task[_]](numTasks) { i =>
       new ShuffleMapTask(stageId, stageAttemptId, null, new Partition {
         override def index: Int = i
-      }, prefLocs(i), new Properties,
+      }, 1, prefLocs(i), new Properties,
         SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array())
     }
     new TaskSet(tasks, stageId, stageAttemptId, priority = priority, null,
-      ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID)
+      ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, Some(0))
   }
 
   def createBarrierTaskSet(numTasks: Int, prefLocs: Seq[TaskLocation]*): TaskSet = {
@@ -129,6 +129,6 @@ object FakeTask {
     val tasks = Array.tabulate[Task[_]](numTasks) { i =>
       new FakeTask(stageId, i, if (prefLocs.size != 0) prefLocs(i) else Nil, isBarrier = true)
     }
-    new TaskSet(tasks, stageId, stageAttemptId, priority = priority, null, rpId)
+    new TaskSet(tasks, stageId, stageAttemptId, priority = priority, null, rpId, None)
   }
 }

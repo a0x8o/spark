@@ -19,15 +19,17 @@ package org.apache.spark.sql.catalyst.expressions
 
 import java.util.Locale
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistry, TypeCheckResult, TypeCoercion}
-import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
+import org.apache.spark.sql.catalyst.analysis.TypeCheckResult.DataTypeMismatch
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
-import org.apache.spark.sql.catalyst.trees.{BinaryLike, LeafLike, QuaternaryLike, TernaryLike, TreeNode, UnaryLike}
+import org.apache.spark.sql.catalyst.trees.{BinaryLike, LeafLike, QuaternaryLike, SQLQueryContext, TernaryLike, TreeNode, UnaryLike}
 import org.apache.spark.sql.catalyst.trees.TreePattern.{RUNTIME_REPLACEABLE, TreePattern}
 import org.apache.spark.sql.catalyst.util.truncatedString
-import org.apache.spark.sql.errors.QueryExecutionErrors
+import org.apache.spark.sql.errors.{QueryErrorsBase, QueryExecutionErrors}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -225,14 +227,30 @@ abstract class Expression extends TreeNode[Expression] {
   /**
    * Returns an expression where a best effort attempt has been made to transform `this` in a way
    * that preserves the result but removes cosmetic variations (case sensitivity, ordering for
-   * commutative operations, etc.)  See [[Canonicalize]] for more details.
+   * commutative operations, etc.).
    *
    * `deterministic` expressions where `this.canonicalized == other.canonicalized` will always
    * evaluate to the same result.
+   *
+   * The process of canonicalization is a one pass, bottum-up expression tree computation based on
+   * canonicalizing children before canonicalizing the current node. There is one exception though,
+   * as adjacent, same class [[CommutativeExpression]]s canonicalazion happens in a way that calling
+   * `canonicalized` on the root:
+   *   1. Gathers and canonicalizes the non-commutative (or commutative but not same class) child
+   *      expressions of the adjacent expressions.
+   *   2. Reorder the canonicalized child expressions by their hashcode.
+   * This means that the lazy `cannonicalized` is called and computed only on the root of the
+   * adjacent expressions.
    */
-  lazy val canonicalized: Expression = {
+  lazy val canonicalized: Expression = withCanonicalizedChildren
+
+  /**
+   * The default process of canonicalization. It is a one pass, bottum-up expression tree
+   * computation based oncanonicalizing children before canonicalizing the current node.
+   */
+  final protected def withCanonicalizedChildren: Expression = {
     val canonicalizedChildren = children.map(_.canonicalized)
-    Canonicalize.execute(withNewChildren(canonicalizedChildren))
+    withNewChildren(canonicalizedChildren)
   }
 
   /**
@@ -290,7 +308,7 @@ abstract class Expression extends TreeNode[Expression] {
   }
 
   override def simpleStringWithNodeId(): String = {
-    throw QueryExecutionErrors.simpleStringWithNodeIdUnsupportedError(nodeName)
+    throw SparkException.internalError(s"$nodeName does not implement simpleStringWithNodeId")
   }
 
   protected def typeSuffix =
@@ -327,65 +345,62 @@ trait Unevaluable extends Expression {
  * An expression that gets replaced at runtime (currently by the optimizer) into a different
  * expression for evaluation. This is mainly used to provide compatibility with other databases.
  * For example, we use this to support "nvl" by replacing it with "coalesce".
- *
- * A RuntimeReplaceable should have the original parameters along with a "child" expression in the
- * case class constructor, and define a normal constructor that accepts only the original
- * parameters. For an example, see [[Nvl]]. To make sure the explain plan and expression SQL
- * works correctly, the implementation should also override flatArguments method and sql method.
  */
-trait RuntimeReplaceable extends UnaryExpression with Unevaluable {
-  override def nullable: Boolean = child.nullable
-  override def dataType: DataType = child.dataType
+trait RuntimeReplaceable extends Expression {
+  def replacement: Expression
+
+  override val nodePatterns: Seq[TreePattern] = Seq(RUNTIME_REPLACEABLE)
+  override def nullable: Boolean = replacement.nullable
+  override def dataType: DataType = replacement.dataType
   // As this expression gets replaced at optimization with its `child" expression,
   // two `RuntimeReplaceable` are considered to be semantically equal if their "child" expressions
   // are semantically equal.
-  override lazy val canonicalized: Expression = child.canonicalized
+  override lazy val canonicalized: Expression = replacement.canonicalized
 
-  /**
-   * Only used to generate SQL representation of this expression.
-   *
-   * Implementations should override this with original parameters
-   */
-  def exprsReplaced: Seq[Expression]
-
-  override def sql: String = mkString(exprsReplaced.map(_.sql))
-
-  final override val nodePatterns: Seq[TreePattern] = Seq(RUNTIME_REPLACEABLE)
-
-  def mkString(childrenString: Seq[String]): String = {
-    prettyName + childrenString.mkString("(", ", ", ")")
-  }
+  final override def eval(input: InternalRow = null): Any =
+    throw QueryExecutionErrors.cannotEvaluateExpressionError(this)
+  final override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
+    throw QueryExecutionErrors.cannotGenerateCodeForExpressionError(this)
 }
 
 /**
- * An aggregate expression that gets rewritten (currently by the optimizer) into a
+ * An add-on of [[RuntimeReplaceable]]. It makes `replacement` the child of the expression, to
+ * inherit the analysis rules for it, such as type coercion. The implementation should put
+ * `replacement` in the case class constructor, and define a normal constructor that accepts only
+ * the original parameters. For an example, see [[TryAdd]]. To make sure the explain plan and
+ * expression SQL works correctly, the implementation should also implement the `parameters` method.
+ */
+trait InheritAnalysisRules extends UnaryLike[Expression] { self: RuntimeReplaceable =>
+  override def child: Expression = replacement
+  def parameters: Seq[Expression]
+  override def flatArguments: Iterator[Any] = parameters.iterator
+  // This method is used to generate a SQL string with transformed inputs. This is necessary as
+  // the actual inputs are not the children of this expression.
+  def makeSQLString(childrenSQL: Seq[String]): String = {
+    prettyName + childrenSQL.mkString("(", ", ", ")")
+  }
+  final override def sql: String = makeSQLString(parameters.map(_.sql))
+}
+
+/**
+ * An add-on of [[AggregateFunction]]. This gets rewritten (currently by the optimizer) into a
  * different aggregate expression for evaluation. This is mainly used to provide compatibility
  * with other databases. For example, we use this to support every, any/some aggregates by rewriting
  * them with Min and Max respectively.
  */
-trait UnevaluableAggregate extends DeclarativeAggregate {
-
-  override def nullable: Boolean = true
-
-  override lazy val aggBufferAttributes =
-    throw QueryExecutionErrors.evaluateUnevaluableAggregateUnsupportedError(
-      "aggBufferAttributes", this)
-
-  override lazy val initialValues: Seq[Expression] =
-    throw QueryExecutionErrors.evaluateUnevaluableAggregateUnsupportedError(
-      "initialValues", this)
-
-  override lazy val updateExpressions: Seq[Expression] =
-    throw QueryExecutionErrors.evaluateUnevaluableAggregateUnsupportedError(
-      "updateExpressions", this)
-
-  override lazy val mergeExpressions: Seq[Expression] =
-    throw QueryExecutionErrors.evaluateUnevaluableAggregateUnsupportedError(
-      "mergeExpressions", this)
-
-  override lazy val evaluateExpression: Expression =
-    throw QueryExecutionErrors.evaluateUnevaluableAggregateUnsupportedError(
-      "evaluateExpression", this)
+trait RuntimeReplaceableAggregate extends RuntimeReplaceable { self: AggregateFunction =>
+  override def aggBufferSchema: StructType = {
+    throw SparkException.internalError(
+      "RuntimeReplaceableAggregate.aggBufferSchema should not be called")
+  }
+  override def aggBufferAttributes: Seq[AttributeReference] = {
+    throw SparkException.internalError(
+      "RuntimeReplaceableAggregate.aggBufferAttributes should not be called")
+  }
+  override def inputAggBufferAttributes: Seq[AttributeReference] = {
+    throw SparkException.internalError(
+      "RuntimeReplaceableAggregate.inputAggBufferAttributes should not be called")
+  }
 }
 
 /**
@@ -436,6 +451,25 @@ trait Nondeterministic extends Expression {
   }
 
   protected def evalInternal(input: InternalRow): Any
+}
+
+/**
+ * An expression that contains conditional expression branches, so not all branches will be hit.
+ * All optimization should be careful with the evaluation order.
+ */
+trait ConditionalExpression extends Expression {
+  final override def foldable: Boolean = children.forall(_.foldable)
+
+  /**
+   * Return the children expressions which can always be hit at runtime.
+   */
+  def alwaysEvaluatedInputs: Seq[Expression]
+
+  /**
+   * Return groups of branches. For each group, at least one branch will be hit at runtime,
+   * so that we can eagerly evaluate the common expressions of a group.
+   */
+  def branchGroups: Seq[Seq[Expression]]
 }
 
 /**
@@ -553,6 +587,38 @@ abstract class UnaryExpression extends Expression with UnaryLike[Expression] {
   }
 }
 
+/**
+ * An expression with SQL query context. The context string can be serialized from the Driver
+ * to executors. It will also be kept after rule transforms.
+ */
+trait SupportQueryContext extends Expression with Serializable {
+  protected var queryContext: Option[SQLQueryContext] = initQueryContext()
+
+  def initQueryContext(): Option[SQLQueryContext]
+
+  def getContextOrNull(): SQLQueryContext = queryContext.getOrElse(null)
+
+  def getContextOrNullCode(ctx: CodegenContext, withErrorContext: Boolean = true): String = {
+    if (withErrorContext && queryContext.isDefined) {
+      ctx.addReferenceObj("errCtx", queryContext.get)
+    } else {
+      "null"
+    }
+  }
+
+  // Note: Even though query contexts are serialized to executors, it will be regenerated from an
+  //       empty "Origin" during rule transforms since "Origin"s are not serialized to executors
+  //       for better performance. Thus, we need to copy the original query context during
+  //       transforms. The query context string is considered as a "tag" on the expression here.
+  override def copyTagsFrom(other: Expression): Unit = {
+    other match {
+      case s: SupportQueryContext =>
+        queryContext = s.queryContext
+      case _ =>
+    }
+    super.copyTagsFrom(other)
+  }
+}
 
 object UnaryExpression {
   def unapply(e: UnaryExpression): Option[Expression] = Some(e.child)
@@ -667,7 +733,7 @@ object BinaryExpression {
  * 2. Two inputs are expected to be of the same type. If the two inputs have different types,
  *    the analyzer will find the tightest common type and do the proper type casting.
  */
-abstract class BinaryOperator extends BinaryExpression with ExpectsInputTypes {
+abstract class BinaryOperator extends BinaryExpression with ExpectsInputTypes with QueryErrorsBase {
 
   /**
    * Expected input type from both left/right child expressions, similar to the
@@ -686,11 +752,17 @@ abstract class BinaryOperator extends BinaryExpression with ExpectsInputTypes {
   override def checkInputDataTypes(): TypeCheckResult = {
     // First check whether left and right have the same type, then check if the type is acceptable.
     if (!left.dataType.sameType(right.dataType)) {
-      TypeCheckResult.TypeCheckFailure(s"differing types in '$sql' " +
-        s"(${left.dataType.catalogString} and ${right.dataType.catalogString}).")
+      DataTypeMismatch(
+        errorSubClass = "BINARY_OP_DIFF_TYPES",
+        messageParameters = Map(
+          "left" -> toSQLType(left.dataType),
+          "right" -> toSQLType(right.dataType)))
     } else if (!inputType.acceptsType(left.dataType)) {
-      TypeCheckResult.TypeCheckFailure(s"'$sql' requires ${inputType.simpleString} type," +
-        s" not ${left.dataType.catalogString}")
+      DataTypeMismatch(
+        errorSubClass = "BINARY_OP_WRONG_TYPE",
+        messageParameters = Map(
+          "inputType" -> toSQLType(inputType),
+          "actualDataType" -> toSQLType(left.dataType)))
     } else {
       TypeCheckResult.TypeCheckSuccess
     }
@@ -908,6 +980,133 @@ abstract class QuaternaryExpression extends Expression with QuaternaryLike[Expre
 }
 
 /**
+ * An expression with five inputs and one output. The output is by default evaluated to null if
+ * any input is evaluated to null.
+ */
+abstract class QuinaryExpression extends Expression {
+
+  override def foldable: Boolean = children.forall(_.foldable)
+
+  override def nullable: Boolean = children.exists(_.nullable)
+
+  /**
+   * Default behavior of evaluation according to the default nullability of QuinaryExpression. If
+   * subclass of QuinaryExpression override nullable, probably should also override this.
+   */
+  override def eval(input: InternalRow): Any = {
+    val exprs = children
+    val v1 = exprs(0).eval(input)
+    if (v1 != null) {
+      val v2 = exprs(1).eval(input)
+      if (v2 != null) {
+        val v3 = exprs(2).eval(input)
+        if (v3 != null) {
+          val v4 = exprs(3).eval(input)
+          if (v4 != null) {
+            val v5 = exprs(4).eval(input)
+            if (v5 != null) {
+              return nullSafeEval(v1, v2, v3, v4, v5)
+            }
+          }
+        }
+      }
+    }
+    null
+  }
+
+  /**
+   * Called by default [[eval]] implementation. If subclass of QuinaryExpression keep the default
+   * nullability, they can override this method to save null-check code. If we need full control
+   * of evaluation process, we should override [[eval]].
+   */
+  protected def nullSafeEval(
+      input1: Any,
+      input2: Any,
+      input3: Any,
+      input4: Any,
+      input5: Any): Any = {
+    throw QueryExecutionErrors.notOverrideExpectedMethodsError(
+      "QuinaryExpression",
+      "eval",
+      "nullSafeEval")
+  }
+
+  /**
+   * Short hand for generating quinary evaluation code. If either of the sub-expressions is null,
+   * the result of this computation is assumed to be null.
+   *
+   * @param f
+   *   accepts seven variable names and returns Java code to compute the output.
+   */
+  protected def defineCodeGen(
+      ctx: CodegenContext,
+      ev: ExprCode,
+      f: (String, String, String, String, String) => String): ExprCode = {
+    nullSafeCodeGen(
+      ctx,
+      ev,
+      (eval1, eval2, eval3, eval4, eval5) => {
+        s"${ev.value} = ${f(eval1, eval2, eval3, eval4, eval5)};"
+      })
+  }
+
+  /**
+   * Short hand for generating quinary evaluation code. If either of the sub-expressions is null,
+   * the result of this computation is assumed to be null.
+   *
+   * @param f
+   *   function that accepts the 5 non-null evaluation result names of children and returns Java
+   *   code to compute the output.
+   */
+  protected def nullSafeCodeGen(
+      ctx: CodegenContext,
+      ev: ExprCode,
+      f: (String, String, String, String, String) => String): ExprCode = {
+    val firstGen = children(0).genCode(ctx)
+    val secondGen = children(1).genCode(ctx)
+    val thirdGen = children(2).genCode(ctx)
+    val fourthGen = children(3).genCode(ctx)
+    val fifthGen = children(4).genCode(ctx)
+    val resultCode =
+      f(firstGen.value, secondGen.value, thirdGen.value, fourthGen.value, fifthGen.value)
+
+    if (nullable) {
+      val nullSafeEval =
+        firstGen.code + ctx.nullSafeExec(children(0).nullable, firstGen.isNull) {
+          secondGen.code + ctx.nullSafeExec(children(1).nullable, secondGen.isNull) {
+            thirdGen.code + ctx.nullSafeExec(children(2).nullable, thirdGen.isNull) {
+              fourthGen.code + ctx.nullSafeExec(children(3).nullable, fourthGen.isNull) {
+                fifthGen.code + ctx.nullSafeExec(children(4).nullable, fifthGen.isNull) {
+                  s"""
+                      ${ev.isNull} = false; // resultCode could change nullability.
+                      $resultCode
+                      """
+                }
+              }
+            }
+          }
+        }
+
+      ev.copy(code = code"""
+        boolean ${ev.isNull} = true;
+        ${CodeGenerator.javaType(dataType)} ${ev.value} = ${CodeGenerator.defaultValue(dataType)};
+        $nullSafeEval""")
+    } else {
+      ev.copy(
+        code = code"""
+        ${firstGen.code}
+        ${secondGen.code}
+        ${thirdGen.code}
+        ${fourthGen.code}
+        ${fifthGen.code}
+        ${CodeGenerator.javaType(dataType)} ${ev.value} = ${CodeGenerator.defaultValue(dataType)};
+        $resultCode""",
+        isNull = FalseLiteral)
+    }
+  }
+}
+
+/**
  * An expression with six inputs + 7th optional input and one output.
  * The output is by default evaluated to null if any input is evaluated to null.
  */
@@ -1098,4 +1297,22 @@ trait ComplexTypeMergingExpression extends Expression {
  */
 trait UserDefinedExpression {
   def name: String
+}
+
+trait CommutativeExpression extends Expression {
+  /** Collects adjacent commutative operations. */
+  private def gatherCommutative(
+      e: Expression,
+      f: PartialFunction[CommutativeExpression, Seq[Expression]]): Seq[Expression] = e match {
+    case c: CommutativeExpression if f.isDefinedAt(c) => f(c).flatMap(gatherCommutative(_, f))
+    case other => other.canonicalized :: Nil
+  }
+
+  /**
+   * Reorders adjacent commutative operators such as [[And]] in the expression tree, according to
+   * the `hashCode` of non-commutative nodes, to remove cosmetic variations.
+   */
+  protected def orderCommutative(
+      f: PartialFunction[CommutativeExpression, Seq[Expression]]): Seq[Expression] =
+    gatherCommutative(this, f).sortBy(_.hashCode())
 }

@@ -55,11 +55,12 @@ import org.apache.spark.util.{Utils, YarnContainerInfoHelper}
 @ExtendedYarnTest
 class YarnClusterSuite extends BaseYarnClusterSuite {
 
-  private val pythonExecutablePath = {
+  private val (isPythonAvailable, pythonExecutablePath) = {
     // To make sure to use the same Python executable.
-    val maybePath = TestUtils.getAbsolutePathFromExecutable("python3")
-    assert(maybePath.isDefined)
-    maybePath.get
+    TestUtils.getAbsolutePathFromExecutable("python3") match {
+      case Some(path) => (true, path)
+      case _ => (false, "")
+    }
   }
 
   override def newYarnConfig(): YarnConfiguration = new YarnConfiguration()
@@ -262,6 +263,7 @@ class YarnClusterSuite extends BaseYarnClusterSuite {
   test("monitor app using launcher library") {
     val env = new JHashMap[String, String]()
     env.put("YARN_CONF_DIR", hadoopConfDir.getAbsolutePath())
+    env.put("SPARK_PREFER_IPV6", Utils.preferIPv6.toString)
 
     val propsFile = createConfFile()
     val handle = new SparkLauncher(env)
@@ -295,10 +297,12 @@ class YarnClusterSuite extends BaseYarnClusterSuite {
     val log4jConf = new File(tempDir, "log4j.properties")
     val logOutFile = new File(tempDir, "logs")
     Files.write(
-      s"""log4j.rootCategory=DEBUG,file
-         |log4j.appender.file=org.apache.log4j.FileAppender
-         |log4j.appender.file.file=$logOutFile
-         |log4j.appender.file.layout=org.apache.log4j.PatternLayout
+      s"""rootLogger.level = debug
+         |rootLogger.appenderRef.file.ref = file
+         |appender.file.type = File
+         |appender.file.name = file
+         |appender.file.fileName = $logOutFile
+         |appender.file.layout.type = PatternLayout
          |""".stripMargin,
       log4jConf, StandardCharsets.UTF_8)
     // Since this test is trying to extract log output from the SparkSubmit process itself,
@@ -307,7 +311,8 @@ class YarnClusterSuite extends BaseYarnClusterSuite {
     val confDir = new File(tempDir, "conf")
     confDir.mkdir()
     val javaOptsFile = new File(confDir, "java-opts")
-    Files.write(s"-Dlog4j.configuration=file://$log4jConf\n", javaOptsFile, StandardCharsets.UTF_8)
+    Files.write(s"-Dlog4j.configurationFile=file://$log4jConf\n", javaOptsFile,
+      StandardCharsets.UTF_8)
 
     val result = File.createTempFile("result", null, tempDir)
     val finalState = runSpark(clientMode = false,
@@ -368,6 +373,7 @@ class YarnClusterSuite extends BaseYarnClusterSuite {
       clientMode: Boolean,
       extraConf: Map[String, String] = Map(),
       extraEnv: Map[String, String] = Map()): Unit = {
+    assume(isPythonAvailable)
     val primaryPyFile = new File(tempDir, "test.py")
     Files.write(TEST_PYFILE, primaryPyFile, StandardCharsets.UTF_8)
 

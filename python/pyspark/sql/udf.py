@@ -20,13 +20,14 @@ User-defined function related classes and functions
 import functools
 import inspect
 import sys
+import warnings
 from typing import Callable, Any, TYPE_CHECKING, Optional, cast, Union
 
-from py4j.java_gateway import JavaObject  # type: ignore[import]
+from py4j.java_gateway import JavaObject
 
 from pyspark import SparkContext
 from pyspark.profiler import Profiler
-from pyspark.rdd import _prepare_for_python_RDD, PythonEvalType  # type: ignore[attr-defined]
+from pyspark.rdd import _prepare_for_python_RDD, PythonEvalType
 from pyspark.sql.column import Column, _to_java_column, _to_seq
 from pyspark.sql.types import (
     StringType,
@@ -48,14 +49,15 @@ def _wrap_function(
 ) -> JavaObject:
     command = (func, returnType)
     pickled_command, broadcast_vars, env, includes = _prepare_for_python_RDD(sc, command)
-    return sc._jvm.PythonFunction(  # type: ignore[attr-defined]
+    assert sc._jvm is not None
+    return sc._jvm.SimplePythonFunction(
         bytearray(pickled_command),
         env,
         includes,
-        sc.pythonExec,  # type: ignore[attr-defined]
-        sc.pythonVer,  # type: ignore[attr-defined]
+        sc.pythonExec,
+        sc.pythonVer,
         broadcast_vars,
-        sc._javaAccumulator,  # type: ignore[attr-defined]
+        sc._javaAccumulator,
     )
 
 
@@ -73,7 +75,7 @@ def _create_udf(
     return udf_obj._wrapped()
 
 
-class UserDefinedFunction(object):
+class UserDefinedFunction:
     """
     User defined function in Python
 
@@ -143,20 +145,23 @@ class UserDefinedFunction(object):
                     "Invalid return type with scalar Pandas UDFs: %s is "
                     "not supported" % str(self._returnType_placeholder)
                 )
-        elif self.evalType == PythonEvalType.SQL_GROUPED_MAP_PANDAS_UDF:
+        elif (
+            self.evalType == PythonEvalType.SQL_GROUPED_MAP_PANDAS_UDF
+            or self.evalType == PythonEvalType.SQL_GROUPED_MAP_PANDAS_UDF_WITH_STATE
+        ):
             if isinstance(self._returnType_placeholder, StructType):
                 try:
                     to_arrow_type(self._returnType_placeholder)
                 except TypeError:
                     raise NotImplementedError(
                         "Invalid return type with grouped map Pandas UDFs or "
-                        "at groupby.applyInPandas: %s is not supported"
+                        "at groupby.applyInPandas(WithState): %s is not supported"
                         % str(self._returnType_placeholder)
                     )
             else:
                 raise TypeError(
                     "Invalid return type for grouped map Pandas "
-                    "UDFs or at groupby.applyInPandas: return type must be a "
+                    "UDFs or at groupby.applyInPandas(WithState): return type must be a "
                     "StructType."
                 )
         elif (
@@ -217,39 +222,81 @@ class UserDefinedFunction(object):
     def _create_judf(self, func: Callable[..., Any]) -> JavaObject:
         from pyspark.sql import SparkSession
 
-        spark = SparkSession.builder.getOrCreate()
+        spark = SparkSession._getActiveSessionOrCreate()
         sc = spark.sparkContext
 
         wrapped_func = _wrap_function(sc, func, self.returnType)
         jdt = spark._jsparkSession.parseDataType(self.returnType.json())
-        judf = sc._jvm.org.apache.spark.sql.execution.python.UserDefinedPythonFunction(  # type: ignore[attr-defined]
+        assert sc._jvm is not None
+        judf = sc._jvm.org.apache.spark.sql.execution.python.UserDefinedPythonFunction(
             self._name, wrapped_func, jdt, self.evalType, self.deterministic
         )
         return judf
 
     def __call__(self, *cols: "ColumnOrName") -> Column:
-        sc = SparkContext._active_spark_context  # type: ignore[attr-defined]
-
+        sc = SparkContext._active_spark_context
+        assert sc is not None
         profiler: Optional[Profiler] = None
+        memory_profiler: Optional[Profiler] = None
         if sc.profiler_collector:
-            f = self.func
-            profiler = sc.profiler_collector.new_udf_profiler(sc)
+            profiler_enabled = sc._conf.get("spark.python.profile", "false") == "true"
+            memory_profiler_enabled = sc._conf.get("spark.python.profile.memory", "false") == "true"
 
-            @functools.wraps(f)
-            def func(*args: Any, **kwargs: Any) -> Any:
-                assert profiler is not None
-                return profiler.profile(f, *args, **kwargs)
+            # Disable profiling Pandas UDFs with iterators as input/output.
+            if profiler_enabled or memory_profiler_enabled:
+                if self.evalType in [
+                    PythonEvalType.SQL_SCALAR_PANDAS_ITER_UDF,
+                    PythonEvalType.SQL_MAP_PANDAS_ITER_UDF,
+                    PythonEvalType.SQL_MAP_ARROW_ITER_UDF,
+                ]:
+                    profiler_enabled = memory_profiler_enabled = False
+                    warnings.warn(
+                        "Profiling UDFs with iterators input/output is not supported.",
+                        UserWarning,
+                    )
 
-            func.__signature__ = inspect.signature(f)  # type: ignore[attr-defined]
+            # Disallow enabling two profilers at the same time.
+            if profiler_enabled and memory_profiler_enabled:
+                # When both profilers are enabled, they interfere with each other,
+                # that makes the result profile misleading.
+                raise RuntimeError(
+                    "'spark.python.profile' and 'spark.python.profile.memory' configuration"
+                    " cannot be enabled together."
+                )
+            elif profiler_enabled:
+                f = self.func
+                profiler = sc.profiler_collector.new_udf_profiler(sc)
 
-            judf = self._create_judf(func)
+                @functools.wraps(f)
+                def func(*args: Any, **kwargs: Any) -> Any:
+                    assert profiler is not None
+                    return profiler.profile(f, *args, **kwargs)
+
+                func.__signature__ = inspect.signature(f)  # type: ignore[attr-defined]
+                judf = self._create_judf(func)
+                jPythonUDF = judf.apply(_to_seq(sc, cols, _to_java_column))
+                id = jPythonUDF.expr().resultId().id()
+                sc.profiler_collector.add_profiler(id, profiler)
+            else:  # memory_profiler_enabled
+                f = self.func
+                memory_profiler = sc.profiler_collector.new_memory_profiler(sc)
+                (sub_lines, start_line) = inspect.getsourcelines(f.__code__)
+
+                @functools.wraps(f)
+                def func(*args: Any, **kwargs: Any) -> Any:
+                    assert memory_profiler is not None
+                    return memory_profiler.profile(
+                        sub_lines, start_line, f, *args, **kwargs  # type: ignore[arg-type]
+                    )
+
+                func.__signature__ = inspect.signature(f)  # type: ignore[attr-defined]
+                judf = self._create_judf(func)
+                jPythonUDF = judf.apply(_to_seq(sc, cols, _to_java_column))
+                id = jPythonUDF.expr().resultId().id()
+                sc.profiler_collector.add_profiler(id, memory_profiler)
         else:
             judf = self._judf
-
-        jPythonUDF = judf.apply(_to_seq(sc, cols, _to_java_column))
-        if profiler is not None:
-            id = jPythonUDF.expr().resultId().id()
-            sc.profiler_collector.add_profiler(id, profiler)
+            jPythonUDF = judf.apply(_to_seq(sc, cols, _to_java_column))
         return Column(jPythonUDF)
 
     # This function is for improving the online help system in the interactive interpreter.
@@ -303,7 +350,7 @@ class UserDefinedFunction(object):
         return self
 
 
-class UDFRegistration(object):
+class UDFRegistration:
     """
     Wrapper for user-defined function registration. This instance can be accessed by
     :attr:`spark.udf` or :attr:`sqlContext.udf`.
@@ -503,7 +550,6 @@ class UDFRegistration(object):
         if returnType is not None:
             if not isinstance(returnType, DataType):
                 returnType = _parse_datatype_string(returnType)
-            returnType = cast(DataType, returnType)
             jdt = self.sparkSession._jsparkSession.parseDataType(returnType.json())
         self.sparkSession._jsparkSession.udf().registerJava(name, javaClassName, jdt)
 

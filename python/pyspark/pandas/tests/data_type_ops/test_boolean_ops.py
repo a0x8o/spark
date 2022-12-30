@@ -25,15 +25,14 @@ from pandas.api.types import CategoricalDtype
 
 from pyspark import pandas as ps
 from pyspark.pandas import option_context
-from pyspark.pandas.tests.data_type_ops.testing_utils import TestCasesUtils
+from pyspark.pandas.tests.data_type_ops.testing_utils import OpsTestBase
 from pyspark.pandas.typedef.typehints import (
     extension_float_dtypes_available,
     extension_object_dtypes_available,
 )
-from pyspark.testing.pandasutils import PandasOnSparkTestCase
 
 
-class BooleanOpsTest(PandasOnSparkTestCase, TestCasesUtils):
+class BooleanOpsTest(OpsTestBase):
     @property
     def bool_pdf(self):
         return pd.DataFrame({"this": [True, False, True], "that": [False, True, True]})
@@ -156,11 +155,11 @@ class BooleanOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 
         b_pser, b_psser = pdf["bool"], psdf["bool"]
         # float is always returned in pandas-on-Spark
-        self.assert_eq((b_pser ** 1).astype("float"), b_psser ** 1)
-        self.assert_eq(b_pser ** 0.1, b_psser ** 0.1)
+        self.assert_eq((b_pser**1).astype("float"), b_psser**1)
+        self.assert_eq(b_pser**0.1, b_psser**0.1)
         self.assert_eq(b_pser ** b_pser.astype(float), b_psser ** b_psser.astype(float))
-        self.assertRaises(TypeError, lambda: b_psser ** b_psser)
-        self.assertRaises(TypeError, lambda: b_psser ** True)
+        self.assertRaises(TypeError, lambda: b_psser**b_psser)
+        self.assertRaises(TypeError, lambda: b_psser**True)
 
         self.assert_eq(b_pser % pdf["float"], b_psser % psdf["float"])
         for col in self.non_numeric_df_cols:
@@ -227,17 +226,17 @@ class BooleanOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 
         b_pser, b_psser = pdf["bool"], psdf["bool"]
         # float is returned always in pandas-on-Spark
-        self.assert_eq((1 ** b_pser).astype(float), 1 ** b_psser)
-        self.assert_eq(0.1 ** b_pser, 0.1 ** b_psser)
+        self.assert_eq((1**b_pser).astype(float), 1**b_psser)
+        self.assert_eq(0.1**b_pser, 0.1**b_psser)
         self.assertRaises(TypeError, lambda: "x" ** b_psser)
-        self.assertRaises(TypeError, lambda: True ** b_psser)
+        self.assertRaises(TypeError, lambda: True**b_psser)
         self.assertRaises(TypeError, lambda: datetime.date(1994, 1, 1) ** b_psser)
         self.assertRaises(TypeError, lambda: datetime.datetime(1994, 1, 1) ** b_psser)
 
     def test_rmod(self):
-        pdf, psdf = self.pdf, self.psdf
+        psdf = self.psdf
 
-        b_pser, b_psser = pdf["bool"], psdf["bool"]
+        b_psser = psdf["bool"]
         # 1 % False is 0.0 in pandas
         self.assert_eq(pd.Series([0, 0, None], dtype=float, name="bool"), 1 % b_psser)
         # 0.1 / True is 0.1 in pandas
@@ -381,7 +380,7 @@ class BooleanOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 @unittest.skipIf(
     not extension_object_dtypes_available, "pandas extension object dtypes are not available"
 )
-class BooleanExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
+class BooleanExtensionOpsTest(OpsTestBase):
     @property
     def boolean_pdf(self):
         return pd.DataFrame(
@@ -548,19 +547,19 @@ class BooleanExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
         pser, psser = pdf["this"], psdf["this"]
         # float is always returned in pandas-on-Spark
         if extension_float_dtypes_available:
-            self.check_extension((pser ** 1).astype("Float64"), psser ** 1)
-            self.check_extension((pser ** 0.1).astype("Float64"), psser ** 0.1)
+            self.check_extension((pser**1).astype("Float64"), psser**1)
+            self.check_extension((pser**0.1).astype("Float64"), psser**0.1)
             self.check_extension(
                 (pser ** pser.astype(float)).astype("Float64"), psser ** psser.astype(float)
             )
         else:
-            self.assert_eq((pser ** 1).astype("float"), psser ** 1)
-            self.assert_eq((pser ** 0.1).astype("float"), psser ** 0.1)
+            self.assert_eq((pser**1).astype("float"), psser**1)
+            self.assert_eq((pser**0.1).astype("float"), psser**0.1)
             self.assert_eq(
                 (pser ** pser.astype(float)).astype("float"), psser ** psser.astype(float)
             )
-        self.assertRaises(TypeError, lambda: psser ** psser)
-        self.assertRaises(TypeError, lambda: psser ** True)
+        self.assertRaises(TypeError, lambda: psser**psser)
+        self.assertRaises(TypeError, lambda: psser**True)
 
         self.assert_eq(
             pser ** pdf["float"],
@@ -649,13 +648,13 @@ class BooleanExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
     def test_rpow(self):
         pser, psser = self.boolean_pdf["this"], self.boolean_psdf["this"]
         if extension_float_dtypes_available:
-            self.check_extension(pd.Series([1, 1, 1], dtype="Float64", name=psser.name), 1 ** psser)
-            self.check_extension((0.1 ** pser).astype("Float64"), 0.1 ** psser)
+            self.check_extension(pd.Series([1, 1, 1], dtype="Float64", name=psser.name), 1**psser)
+            self.check_extension((0.1**pser).astype("Float64"), 0.1**psser)
         else:
-            self.assert_eq(pd.Series([1, 1, 1], dtype="float", name=psser.name), 1 ** psser)
-            self.assert_eq((0.1 ** pser).astype("float"), 0.1 ** psser)
+            self.assert_eq(pd.Series([1, 1, 1], dtype="float", name=psser.name), 1**psser)
+            self.assert_eq((0.1**pser).astype("float"), 0.1**psser)
         self.assertRaises(TypeError, lambda: "x" ** psser)
-        self.assertRaises(TypeError, lambda: True ** psser)
+        self.assertRaises(TypeError, lambda: True**psser)
         self.assertRaises(TypeError, lambda: datetime.date(1994, 1, 1) ** psser)
         self.assertRaises(TypeError, lambda: datetime.datetime(1994, 1, 1) ** psser)
 
@@ -733,7 +732,7 @@ class BooleanExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
         data = [True, True, False, None]
         pser = pd.Series(data, dtype="boolean")
         psser = ps.Series(data, dtype="boolean")
-        self.check_extension(pser, psser.to_pandas())
+        self.check_extension(pser, psser._to_pandas())
         self.check_extension(ps.from_pandas(pser), psser)
 
     def test_isnull(self):
@@ -814,7 +813,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.data_type_ops.test_boolean_ops import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

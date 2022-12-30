@@ -26,8 +26,8 @@ import scala.collection.JavaConverters._
 import org.antlr.v4.runtime.{ParserRuleContext, Token}
 import org.antlr.v4.runtime.tree.TerminalNode
 
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{GlobalTempView, LocalTempView, PersistedView, UnresolvedDBObjectName}
+import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
+import org.apache.spark.sql.catalyst.analysis.{GlobalTempView, LocalTempView, PersistedView, UnresolvedFunctionName, UnresolvedIdentifier}
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.parser._
@@ -94,7 +94,7 @@ class SparkSqlAstBuilder extends AstBuilder {
           SetCommand(Some("-v" -> None))
         case s if s.isEmpty =>
           SetCommand(None)
-        case _ => throw QueryParsingErrors.unexpectedFomatForSetConfigurationError(ctx)
+        case _ => throw QueryParsingErrors.unexpectedFormatForSetConfigurationError(ctx)
       }
     }
   }
@@ -161,14 +161,17 @@ class SparkSqlAstBuilder extends AstBuilder {
         SetCommand(Some(key -> Some(ZoneOffset.ofTotalSeconds(seconds).toString)))
       }
     } else if (ctx.timezone != null) {
-      ctx.timezone.getType match {
-        case SqlBaseParser.LOCAL =>
-          SetCommand(Some(key -> Some(TimeZone.getDefault.getID)))
-        case _ =>
-          SetCommand(Some(key -> Some(string(ctx.STRING))))
-      }
+      SetCommand(Some(key -> Some(visitTimezone(ctx.timezone()))))
     } else {
       throw QueryParsingErrors.invalidTimeZoneDisplacementValueError(ctx)
+    }
+  }
+
+  override def visitTimezone (ctx: TimezoneContext): String = {
+    if (ctx.stringLit() != null) {
+      string(visitStringLit(ctx.stringLit()))
+    } else {
+      TimeZone.getDefault.getID
     }
   }
 
@@ -176,7 +179,11 @@ class SparkSqlAstBuilder extends AstBuilder {
    * Create a [[RefreshResource]] logical plan.
    */
   override def visitRefreshResource(ctx: RefreshResourceContext): LogicalPlan = withOrigin(ctx) {
-    val path = if (ctx.STRING != null) string(ctx.STRING) else extractUnquotedResourcePath(ctx)
+    val path = if (ctx.stringLit != null) {
+      string(visitStringLit(ctx.stringLit))
+    } else {
+      extractUnquotedResourcePath(ctx)
+    }
     RefreshResource(path)
   }
 
@@ -258,8 +265,8 @@ class SparkSqlAstBuilder extends AstBuilder {
   override def visitSetCatalog(ctx: SetCatalogContext): LogicalPlan = withOrigin(ctx) {
     if (ctx.identifier() != null) {
       SetCatalogCommand(ctx.identifier().getText)
-    } else if (ctx.STRING() != null) {
-      SetCatalogCommand(string(ctx.STRING()))
+    } else if (ctx.stringLit() != null) {
+      SetCatalogCommand(string(visitStringLit(ctx.stringLit())))
     } else {
       throw new IllegalStateException("Invalid catalog name")
     }
@@ -269,7 +276,7 @@ class SparkSqlAstBuilder extends AstBuilder {
    * Create a [[ShowCatalogsCommand]] logical command.
    */
   override def visitShowCatalogs(ctx: ShowCatalogsContext) : LogicalPlan = withOrigin(ctx) {
-    ShowCatalogsCommand(Option(ctx.pattern).map(string))
+    ShowCatalogsCommand(Option(ctx.pattern).map(x => string(visitStringLit(x))))
   }
 
   /**
@@ -318,7 +325,7 @@ class SparkSqlAstBuilder extends AstBuilder {
       val (_, _, _, _, options, location, _, _) = visitCreateTableClauses(ctx.createTableClauses())
       val provider = Option(ctx.tableProvider).map(_.multipartIdentifier.getText).getOrElse(
         throw QueryParsingErrors.createTempTableNotSpecifyProviderError(ctx))
-      val schema = Option(ctx.colTypeList()).map(createSchema)
+      val schema = Option(ctx.createOrReplaceTableColTypeList()).map(createSchema)
 
       logWarning(s"CREATE TEMPORARY TABLE ... USING ... is deprecated, please use " +
           "CREATE TEMPORARY VIEW ... USING ... instead")
@@ -485,9 +492,7 @@ class SparkSqlAstBuilder extends AstBuilder {
       assert(Option(originalText).isDefined,
         "'originalText' must be provided to create permanent view")
       CreateView(
-        UnresolvedDBObjectName(
-          visitMultipartIdentifier(ctx.multipartIdentifier),
-          false),
+        UnresolvedIdentifier(visitMultipartIdentifier(ctx.multipartIdentifier)),
         userSpecifiedColumns,
         visitCommentSpecList(ctx.commentSpec()),
         properties,
@@ -506,7 +511,7 @@ class SparkSqlAstBuilder extends AstBuilder {
       if (tableIdentifier.database.isDefined) {
         // Temporary view names should NOT contain database prefix like "database.table"
         throw QueryParsingErrors
-          .notAllowedToAddDBPrefixForTempViewError(tableIdentifier.database.get, ctx)
+          .notAllowedToAddDBPrefixForTempViewError(tableIdentifier.nameParts, ctx)
       }
 
       CreateViewCommand(
@@ -536,7 +541,8 @@ class SparkSqlAstBuilder extends AstBuilder {
       val resourceType = resource.identifier.getText.toLowerCase(Locale.ROOT)
       resourceType match {
         case "jar" | "file" | "archive" =>
-          FunctionResource(FunctionResourceType.fromString(resourceType), string(resource.STRING))
+          FunctionResource(FunctionResourceType.fromString(resourceType),
+            string(visitStringLit(resource.stringLit())))
         case other =>
           operationNotAllowed(s"CREATE FUNCTION with resource type '$resourceType'", ctx)
       }
@@ -549,10 +555,8 @@ class SparkSqlAstBuilder extends AstBuilder {
     val functionIdentifier = visitMultipartIdentifier(ctx.multipartIdentifier)
     if (ctx.TEMPORARY == null) {
       CreateFunction(
-        UnresolvedDBObjectName(
-          functionIdentifier,
-          isNamespace = false),
-        string(ctx.className),
+        UnresolvedIdentifier(functionIdentifier),
+        string(visitStringLit(ctx.className)),
         resources.toSeq,
         ctx.EXISTS != null,
         ctx.REPLACE != null)
@@ -563,19 +567,49 @@ class SparkSqlAstBuilder extends AstBuilder {
       }
 
       if (functionIdentifier.length > 2) {
-        throw QueryParsingErrors.unsupportedFunctionNameError(functionIdentifier.quoted, ctx)
+        throw QueryParsingErrors.unsupportedFunctionNameError(functionIdentifier, ctx)
       } else if (functionIdentifier.length == 2) {
         // Temporary function names should not contain database prefix like "database.function"
         throw QueryParsingErrors.specifyingDBInCreateTempFuncError(functionIdentifier.head, ctx)
       }
       CreateFunctionCommand(
-        None,
-        functionIdentifier.last,
-        string(ctx.className),
+        FunctionIdentifier(functionIdentifier.last),
+        string(visitStringLit(ctx.className)),
         resources.toSeq,
         true,
         ctx.EXISTS != null,
         ctx.REPLACE != null)
+    }
+  }
+
+  /**
+   * Create a DROP FUNCTION statement.
+   *
+   * For example:
+   * {{{
+   *   DROP [TEMPORARY] FUNCTION [IF EXISTS] function;
+   * }}}
+   */
+  override def visitDropFunction(ctx: DropFunctionContext): LogicalPlan = withOrigin(ctx) {
+    val functionName = visitMultipartIdentifier(ctx.multipartIdentifier)
+    val isTemp = ctx.TEMPORARY != null
+    if (isTemp) {
+      if (functionName.length > 1) {
+        throw QueryParsingErrors.invalidNameForDropTempFunc(functionName, ctx)
+      }
+      DropFunctionCommand(
+        identifier = FunctionIdentifier(functionName.head),
+        ifExists = ctx.EXISTS != null,
+        isTemp = true)
+    } else {
+      val hintStr = "Please use fully qualified identifier to drop the persistent function."
+      DropFunction(
+        UnresolvedFunctionName(
+          functionName,
+          "DROP FUNCTION",
+          requirePersistent = true,
+          funcTypeMismatchHint = Some(hintStr)),
+        ctx.EXISTS != null)
     }
   }
 
@@ -762,7 +796,7 @@ class SparkSqlAstBuilder extends AstBuilder {
     val options = Option(ctx.options).map(visitPropertyKeyValues).getOrElse(Map.empty)
     var storage = DataSource.buildStorageFormatFromOptions(options)
 
-    val path = Option(ctx.path).map(string).getOrElse("")
+    val path = Option(ctx.path).map(x => string(visitStringLit(x))).getOrElse("")
 
     if (!(path.isEmpty ^ storage.locationUri.isEmpty)) {
       throw QueryParsingErrors.directoryPathAndOptionsPathBothSpecifiedError(ctx)
@@ -807,7 +841,7 @@ class SparkSqlAstBuilder extends AstBuilder {
       ctx: InsertOverwriteHiveDirContext): InsertDirParams = withOrigin(ctx) {
     val serdeInfo = getSerdeInfo(
       Option(ctx.rowFormat).toSeq, Option(ctx.createFileFormat).toSeq, ctx)
-    val path = string(ctx.path)
+    val path = string(visitStringLit(ctx.path))
     // The path field is required
     if (path.isEmpty) {
       operationNotAllowed("INSERT OVERWRITE DIRECTORY must be accompanied by path", ctx)

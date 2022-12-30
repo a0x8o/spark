@@ -39,7 +39,7 @@ class SparkIndexOpsMethodsTest(PandasOnSparkTestCase, SQLTestUtils):
         ):
             self.psser.spark.transform(lambda scol: 1)
 
-        with self.assertRaisesRegex(AnalysisException, "Column.*non-existent.*does not exist"):
+        with self.assertRaisesRegex(AnalysisException, ".*UNRESOLVED_COLUMN.*`non-existent`.*"):
             self.psser.spark.transform(lambda scol: F.col("non-existent"))
 
     def test_multiindex_transform_negative(self):
@@ -59,7 +59,7 @@ class SparkIndexOpsMethodsTest(PandasOnSparkTestCase, SQLTestUtils):
         ):
             self.psser.spark.apply(lambda scol: 1)
 
-        with self.assertRaisesRegex(AnalysisException, "Column.*non-existent.*does not exist"):
+        with self.assertRaisesRegex(AnalysisException, ".*UNRESOLVED_COLUMN.*`non-existent`.*"):
             self.psser.spark.transform(lambda scol: F.col("non-existent"))
 
 
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.test_indexops_spark import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

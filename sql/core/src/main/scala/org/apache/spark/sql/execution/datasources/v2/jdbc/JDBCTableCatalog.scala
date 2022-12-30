@@ -21,10 +21,11 @@ import java.util
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuilder
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.connector.catalog.{Identifier, NamespaceChange, SupportsNamespaces, Table, TableCatalog, TableChange}
+import org.apache.spark.sql.catalyst.analysis.NoSuchFunctionException
+import org.apache.spark.sql.connector.catalog.{FunctionCatalog, Identifier, NamespaceChange, SupportsNamespaces, Table, TableCatalog, TableChange}
+import org.apache.spark.sql.connector.catalog.functions.UnboundFunction
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.execution.datasources.jdbc.{JDBCOptions, JdbcOptionsInWrite, JDBCRDD, JdbcUtils}
@@ -33,10 +34,14 @@ import org.apache.spark.sql.jdbc.{JdbcDialect, JdbcDialects}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging {
+class JDBCTableCatalog extends TableCatalog
+  with SupportsNamespaces with FunctionCatalog with Logging {
+  import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+
   private var catalogName: String = null
   private var options: JDBCOptions = _
   private var dialect: JdbcDialect = _
+  private var functions: Map[String, UnboundFunction] = _
 
   override def name(): String = {
     require(catalogName != null, "The JDBC table catalog is not initialed")
@@ -53,6 +58,7 @@ class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging
     // fake value, so that it can pass the check of `JDBCOptions`.
     this.options = new JDBCOptions(map + (JDBCOptions.JDBC_TABLE_NAME -> "__invalid_dbtable"))
     dialect = JdbcDialects.get(this.options.url)
+    functions = dialect.functions.toMap
   }
 
   override def listTables(namespace: Array[String]): Array[Identifier] = {
@@ -173,23 +179,14 @@ class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging
   override def namespaceExists(namespace: Array[String]): Boolean = namespace match {
     case Array(db) =>
       JdbcUtils.withConnection(options) { conn =>
-        val rs = conn.getMetaData.getSchemas(null, db)
-        while (rs.next()) {
-          if (rs.getString(1) == db) return true;
-        }
-        false
+        JdbcUtils.schemaExists(conn, options, db)
       }
     case _ => false
   }
 
   override def listNamespaces(): Array[Array[String]] = {
     JdbcUtils.withConnection(options) { conn =>
-      val schemaBuilder = ArrayBuilder.make[Array[String]]
-      val rs = conn.getMetaData.getSchemas()
-      while (rs.next()) {
-        schemaBuilder += Array(rs.getString(1))
-      }
-      schemaBuilder.result
+      JdbcUtils.listSchemas(conn, options)
     }
   }
 
@@ -236,7 +233,7 @@ class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging
       }
       JdbcUtils.withConnection(options) { conn =>
         JdbcUtils.classifyException(s"Failed create name space: $db", dialect) {
-          JdbcUtils.createNamespace(conn, options, db, comment)
+          JdbcUtils.createSchema(conn, options, db, comment)
         }
       }
 
@@ -254,7 +251,9 @@ class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging
           case set: NamespaceChange.SetProperty =>
             if (set.property() == SupportsNamespaces.PROP_COMMENT) {
               JdbcUtils.withConnection(options) { conn =>
-                JdbcUtils.createNamespaceComment(conn, options, db, set.value)
+                JdbcUtils.classifyException(s"Failed create comment on name space: $db", dialect) {
+                  JdbcUtils.alterSchemaComment(conn, options, db, set.value)
+                }
               }
             } else {
               throw QueryCompilationErrors.cannotSetJDBCNamespaceWithPropertyError(set.property)
@@ -263,7 +262,9 @@ class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging
           case unset: NamespaceChange.RemoveProperty =>
             if (unset.property() == SupportsNamespaces.PROP_COMMENT) {
               JdbcUtils.withConnection(options) { conn =>
-                JdbcUtils.removeNamespaceComment(conn, options, db)
+                JdbcUtils.classifyException(s"Failed remove comment on name space: $db", dialect) {
+                  JdbcUtils.removeSchemaComment(conn, options, db)
+                }
               }
             } else {
               throw QueryCompilationErrors.cannotUnsetJDBCNamespaceWithPropertyError(unset.property)
@@ -278,14 +279,13 @@ class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging
     }
   }
 
-  override def dropNamespace(namespace: Array[String]): Boolean = namespace match {
+  override def dropNamespace(
+      namespace: Array[String],
+      cascade: Boolean): Boolean = namespace match {
     case Array(db) if namespaceExists(namespace) =>
-      if (listTables(Array(db)).nonEmpty) {
-        throw QueryExecutionErrors.namespaceNotEmptyError(namespace)
-      }
       JdbcUtils.withConnection(options) { conn =>
         JdbcUtils.classifyException(s"Failed drop name space: $db", dialect) {
-          JdbcUtils.dropNamespace(conn, options, db)
+          JdbcUtils.dropSchema(conn, options, db, cascade)
           true
         }
       }
@@ -303,5 +303,25 @@ class JDBCTableCatalog extends TableCatalog with SupportsNamespaces with Logging
 
   private def getTableName(ident: Identifier): String = {
     (ident.namespace() :+ ident.name()).map(dialect.quoteIdentifier).mkString(".")
+  }
+
+  override def listFunctions(namespace: Array[String]): Array[Identifier] = {
+    if (namespace.isEmpty) {
+      functions.keys.map(Identifier.of(namespace, _)).toArray
+    } else {
+      Array.empty[Identifier]
+    }
+  }
+
+  override def loadFunction(ident: Identifier): UnboundFunction = {
+    if (ident.namespace().nonEmpty) {
+      throw QueryCompilationErrors.noSuchFunctionError(ident.asFunctionIdentifier)
+    }
+    functions.get(ident.name()) match {
+      case Some(func) =>
+        func
+      case _ =>
+        throw new NoSuchFunctionException(ident)
+    }
   }
 }

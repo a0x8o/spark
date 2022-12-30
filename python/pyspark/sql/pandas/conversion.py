@@ -15,11 +15,11 @@
 # limitations under the License.
 #
 import sys
-import warnings
 from collections import Counter
 from typing import List, Optional, Type, Union, no_type_check, overload, TYPE_CHECKING
+from warnings import catch_warnings, simplefilter, warn
 
-from pyspark.rdd import _load_from_socket  # type: ignore[attr-defined]
+from pyspark.rdd import _load_from_socket
 from pyspark.sql.pandas.serializers import ArrowCollectSerializer
 from pyspark.sql.types import (
     IntegralType,
@@ -43,14 +43,15 @@ from pyspark.traceback_utils import SCCallSiteSync
 if TYPE_CHECKING:
     import numpy as np
     import pyarrow as pa
+    from py4j.java_gateway import JavaObject
 
     from pyspark.sql.pandas._typing import DataFrameLike as PandasDataFrameLike
     from pyspark.sql import DataFrame
 
 
-class PandasConversionMixin(object):
+class PandasConversionMixin:
     """
-    Min-in for the conversion from Spark to pandas. Currently, only :class:`DataFrame`
+    Mix-in for the conversion from Spark to pandas. Currently, only :class:`DataFrame`
     can use this class.
     """
 
@@ -62,12 +63,15 @@ class PandasConversionMixin(object):
 
         .. versionadded:: 1.3.0
 
+        .. versionchanged:: 3.4.0
+            Support Spark Connect.
+
         Notes
         -----
-        This method should only be used if the resulting Pandas's :class:`DataFrame` is
+        This method should only be used if the resulting Pandas ``pandas.DataFrame`` is
         expected to be small, as all the data is loaded into the driver's memory.
 
-        Usage with spark.sql.execution.arrow.pyspark.enabled=True is experimental.
+        Usage with ``spark.sql.execution.arrow.pyspark.enabled=True`` is experimental.
 
         Examples
         --------
@@ -88,9 +92,10 @@ class PandasConversionMixin(object):
         import pandas as pd
         from pandas.core.dtypes.common import is_timedelta64_dtype
 
-        timezone = self.sql_ctx._conf.sessionLocalTimeZone()  # type: ignore[attr-defined]
+        jconf = self.sparkSession._jconf
+        timezone = jconf.sessionLocalTimeZone()
 
-        if self.sql_ctx._conf.arrowPySparkEnabled():  # type: ignore[attr-defined]
+        if jconf.arrowPySparkEnabled():
             use_arrow = True
             try:
                 from pyspark.sql.pandas.types import to_arrow_schema
@@ -100,7 +105,7 @@ class PandasConversionMixin(object):
                 to_arrow_schema(self.schema)
             except Exception as e:
 
-                if self.sql_ctx._conf.arrowPySparkFallbackEnabled():  # type: ignore[attr-defined]
+                if jconf.arrowPySparkFallbackEnabled():
                     msg = (
                         "toPandas attempted Arrow optimization because "
                         "'spark.sql.execution.arrow.pyspark.enabled' is set to true; however, "
@@ -109,7 +114,7 @@ class PandasConversionMixin(object):
                         "'spark.sql.execution.arrow.pyspark.fallback.enabled' is set to "
                         "true." % str(e)
                     )
-                    warnings.warn(msg)
+                    warn(msg)
                     use_arrow = False
                 else:
                     msg = (
@@ -119,7 +124,7 @@ class PandasConversionMixin(object):
                         "with 'spark.sql.execution.arrow.pyspark.fallback.enabled' has been set to "
                         "false.\n  %s" % str(e)
                     )
-                    warnings.warn(msg)
+                    warn(msg)
                     raise
 
             # Try to use Arrow optimization when the schema is supported and the required version
@@ -134,9 +139,7 @@ class PandasConversionMixin(object):
 
                     # Rename columns to avoid duplicated column names.
                     tmp_column_names = ["col_{}".format(i) for i in range(len(self.columns))]
-                    self_destruct = (
-                        self.sql_ctx._conf.arrowPySparkSelfDestructEnabled()  # type: ignore[attr-defined]
-                    )
+                    self_destruct = jconf.arrowPySparkSelfDestructEnabled()
                     batches = self.toDF(*tmp_column_names)._collect_as_arrow(
                         split_batches=self_destruct
                     )
@@ -175,11 +178,11 @@ class PandasConversionMixin(object):
                     else:
                         corrected_panda_types = {}
                         for index, field in enumerate(self.schema):
-                            panda_type = PandasConversionMixin._to_corrected_pandas_type(
+                            pandas_type = PandasConversionMixin._to_corrected_pandas_type(
                                 field.dataType
                             )
                             corrected_panda_types[tmp_column_names[index]] = (
-                                np.object0 if panda_type is None else panda_type
+                                np.object0 if pandas_type is None else pandas_type
                             )
 
                         pdf = pd.DataFrame(columns=tmp_column_names).astype(
@@ -198,43 +201,44 @@ class PandasConversionMixin(object):
                         "effect on failures in the middle of "
                         "computation.\n  %s" % str(e)
                     )
-                    warnings.warn(msg)
+                    warn(msg)
                     raise
 
         # Below is toPandas without Arrow optimization.
         pdf = pd.DataFrame.from_records(self.collect(), columns=self.columns)
         column_counter = Counter(self.columns)
 
-        dtype: List[Optional[Type]] = [None] * len(self.schema)
-        for fieldIdx, field in enumerate(self.schema):
-            # For duplicate column name, we use `iloc` to access it.
+        corrected_dtypes: List[Optional[Type]] = [None] * len(self.schema)
+        for index, field in enumerate(self.schema):
+            # We use `iloc` to access columns with duplicate column names.
             if column_counter[field.name] > 1:
-                pandas_col = pdf.iloc[:, fieldIdx]
+                pandas_col = pdf.iloc[:, index]
             else:
                 pandas_col = pdf[field.name]
 
             pandas_type = PandasConversionMixin._to_corrected_pandas_type(field.dataType)
             # SPARK-21766: if an integer field is nullable and has null values, it can be
-            # inferred by pandas as float column. Once we convert the column with NaN back
-            # to integer type e.g., np.int16, we will hit exception. So we use the inferred
-            # float type, not the corrected type from the schema in this case.
+            # inferred by pandas as a float column. If we convert the column with NaN back
+            # to integer type e.g., np.int16, we will hit an exception. So we use the
+            # pandas-inferred float type, rather than the corrected type from the schema
+            # in this case.
             if pandas_type is not None and not (
                 isinstance(field.dataType, IntegralType)
                 and field.nullable
                 and pandas_col.isnull().any()
             ):
-                dtype[fieldIdx] = pandas_type
-            # Ensure we fall back to nullable numpy types, even when whole column is null:
+                corrected_dtypes[index] = pandas_type
+            # Ensure we fall back to nullable numpy types.
             if isinstance(field.dataType, IntegralType) and pandas_col.isnull().any():
-                dtype[fieldIdx] = np.float64
+                corrected_dtypes[index] = np.float64
             if isinstance(field.dataType, BooleanType) and pandas_col.isnull().any():
-                dtype[fieldIdx] = np.object  # type: ignore[attr-defined]
+                corrected_dtypes[index] = np.object  # type: ignore[attr-defined]
 
         df = pd.DataFrame()
-        for index, t in enumerate(dtype):
+        for index, t in enumerate(corrected_dtypes):
             column_name = self.schema[index].name
 
-            # For duplicate column name, we use `iloc` to access it.
+            # We use `iloc` to access columns with duplicate column names.
             if column_counter[column_name] > 1:
                 series = pdf.iloc[:, index]
             else:
@@ -246,33 +250,36 @@ class PandasConversionMixin(object):
             if (t is not None and not is_timedelta64_dtype(t)) or should_check_timedelta:
                 series = series.astype(t, copy=False)
 
-            # `insert` API makes copy of data, we only do it for Series of duplicate column names.
-            # `pdf.iloc[:, index] = pdf.iloc[:, index]...` doesn't always work because `iloc` could
-            # return a view or a copy depending by context.
-            if column_counter[column_name] > 1:
-                df.insert(index, column_name, series, allow_duplicates=True)
-            else:
-                df[column_name] = series
+            with catch_warnings():
+                from pandas.errors import PerformanceWarning
 
-        pdf = df
+                simplefilter(action="ignore", category=PerformanceWarning)
+                # `insert` API makes copy of data,
+                # we only do it for Series of duplicate column names.
+                # `pdf.iloc[:, index] = pdf.iloc[:, index]...` doesn't always work
+                # because `iloc` could return a view or a copy depending by context.
+                if column_counter[column_name] > 1:
+                    df.insert(index, column_name, series, allow_duplicates=True)
+                else:
+                    df[column_name] = series
 
         if timezone is None:
-            return pdf
+            return df
         else:
             from pyspark.sql.pandas.types import _check_series_convert_timestamps_local_tz
 
             for field in self.schema:
                 # TODO: handle nested timestamps, such as ArrayType(TimestampType())?
                 if isinstance(field.dataType, TimestampType):
-                    pdf[field.name] = _check_series_convert_timestamps_local_tz(
-                        pdf[field.name], timezone
+                    df[field.name] = _check_series_convert_timestamps_local_tz(
+                        df[field.name], timezone
                     )
-            return pdf
+            return df
 
     @staticmethod
     def _to_corrected_pandas_type(dt: DataType) -> Optional[Type]:
         """
-        When converting Spark SQL records to Pandas :class:`DataFrame`, the inferred data type
+        When converting Spark SQL records to Pandas `pandas.DataFrame`, the inferred data type
         may be wrong. This method gets the corrected data type for Pandas if that type may be
         inferred incorrectly.
         """
@@ -291,7 +298,7 @@ class PandasConversionMixin(object):
         elif type(dt) == DoubleType:
             return np.float64
         elif type(dt) == BooleanType:
-            return np.bool  # type: ignore[attr-defined]
+            return bool
         elif type(dt) == TimestampType:
             return np.datetime64
         elif type(dt) == TimestampNTZType:
@@ -321,7 +328,7 @@ class PandasConversionMixin(object):
                 port,
                 auth_secret,
                 jsocket_auth_server,
-            ) = self._jdf.collectAsArrowToPython()  # type: ignore[operator]
+            ) = self._jdf.collectAsArrowToPython()
 
         # Collect list of un-ordered batches where last element is a list of correct order indices
         try:
@@ -361,11 +368,13 @@ class PandasConversionMixin(object):
         return [batches[i] for i in batch_order]
 
 
-class SparkConversionMixin(object):
+class SparkConversionMixin:
     """
     Min-in for the conversion from pandas to Spark. Currently, only :class:`SparkSession`
     can use this class.
     """
+
+    _jsparkSession: "JavaObject"
 
     @overload
     def createDataFrame(
@@ -397,20 +406,17 @@ class SparkConversionMixin(object):
 
         require_minimum_pandas_version()
 
-        timezone = self._wrapped._conf.sessionLocalTimeZone()  # type: ignore[attr-defined]
+        timezone = self._jconf.sessionLocalTimeZone()
 
         # If no schema supplied by user then get the names of columns only
         if schema is None:
             schema = [str(x) if not isinstance(x, str) else x for x in data.columns]
 
-        if (
-            self._wrapped._conf.arrowPySparkEnabled()  # type: ignore[attr-defined]
-            and len(data) > 0
-        ):
+        if self._jconf.arrowPySparkEnabled() and len(data) > 0:
             try:
                 return self._create_from_pandas_with_arrow(data, schema, timezone)
             except Exception as e:
-                if self._wrapped._conf.arrowPySparkFallbackEnabled():  # type: ignore[attr-defined]
+                if self._jconf.arrowPySparkFallbackEnabled():
                     msg = (
                         "createDataFrame attempted Arrow optimization because "
                         "'spark.sql.execution.arrow.pyspark.enabled' is set to true; however, "
@@ -419,7 +425,7 @@ class SparkConversionMixin(object):
                         "'spark.sql.execution.arrow.pyspark.fallback.enabled' is set to "
                         "true." % str(e)
                     )
-                    warnings.warn(msg)
+                    warn(msg)
                 else:
                     msg = (
                         "createDataFrame attempted Arrow optimization because "
@@ -428,7 +434,7 @@ class SparkConversionMixin(object):
                         "fallback with 'spark.sql.execution.arrow.pyspark.fallback.enabled' "
                         "has been set to false.\n  %s" % str(e)
                     )
-                    warnings.warn(msg)
+                    warn(msg)
                     raise
         converted_data = self._convert_from_pandas(data, schema, timezone)
         return self._create_dataframe(converted_data, schema, samplingRatio, verifySchema)
@@ -468,7 +474,7 @@ class SparkConversionMixin(object):
                             pdf[field.name] = s
             else:
                 should_localize = not is_timestamp_ntz_preferred()
-                for column, series in pdf.iteritems():
+                for column, series in pdf.items():
                     s = series
                     if should_localize and is_datetime64tz_dtype(s.dtype) and s.dt.tz is not None:
                         s = _check_series_convert_timestamps_tz_local(series, timezone)
@@ -480,7 +486,7 @@ class SparkConversionMixin(object):
                             copied = True
                         pdf[column] = s
 
-            for column, series in pdf.iteritems():
+            for column, series in pdf.items():
                 if is_timedelta64_dtype(series):
                     if not copied:
                         pdf = pdf.copy()
@@ -561,7 +567,10 @@ class SparkConversionMixin(object):
         require_minimum_pandas_version()
         require_minimum_pyarrow_version()
 
-        from pandas.api.types import is_datetime64_dtype, is_datetime64tz_dtype
+        from pandas.api.types import (  # type: ignore[attr-defined]
+            is_datetime64_dtype,
+            is_datetime64tz_dtype,
+        )
         import pyarrow as pa
 
         # Create the Spark schema from list of names passed in with Arrow types
@@ -590,37 +599,34 @@ class SparkConversionMixin(object):
             ]
 
         # Slice the DataFrame to be batched
-        step = -(-len(pdf) // self.sparkContext.defaultParallelism)  # round int up
+        step = self._jconf.arrowMaxRecordsPerBatch()
         pdf_slices = (pdf.iloc[start : start + step] for start in range(0, len(pdf), step))
 
         # Create list of Arrow (columns, type) for serializer dump_stream
         arrow_data = [
-            [(c, t) for (_, c), t in zip(pdf_slice.iteritems(), arrow_types)]
+            [(c, t) for (_, c), t in zip(pdf_slice.items(), arrow_types)]
             for pdf_slice in pdf_slices
         ]
 
-        jsqlContext = self._wrapped._jsqlContext  # type: ignore[attr-defined]
+        jsparkSession = self._jsparkSession
 
-        safecheck = self._wrapped._conf.arrowSafeTypeConversion()  # type: ignore[attr-defined]
+        safecheck = self._jconf.arrowSafeTypeConversion()
         col_by_name = True  # col by name only applies to StructType columns, can't happen here
         ser = ArrowStreamPandasSerializer(timezone, safecheck, col_by_name)
 
         @no_type_check
         def reader_func(temp_filename):
-            return self._jvm.PythonSQLUtils.readArrowStreamFromFile(jsqlContext, temp_filename)
+            return self._jvm.PythonSQLUtils.readArrowStreamFromFile(temp_filename)
 
         @no_type_check
-        def create_RDD_server():
-            return self._jvm.ArrowRDDServer(jsqlContext)
+        def create_iter_server():
+            return self._jvm.ArrowIteratorServer()
 
         # Create Spark DataFrame from Arrow stream file, using one batch per partition
-        jrdd = self._sc._serialize_to_jvm(  # type: ignore[attr-defined]
-            arrow_data, ser, reader_func, create_RDD_server
-        )
-        jdf = self._jvm.PythonSQLUtils.toDataFrame(  # type: ignore[attr-defined]
-            jrdd, schema.json(), jsqlContext
-        )
-        df = DataFrame(jdf, self._wrapped)
+        jiter = self._sc._serialize_to_jvm(arrow_data, ser, reader_func, create_iter_server)
+        assert self._jvm is not None
+        jdf = self._jvm.PythonSQLUtils.toDataFrame(jiter, schema.json(), jsparkSession)
+        df = DataFrame(jdf, self)
         df._schema = schema
         return df
 

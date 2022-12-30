@@ -59,11 +59,12 @@ class OrcFilterSuite extends OrcTest with SharedSparkSession {
       .where(Column(predicate))
 
     query.queryExecution.optimizedPlan match {
-      case PhysicalOperation(_, filters, DataSourceV2ScanRelation(_, o: OrcScan, _)) =>
+      case PhysicalOperation(_, filters, DataSourceV2ScanRelation(_, o: OrcScan, _, _, _)) =>
         assert(filters.nonEmpty, "No filter is analyzed from the given query")
         assert(o.pushedFilters.nonEmpty, "No filter is pushed down")
         val maybeFilter = OrcFilters.createFilter(query.schema, o.pushedFilters)
-        assert(maybeFilter.isDefined, s"Couldn't generate filter predicate for ${o.pushedFilters}")
+        assert(maybeFilter.isDefined, s"Couldn't generate filter predicate for " +
+          s"${o.pushedFilters.mkString("pushedFilters(", ", ", ")")}")
         checker(maybeFilter.get)
 
       case _ =>
@@ -673,11 +674,21 @@ class OrcFilterSuite extends OrcTest with SharedSparkSession {
 
         // Exception thrown for ambiguous case.
         withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
-          val e = intercept[AnalysisException] {
-            sql(s"select a from $tableName where a < 0").collect()
-          }
-          assert(e.getMessage.contains(
-            "Reference 'a' is ambiguous"))
+          checkError(
+            exception = intercept[AnalysisException] {
+              sql(s"select a from $tableName where a < 0").collect()
+            },
+            errorClass = "AMBIGUOUS_REFERENCE",
+            parameters = Map(
+              "name" -> "`a`",
+              "referenceNames" -> ("[`spark_catalog`.`default`.`spark_32622`.`a`, " +
+                "`spark_catalog`.`default`.`spark_32622`.`a`]")),
+            context = ExpectedContext(
+              fragment = "a",
+              start = 32,
+              stop = 32
+            )
+          )
         }
       }
 

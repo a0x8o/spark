@@ -23,6 +23,7 @@ import java.util.{Locale, Map => JMap}
 import scala.collection.JavaConverters._
 import scala.util.matching.Regex
 
+import org.apache.spark.TaskContext
 import org.apache.spark.api.java.{JavaRDD, JavaSparkContext}
 import org.apache.spark.api.r.SerDe
 import org.apache.spark.broadcast.Broadcast
@@ -140,7 +141,7 @@ private[sql] object SQLUtils extends Logging {
 
   // Schema for DataFrame of serialized R data
   // TODO: introduce a user defined type for serialized R data.
-  val SERIALIZED_R_DATA_SCHEMA = StructType(Seq(StructField("R", BinaryType)))
+  val SERIALIZED_R_DATA_SCHEMA = StructType(Array(StructField("R", BinaryType)))
 
   /**
    * The helper function for dapply() on R side.
@@ -216,7 +217,7 @@ private[sql] object SQLUtils extends Logging {
       case _ =>
         sparkSession.catalog.currentDatabase
     }
-    sparkSession.sessionState.catalog.listTables(db).map(_.table).toArray
+    sparkSession.catalog.listTables(db).collect().map(_.name)
   }
 
   def createArrayType(column: Column): ArrayType = {
@@ -230,7 +231,9 @@ private[sql] object SQLUtils extends Logging {
   def readArrowStreamFromFile(
       sparkSession: SparkSession,
       filename: String): JavaRDD[Array[Byte]] = {
-    ArrowConverters.readArrowStreamFromFile(sparkSession.sqlContext, filename)
+    // Parallelize the record batches to create an RDD
+    val batches = ArrowConverters.readArrowStreamFromFile(filename)
+    JavaRDD.fromRDD(sparkSession.sparkContext.parallelize(batches, batches.length))
   }
 
   /**
@@ -241,6 +244,11 @@ private[sql] object SQLUtils extends Logging {
       arrowBatchRDD: JavaRDD[Array[Byte]],
       schema: StructType,
       sparkSession: SparkSession): DataFrame = {
-    ArrowConverters.toDataFrame(arrowBatchRDD, schema.json, sparkSession.sqlContext)
+    val timeZoneId = sparkSession.sessionState.conf.sessionLocalTimeZone
+    val rdd = arrowBatchRDD.rdd.mapPartitions { iter =>
+      val context = TaskContext.get()
+      ArrowConverters.fromBatchIterator(iter, schema, timeZoneId, context)
+    }
+    sparkSession.internalCreateDataFrame(rdd.setName("arrow"), schema)
   }
 }

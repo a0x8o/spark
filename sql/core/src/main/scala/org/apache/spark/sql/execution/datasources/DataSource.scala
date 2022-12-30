@@ -29,13 +29,13 @@ import org.apache.spark.SparkException
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStorageFormat, CatalogTable, CatalogUtils}
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, TypeUtils}
 import org.apache.spark.sql.connector.catalog.TableProvider
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
-import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.command.DataWritingCommand
 import org.apache.spark.sql.execution.datasources.csv.CSVFileFormat
 import org.apache.spark.sql.execution.datasources.jdbc.JdbcRelationProvider
@@ -44,7 +44,6 @@ import org.apache.spark.sql.execution.datasources.orc.OrcFileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.FileDataSourceV2
 import org.apache.spark.sql.execution.datasources.v2.orc.OrcDataSourceV2
-import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.execution.streaming.sources.{RateStreamProvider, TextSocketSourceProvider}
 import org.apache.spark.sql.internal.SQLConf
@@ -110,7 +109,7 @@ case class DataSource(
     }
   }
 
-  private def providingInstance() = providingClass.getConstructor().newInstance()
+  private[sql] def providingInstance(): Any = providingClass.getConstructor().newInstance()
 
   private def newHadoopConfiguration(): Configuration =
     sparkSession.sessionState.newHadoopConfWithOptions(options)
@@ -129,10 +128,8 @@ case class DataSource(
   }
 
   bucketSpec.foreach { bucket =>
-    SchemaUtils.checkColumnNameDuplication(
-      bucket.bucketColumnNames, "in the bucket definition", equality)
-    SchemaUtils.checkColumnNameDuplication(
-      bucket.sortColumnNames, "in the sort definition", equality)
+    SchemaUtils.checkColumnNameDuplication(bucket.bucketColumnNames, equality)
+    SchemaUtils.checkColumnNameDuplication(bucket.sortColumnNames, equality)
   }
 
   /**
@@ -219,7 +216,6 @@ case class DataSource(
     try {
       SchemaUtils.checkColumnNameDuplication(
         (dataSchema ++ partitionSchema).map(_.name),
-        "in the data schema and the partition schema",
         equality)
     } catch {
       case e: AnalysisException => logWarning(e.getMessage)
@@ -267,8 +263,7 @@ case class DataSource(
             checkAndGlobPathIfNecessary(checkEmptyGlobPath = false, checkFilesExist = false)
           createInMemoryFileIndex(globbedPaths)
         })
-        val forceNullable =
-          sparkSession.sessionState.conf.getConf(SQLConf.FILE_SOURCE_SCHEMA_FORCE_NULLABLE)
+        val forceNullable = sparkSession.conf.get(SQLConf.FILE_SOURCE_SCHEMA_FORCE_NULLABLE)
         val sourceDataSchema = if (forceNullable) dataSchema.asNullable else dataSchema
         SourceInfo(
           s"FileSource[$path]",
@@ -353,7 +348,7 @@ case class DataSource(
       case (dataSource: RelationProvider, Some(schema)) =>
         val baseRelation =
           dataSource.createRelation(sparkSession.sqlContext, caseInsensitiveOptions)
-        if (baseRelation.schema != schema) {
+        if (!DataType.equalsIgnoreCompatibleNullability(baseRelation.schema, schema)) {
           throw QueryCompilationErrors.userSpecifiedSchemaMismatchActualSchemaError(
             schema, baseRelation.schema)
         }
@@ -428,17 +423,14 @@ case class DataSource(
       case hs: HadoopFsRelation =>
         SchemaUtils.checkSchemaColumnNameDuplication(
           hs.dataSchema,
-          "in the data schema",
           equality)
         SchemaUtils.checkSchemaColumnNameDuplication(
           hs.partitionSchema,
-          "in the partition schema",
           equality)
         DataSourceUtils.verifySchema(hs.fileFormat, hs.dataSchema)
       case _ =>
         SchemaUtils.checkSchemaColumnNameDuplication(
           relation.schema,
-          "in the data schema",
           equality)
     }
 
@@ -500,17 +492,11 @@ case class DataSource(
    * @param outputColumnNames The original output column names of the input query plan. The
    *                          optimizer may not preserve the output column's names' case, so we need
    *                          this parameter instead of `data.output`.
-   * @param physicalPlan The physical plan of the input query plan. We should run the writing
-   *                     command with this physical plan instead of creating a new physical plan,
-   *                     so that the metrics can be correctly linked to the given physical plan and
-   *                     shown in the web UI.
    */
   def writeAndRead(
       mode: SaveMode,
       data: LogicalPlan,
-      outputColumnNames: Seq[String],
-      physicalPlan: SparkPlan,
-      metrics: Map[String, SQLMetric]): BaseRelation = {
+      outputColumnNames: Seq[String]): BaseRelation = {
     val outputColumns = DataWritingCommand.logicalPlanOutputWithNames(data, outputColumnNames)
     providingInstance() match {
       case dataSource: CreatableRelationProvider =>
@@ -520,27 +506,12 @@ case class DataSource(
       case format: FileFormat =>
         disallowWritingIntervals(outputColumns.map(_.dataType), forbidAnsiIntervals = false)
         val cmd = planForWritingFileFormat(format, mode, data)
-        val resolvedPartCols = cmd.partitionColumns.map { col =>
-          // The partition columns created in `planForWritingFileFormat` should always be
-          // `UnresolvedAttribute` with a single name part.
-          assert(col.isInstanceOf[UnresolvedAttribute])
-          val unresolved = col.asInstanceOf[UnresolvedAttribute]
-          assert(unresolved.nameParts.length == 1)
-          val name = unresolved.nameParts.head
-          outputColumns.find(a => equality(a.name, name)).getOrElse {
-            throw QueryCompilationErrors.cannotResolveAttributeError(
-              name, data.output.map(_.name).mkString(", "))
-          }
-        }
-        val resolved = cmd.copy(
-          partitionColumns = resolvedPartCols,
-          outputColumnNames = outputColumnNames)
-        resolved.run(sparkSession, physicalPlan)
-        DataWritingCommand.propogateMetrics(sparkSession.sparkContext, resolved, metrics)
+        val qe = sparkSession.sessionState.executePlan(cmd)
+        qe.assertCommandExecuted()
         // Replace the schema with that of the DataFrame we just wrote out to avoid re-inferring
         copy(userSpecifiedSchema = Some(outputColumns.toStructType.asNullable)).resolveRelation()
-      case _ =>
-        sys.error(s"${providingClass.getCanonicalName} does not allow create table as select.")
+      case _ => throw new IllegalStateException(
+        s"${providingClass.getCanonicalName} does not allow create table as select.")
     }
   }
 
@@ -556,8 +527,8 @@ case class DataSource(
         disallowWritingIntervals(data.schema.map(_.dataType), forbidAnsiIntervals = false)
         DataSource.validateSchema(data.schema)
         planForWritingFileFormat(format, mode, data)
-      case _ =>
-        sys.error(s"${providingClass.getCanonicalName} does not allow create table as select.")
+      case _ => throw new IllegalStateException(
+        s"${providingClass.getCanonicalName} does not allow create table as select.")
     }
   }
 
@@ -835,6 +806,28 @@ object DataSource extends Logging {
 
     if (hasEmptySchema(schema)) {
       throw QueryCompilationErrors.writeEmptySchemasUnsupportedByDataSourceError()
+    }
+  }
+
+  /**
+   * Resolve partition columns using output columns of the query plan.
+   */
+  def resolvePartitionColumns(
+      partitionColumns: Seq[Attribute],
+      outputColumns: Seq[Attribute],
+      plan: LogicalPlan,
+      resolver: Resolver): Seq[Attribute] = {
+    partitionColumns.map { col =>
+      // The partition columns created in `planForWritingFileFormat` should always be
+      // `UnresolvedAttribute` with a single name part.
+      assert(col.isInstanceOf[UnresolvedAttribute])
+      val unresolved = col.asInstanceOf[UnresolvedAttribute]
+      assert(unresolved.nameParts.length == 1)
+      val name = unresolved.nameParts.head
+      outputColumns.find(a => resolver(a.name, name)).getOrElse {
+        throw QueryCompilationErrors.cannotResolveAttributeError(
+          name, plan.output.map(_.name).mkString(", "))
+      }
     }
   }
 }

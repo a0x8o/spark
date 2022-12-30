@@ -38,6 +38,8 @@ from pyspark.sql.types import (
     DayTimeIntervalType,
     MapType,
     StringType,
+    CharType,
+    VarcharType,
     StructType,
     StructField,
     ArrayType,
@@ -48,7 +50,7 @@ from pyspark.sql.types import (
     BooleanType,
     NullType,
 )
-from pyspark.sql.types import (  # type: ignore
+from pyspark.sql.types import (
     _array_signed_int_typecode_ctype_mappings,
     _array_type_mappings,
     _array_unsigned_int_typecode_ctype_mappings,
@@ -118,8 +120,14 @@ class TypesTests(ReusedSQLTestCase):
 
         with self.tempView("test"):
             df.createOrReplaceTempView("test")
-            result = self.spark.sql("SELECT l[0].a from test where d['key'].d = '2'")
-            self.assertEqual(1, result.head()[0])
+            result = self.spark.sql("SELECT l from test")
+            self.assertEqual([], result.head()[0])
+            # We set `spark.sql.ansi.enabled` to False for this case
+            # since it occurs an error in ANSI mode if there is a list index
+            # or key that does not exist.
+            with self.sql_conf({"spark.sql.ansi.enabled": False}):
+                result = self.spark.sql("SELECT l[0].a from test where d['key'].d = '2'")
+                self.assertEqual(1, result.head()[0])
 
         df2 = self.spark.createDataFrame(rdd, samplingRatio=1.0)
         self.assertEqual(df.schema, df2.schema)
@@ -128,13 +136,19 @@ class TypesTests(ReusedSQLTestCase):
 
         with self.tempView("test2"):
             df2.createOrReplaceTempView("test2")
-            result = self.spark.sql("SELECT l[0].a from test2 where d['key'].d = '2'")
-            self.assertEqual(1, result.head()[0])
+            result = self.spark.sql("SELECT l from test2")
+            self.assertEqual([], result.head()[0])
+            # We set `spark.sql.ansi.enabled` to False for this case
+            # since it occurs an error in ANSI mode if there is a list index
+            # or key that does not exist.
+            with self.sql_conf({"spark.sql.ansi.enabled": False}):
+                result = self.spark.sql("SELECT l[0].a from test2 where d['key'].d = '2'")
+                self.assertEqual(1, result.head()[0])
 
     def test_infer_schema_specification(self):
         from decimal import Decimal
 
-        class A(object):
+        class A:
             def __init__(self):
                 self.a = 1
 
@@ -221,13 +235,21 @@ class TypesTests(ReusedSQLTestCase):
         df = self.spark.createDataFrame([["a", "b"]], ["col1"])
         self.assertEqual(df.columns, ["col1", "_2"])
 
-    def test_infer_schema_fails(self):
-        with self.assertRaisesRegex(TypeError, "field a"):
-            self.spark.createDataFrame(
-                self.spark.sparkContext.parallelize([[1, 1], ["x", 1]]),
-                schema=["a", "b"],
-                samplingRatio=0.99,
-            )
+    def test_infer_schema_upcast_int_to_string(self):
+        df = self.spark.createDataFrame(
+            self.spark.sparkContext.parallelize([[1, 1], ["x", 1]]),
+            schema=["a", "b"],
+            samplingRatio=0.99,
+        )
+        self.assertEqual([Row(a="1", b=1), Row(a="x", b=1)], df.collect())
+
+    def test_infer_schema_upcast_float_to_string(self):
+        df = self.spark.createDataFrame([[1.33, 1], ["2.1", 1]], schema=["a", "b"])
+        self.assertEqual([Row(a="1.33", b=1), Row(a="2.1", b=1)], df.collect())
+
+    def test_infer_schema_upcast_boolean_to_string(self):
+        df = self.spark.createDataFrame([[True, 1], ["false", 1]], schema=["a", "b"])
+        self.assertEqual([Row(a="true", b=1), Row(a="false", b=1)], df.collect())
 
     def test_infer_nested_schema(self):
         NestedRow = Row("f1", "f2")
@@ -272,6 +294,83 @@ class TypesTests(ReusedSQLTestCase):
 
             df = self.spark.createDataFrame(data)
             self.assertEqual(Row(f1=[Row(payment=200.5, name="A")], f2=[1, 2]), df.first())
+
+    def test_infer_array_merge_element_types(self):
+        # SPARK-39168: Test inferring array element type from all values in array
+        ArrayRow = Row("f1", "f2")
+
+        data = [ArrayRow([1, None], [None, 2])]
+
+        rdd = self.sc.parallelize(data)
+        df = self.spark.createDataFrame(rdd)
+        self.assertEqual(Row(f1=[1, None], f2=[None, 2]), df.first())
+
+        df = self.spark.createDataFrame(data)
+        self.assertEqual(Row(f1=[1, None], f2=[None, 2]), df.first())
+
+        # Test legacy behavior inferring only from the first element
+        with self.sql_conf(
+            {"spark.sql.pyspark.legacy.inferArrayTypeFromFirstElement.enabled": True}
+        ):
+            # Legacy: f2 schema inferred as an array of nulls, should raise error
+            self.assertRaises(ValueError, lambda: self.spark.createDataFrame(data))
+
+        # an array with only null values should raise an error
+        data2 = [ArrayRow([1], [None])]
+        self.assertRaises(ValueError, lambda: self.spark.createDataFrame(data2))
+
+        # an array with no values should raise an error
+        data3 = [ArrayRow([1], [])]
+        self.assertRaises(ValueError, lambda: self.spark.createDataFrame(data3))
+
+        # an array with conflicting types should raise an error
+        # in this case this is ArrayType(StringType) and ArrayType(NullType)
+        data4 = [ArrayRow([1, "1"], [None])]
+        with self.assertRaisesRegex(ValueError, "types cannot be determined after inferring"):
+            self.spark.createDataFrame(data4)
+
+    def test_infer_array_element_type_empty(self):
+        # SPARK-39168: Test inferring array element type from all rows
+        ArrayRow = Row("f1")
+
+        data = [ArrayRow([]), ArrayRow([None]), ArrayRow([1])]
+
+        rdd = self.sc.parallelize(data)
+        df = self.spark.createDataFrame(rdd)
+        rows = df.collect()
+        self.assertEqual(Row(f1=[]), rows[0])
+        self.assertEqual(Row(f1=[None]), rows[1])
+        self.assertEqual(Row(f1=[1]), rows[2])
+
+        df = self.spark.createDataFrame(data)
+        self.assertEqual(Row(f1=[]), rows[0])
+        self.assertEqual(Row(f1=[None]), rows[1])
+        self.assertEqual(Row(f1=[1]), rows[2])
+
+    def test_infer_array_element_type_with_struct(self):
+        # SPARK-39168: Test inferring array of struct type from all struct values
+        NestedRow = Row("f1")
+
+        with self.sql_conf({"spark.sql.pyspark.inferNestedDictAsStruct.enabled": True}):
+            data = [NestedRow([{"payment": 200.5}, {"name": "A"}])]
+
+            nestedRdd = self.sc.parallelize(data)
+            df = self.spark.createDataFrame(nestedRdd)
+            self.assertEqual(
+                Row(f1=[Row(payment=200.5, name=None), Row(payment=None, name="A")]), df.first()
+            )
+
+            df = self.spark.createDataFrame(data)
+            self.assertEqual(
+                Row(f1=[Row(payment=200.5, name=None), Row(payment=None, name="A")]), df.first()
+            )
+
+            # Test legacy behavior inferring only from the first element; excludes "name" field
+            with self.sql_conf(
+                {"spark.sql.pyspark.legacy.inferArrayTypeFromFirstElement.enabled": True}
+            ):
+                df = self.spark.createDataFrame(data)
+                self.assertEqual(Row(f1=[Row(payment=200.5), Row(payment=None)]), df.first())
 
     def test_create_dataframe_from_dict_respects_schema(self):
         df = self.spark.createDataFrame([{"a": 1}], ["b"])
@@ -652,8 +751,15 @@ class TypesTests(ReusedSQLTestCase):
         from pyspark.sql.types import _all_atomic_types, _parse_datatype_string
 
         for k, t in _all_atomic_types.items():
-            self.assertEqual(t(), _parse_datatype_string(k))
+            if k != "varchar" and k != "char":
+                self.assertEqual(t(), _parse_datatype_string(k))
         self.assertEqual(IntegerType(), _parse_datatype_string("int"))
+        self.assertEqual(CharType(1), _parse_datatype_string("char(1)"))
+        self.assertEqual(CharType(10), _parse_datatype_string("char( 10   )"))
+        self.assertEqual(CharType(11), _parse_datatype_string("char( 11)"))
+        self.assertEqual(VarcharType(1), _parse_datatype_string("varchar(1)"))
+        self.assertEqual(VarcharType(10), _parse_datatype_string("varchar( 10   )"))
+        self.assertEqual(VarcharType(11), _parse_datatype_string("varchar( 11)"))
         self.assertEqual(DecimalType(1, 1), _parse_datatype_string("decimal(1  ,1)"))
         self.assertEqual(DecimalType(10, 1), _parse_datatype_string("decimal( 10,1 )"))
         self.assertEqual(DecimalType(11, 1), _parse_datatype_string("decimal(11,1)"))
@@ -706,12 +812,12 @@ class TypesTests(ReusedSQLTestCase):
         self.assertEqual(100000000000000, df1.first().f2)
 
         self.assertEqual(_infer_type(1), LongType())
-        self.assertEqual(_infer_type(2 ** 10), LongType())
-        self.assertEqual(_infer_type(2 ** 20), LongType())
-        self.assertEqual(_infer_type(2 ** 31 - 1), LongType())
-        self.assertEqual(_infer_type(2 ** 31), LongType())
-        self.assertEqual(_infer_type(2 ** 61), LongType())
-        self.assertEqual(_infer_type(2 ** 71), LongType())
+        self.assertEqual(_infer_type(2**10), LongType())
+        self.assertEqual(_infer_type(2**20), LongType())
+        self.assertEqual(_infer_type(2**31 - 1), LongType())
+        self.assertEqual(_infer_type(2**31), LongType())
+        self.assertEqual(_infer_type(2**61), LongType())
+        self.assertEqual(_infer_type(2**71), LongType())
 
     def test_infer_binary_type(self):
         binaryrow = [Row(f1="a", f2=b"abcd")]
@@ -744,8 +850,12 @@ class TypesTests(ReusedSQLTestCase):
             _merge_type(MapType(StringType(), LongType()), MapType(StringType(), LongType())),
             MapType(StringType(), LongType()),
         )
-        with self.assertRaisesRegex(TypeError, "key of map"):
-            _merge_type(MapType(StringType(), LongType()), MapType(DoubleType(), LongType()))
+
+        self.assertEqual(
+            _merge_type(MapType(StringType(), LongType()), MapType(DoubleType(), LongType())),
+            MapType(StringType(), LongType()),
+        )
+
         with self.assertRaisesRegex(TypeError, "value of map"):
             _merge_type(MapType(StringType(), LongType()), MapType(StringType(), DoubleType()))
 
@@ -769,11 +879,13 @@ class TypesTests(ReusedSQLTestCase):
             ),
             StructType([StructField("f1", StructType([StructField("f2", LongType())]))]),
         )
-        with self.assertRaisesRegex(TypeError, "field f2 in field f1"):
+        self.assertEqual(
             _merge_type(
                 StructType([StructField("f1", StructType([StructField("f2", LongType())]))]),
                 StructType([StructField("f1", StructType([StructField("f2", StringType())]))]),
-            )
+            ),
+            StructType([StructField("f1", StructType([StructField("f2", StringType())]))]),
+        )
 
         self.assertEqual(
             _merge_type(
@@ -841,11 +953,13 @@ class TypesTests(ReusedSQLTestCase):
             ),
             StructType([StructField("f1", ArrayType(MapType(StringType(), LongType())))]),
         )
-        with self.assertRaisesRegex(TypeError, "key of map element in array field f1"):
+        self.assertEqual(
             _merge_type(
                 StructType([StructField("f1", ArrayType(MapType(StringType(), LongType())))]),
                 StructType([StructField("f1", ArrayType(MapType(DoubleType(), LongType())))]),
-            )
+            ),
+            StructType([StructField("f1", ArrayType(MapType(StringType(), LongType())))]),
+        )
 
     # test for SPARK-16542
     def test_array_types(self):
@@ -937,6 +1051,31 @@ class TypesTests(ReusedSQLTestCase):
                 a = array.array(t)
                 self.spark.createDataFrame([Row(myarray=a)]).collect()
 
+    def test_repr(self):
+        instances = [
+            NullType(),
+            StringType(),
+            CharType(10),
+            VarcharType(10),
+            BinaryType(),
+            BooleanType(),
+            DateType(),
+            TimestampType(),
+            DecimalType(),
+            DoubleType(),
+            FloatType(),
+            ByteType(),
+            IntegerType(),
+            LongType(),
+            ShortType(),
+            ArrayType(StringType()),
+            MapType(StringType(), IntegerType()),
+            StructField("f1", StringType(), True),
+            StructType([StructField("f1", StringType(), True)]),
+        ]
+        for instance in instances:
+            self.assertEqual(eval(repr(instance)), instance)
+
     def test_daytime_interval_type_constructor(self):
         # SPARK-37277: Test constructors in day time interval.
         self.assertEqual(DayTimeIntervalType().simpleString(), "interval day to second")
@@ -1022,6 +1161,24 @@ class DataTypeTests(unittest.TestCase):
         t3 = DecimalType(8)
         self.assertNotEqual(t2, t3)
 
+    def test_char_type(self):
+        v1 = CharType(10)
+        v2 = CharType(20)
+        self.assertTrue(v2 is not v1)
+        self.assertNotEqual(v1, v2)
+        v3 = CharType(10)
+        self.assertEqual(v1, v3)
+        self.assertFalse(v1 is v3)
+
+    def test_varchar_type(self):
+        v1 = VarcharType(10)
+        v2 = VarcharType(20)
+        self.assertTrue(v2 is not v1)
+        self.assertNotEqual(v1, v2)
+        v3 = VarcharType(10)
+        self.assertEqual(v1, v3)
+        self.assertFalse(v1 is v3)
+
     # regression test for SPARK-10392
     def test_datetype_equal_zero(self):
         dt = DateType()
@@ -1096,27 +1253,38 @@ class DataTypeVerificationTests(unittest.TestCase):
         success_spec = [
             # String
             ("", StringType()),
-            ("", StringType()),
             (1, StringType()),
             (1.0, StringType()),
             ([], StringType()),
             ({}, StringType()),
+            # Char
+            ("", CharType(10)),
+            (1, CharType(10)),
+            (1.0, CharType(10)),
+            ([], CharType(10)),
+            ({}, CharType(10)),
+            # Varchar
+            ("", VarcharType(10)),
+            (1, VarcharType(10)),
+            (1.0, VarcharType(10)),
+            ([], VarcharType(10)),
+            ({}, VarcharType(10)),
             # UDT
             (ExamplePoint(1.0, 2.0), ExamplePointUDT()),
             # Boolean
             (True, BooleanType()),
             # Byte
-            (-(2 ** 7), ByteType()),
-            (2 ** 7 - 1, ByteType()),
+            (-(2**7), ByteType()),
+            (2**7 - 1, ByteType()),
             # Short
-            (-(2 ** 15), ShortType()),
-            (2 ** 15 - 1, ShortType()),
+            (-(2**15), ShortType()),
+            (2**15 - 1, ShortType()),
             # Integer
-            (-(2 ** 31), IntegerType()),
-            (2 ** 31 - 1, IntegerType()),
+            (-(2**31), IntegerType()),
+            (2**31 - 1, IntegerType()),
             # Long
-            (-(2 ** 63), LongType()),
-            (2 ** 63 - 1, LongType()),
+            (-(2**63), LongType()),
+            (2**63 - 1, LongType()),
             # Float & Double
             (1.0, FloatType()),
             (1.0, DoubleType()),
@@ -1157,6 +1325,10 @@ class DataTypeVerificationTests(unittest.TestCase):
         failure_spec = [
             # String (match anything but None)
             (None, StringType(), ValueError),
+            # CharType (match anything but None)
+            (None, CharType(10), ValueError),
+            # VarcharType (match anything but None)
+            (None, VarcharType(10), ValueError),
             # UDT
             (ExamplePoint(1.0, 2.0), PythonOnlyUDT(), ValueError),
             # Boolean
@@ -1164,16 +1336,16 @@ class DataTypeVerificationTests(unittest.TestCase):
             ("True", BooleanType(), TypeError),
             ([1], BooleanType(), TypeError),
             # Byte
-            (-(2 ** 7) - 1, ByteType(), ValueError),
-            (2 ** 7, ByteType(), ValueError),
+            (-(2**7) - 1, ByteType(), ValueError),
+            (2**7, ByteType(), ValueError),
             ("1", ByteType(), TypeError),
             (1.0, ByteType(), TypeError),
             # Short
-            (-(2 ** 15) - 1, ShortType(), ValueError),
-            (2 ** 15, ShortType(), ValueError),
+            (-(2**15) - 1, ShortType(), ValueError),
+            (2**15, ShortType(), ValueError),
             # Integer
-            (-(2 ** 31) - 1, IntegerType(), ValueError),
-            (2 ** 31, IntegerType(), ValueError),
+            (-(2**31) - 1, IntegerType(), ValueError),
+            (2**31, IntegerType(), ValueError),
             # Float & Double
             (1, FloatType(), TypeError),
             (1, DoubleType(), TypeError),
@@ -1233,7 +1405,7 @@ if __name__ == "__main__":
     from pyspark.sql.tests.test_types import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

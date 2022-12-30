@@ -16,11 +16,12 @@
 #
 from typing import Any, Dict, Optional
 
-from py4j.java_gateway import JavaObject, JVMView  # type: ignore[import]
+from py4j.java_gateway import JavaObject, JVMView
 
 from pyspark.sql import column
 from pyspark.sql.column import Column
 from pyspark.sql.dataframe import DataFrame
+from pyspark.sql.utils import try_remote_observation
 
 __all__ = ["Observation"]
 
@@ -83,6 +84,7 @@ class Observation:
         self._jvm: Optional[JVMView] = None
         self._jo: Optional[JavaObject] = None
 
+    @try_remote_observation
     def _on(self, df: DataFrame, *exprs: Column) -> DataFrame:
         """Attaches this observation to the given :class:`DataFrame` to observe aggregations.
 
@@ -98,19 +100,20 @@ class Observation:
         :class:`DataFrame`
             the observed :class:`DataFrame`.
         """
-        assert exprs, "exprs should not be empty"
-        assert all(isinstance(c, Column) for c in exprs), "all exprs should be Column"
         assert self._jo is None, "an Observation can be used with a DataFrame only once"
 
-        self._jvm = df._sc._jvm  # type: ignore[attr-defined]
-        cls = self._jvm.org.apache.spark.sql.Observation  # type: ignore[attr-defined]
+        self._jvm = df._sc._jvm
+        assert self._jvm is not None
+        cls = self._jvm.org.apache.spark.sql.Observation
         self._jo = cls(self._name) if self._name is not None else cls()
         observed_df = self._jo.on(
             df._jdf, exprs[0]._jc, column._to_seq(df._sc, [c._jc for c in exprs[1:]])
         )
-        return DataFrame(observed_df, df.sql_ctx)
+        return DataFrame(observed_df, df.sparkSession)
 
-    @property
+    # Note that decorated property only works with Python 3.9+ which Spark Connect requires.
+    @property  # type: ignore[misc]
+    @try_remote_observation
     def get(self) -> Dict[str, Any]:
         """Get the observed metrics.
 

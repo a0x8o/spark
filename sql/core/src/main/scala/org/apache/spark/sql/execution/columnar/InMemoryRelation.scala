@@ -238,10 +238,15 @@ case class CachedRDDBuilder(
   }
 
   def isCachedColumnBuffersLoaded: Boolean = {
-    _cachedColumnBuffers != null && isCachedRDDLoaded
+    if (_cachedColumnBuffers != null) {
+      synchronized {
+        return _cachedColumnBuffers != null && isCachedRDDLoaded
+      }
+    }
+    false
   }
 
-  def isCachedRDDLoaded: Boolean = {
+  private def isCachedRDDLoaded: Boolean = {
       _cachedColumnBuffersAreLoaded || {
         val bmMaster = SparkEnv.get.blockManager.master
         val rddLoaded = _cachedColumnBuffers.partitions.forall { partition =>
@@ -256,7 +261,8 @@ case class CachedRDDBuilder(
   }
 
   private def buildBuffers(): RDD[CachedBatch] = {
-    val cb = if (cachedPlan.supportsColumnar) {
+    val cb = if (cachedPlan.supportsColumnar &&
+        serializer.supportsColumnarInput(cachedPlan.output)) {
       serializer.convertColumnarBatchToCachedBatch(
         cachedPlan.executeColumnar(),
         cachedPlan.output,
@@ -388,7 +394,7 @@ case class InMemoryRelation(
       newColStats: Map[Attribute, ColumnStat]): Unit = this.synchronized {
     val newStats = statsOfPlanToCache.copy(
       rowCount = Some(rowCount),
-      attributeStats = AttributeMap((statsOfPlanToCache.attributeStats ++ newColStats).toSeq)
+      attributeStats = AttributeMap(statsOfPlanToCache.attributeStats ++ newColStats)
     )
     statsOfPlanToCache = newStats
   }

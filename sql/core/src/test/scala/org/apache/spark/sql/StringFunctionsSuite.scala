@@ -17,10 +17,10 @@
 
 package org.apache.spark.sql
 
+import org.apache.spark.sql.catalyst.expressions.Cast._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-
 
 class StringFunctionsSuite extends QueryTest with SharedSparkSession {
   import testImplicits._
@@ -112,9 +112,11 @@ class StringFunctionsSuite extends QueryTest with SharedSparkSession {
     val df = Seq[(String, String, String, Int)](("hello", "world", null, 15))
       .toDF("a", "b", "c", "d")
 
-    checkAnswer(
-      df.selectExpr("elt(0, a, b, c)", "elt(1, a, b, c)", "elt(4, a, b, c)"),
-      Row(null, "hello", null))
+    withSQLConf(SQLConf.ANSI_ENABLED.key -> "false") {
+      checkAnswer(
+        df.selectExpr("elt(0, a, b, c)", "elt(1, a, b, c)", "elt(4, a, b, c)"),
+        Row(null, "hello", null))
+    }
 
     // check implicit type cast
     checkAnswer(
@@ -344,51 +346,6 @@ class StringFunctionsSuite extends QueryTest with SharedSparkSession {
       Row("???hi", "hi???", "h", "h"))
   }
 
-  test("string parse_url function") {
-
-    def testUrl(url: String, expected: Row): Unit = {
-      checkAnswer(Seq[String]((url)).toDF("url").selectExpr(
-        "parse_url(url, 'HOST')", "parse_url(url, 'PATH')",
-        "parse_url(url, 'QUERY')", "parse_url(url, 'REF')",
-        "parse_url(url, 'PROTOCOL')", "parse_url(url, 'FILE')",
-        "parse_url(url, 'AUTHORITY')", "parse_url(url, 'USERINFO')",
-        "parse_url(url, 'QUERY', 'query')"), expected)
-    }
-
-    testUrl(
-      "http://userinfo@spark.apache.org/path?query=1#Ref",
-      Row("spark.apache.org", "/path", "query=1", "Ref",
-        "http", "/path?query=1", "userinfo@spark.apache.org", "userinfo", "1"))
-
-    testUrl(
-      "https://use%20r:pas%20s@example.com/dir%20/pa%20th.HTML?query=x%20y&q2=2#Ref%20two",
-      Row("example.com", "/dir%20/pa%20th.HTML", "query=x%20y&q2=2", "Ref%20two",
-        "https", "/dir%20/pa%20th.HTML?query=x%20y&q2=2", "use%20r:pas%20s@example.com",
-        "use%20r:pas%20s", "x%20y"))
-
-    testUrl(
-      "http://user:pass@host",
-      Row("host", "", null, null, "http", "", "user:pass@host", "user:pass", null))
-
-    testUrl(
-      "http://user:pass@host/",
-      Row("host", "/", null, null, "http", "/", "user:pass@host", "user:pass", null))
-
-    testUrl(
-      "http://user:pass@host/?#",
-      Row("host", "/", "", "", "http", "/?", "user:pass@host", "user:pass", null))
-
-    testUrl(
-      "http://user:pass@host/file;param?query;p2",
-      Row("host", "/file;param", "query;p2", null, "http", "/file;param?query;p2",
-        "user:pass@host", "user:pass", null))
-
-    testUrl(
-      "inva lid://user:pass@host/file;param?query;p2",
-      Row(null, null, null, null, null, null, null, null, null))
-
-  }
-
   test("string repeat function") {
     val df = Seq(("hi", 2)).toDF("a", "b")
 
@@ -476,14 +433,10 @@ class StringFunctionsSuite extends QueryTest with SharedSparkSession {
       df.select(length($"a"), length($"b")),
       Row(3, 4))
 
-    checkAnswer(
-      df.selectExpr("length(a)", "length(b)"),
-      Row(3, 4))
-
-    checkAnswer(
-      df.selectExpr("length(c)", "length(d)", "length(e)"),
-      Row(3, 3, 5)
-    )
+    Seq("length", "len").foreach { len =>
+      checkAnswer(df.selectExpr(s"$len(a)", s"$len(b)"), Row(3, 4))
+      checkAnswer(df.selectExpr(s"$len(c)", s"$len(d)", s"$len(e)"), Row(3, 3, 5))
+    }
   }
 
   test("SPARK-36751: add octet length api for scala") {
@@ -622,10 +575,21 @@ class StringFunctionsSuite extends QueryTest with SharedSparkSession {
       Row(null, Seq(Seq("10")), Seq(Seq("3.14"))))
 
     // Argument number exception
-    val m = intercept[AnalysisException] {
-      df.selectExpr("sentences()")
-    }.getMessage
-    assert(m.contains("Invalid number of arguments for function sentences"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.selectExpr("sentences()")
+      },
+      errorClass = "WRONG_NUM_ARGS.WITH_SUGGESTION",
+      parameters = Map(
+        "functionName" -> toSQLId("sentences"),
+        "expectedNum" -> "[1, 2, 3]",
+        "actualNum" -> "0"
+      ),
+      context = ExpectedContext(
+        fragment = "sentences()",
+        start = 0,
+        stop = 10)
+    )
   }
 
   test("str_to_map function") {
@@ -649,12 +613,54 @@ class StringFunctionsSuite extends QueryTest with SharedSparkSession {
       Seq(Row(Map("a" -> "1", "b" -> "2", "c" -> "3")))
     )
 
+    checkAnswer(
+      df2.selectExpr("str_to_map(a, ',')"),
+      Seq(Row(Map("a" -> "1", "b" -> "2", "c" -> "3")))
+    )
+
+    val df3 = Seq(
+      ("a=1&b=2", "&", "="),
+      ("k#2%v#3", "%", "#")
+    ).toDF("str", "delim1", "delim2")
+
+    checkAnswer(
+      df3.selectExpr("str_to_map(str, delim1, delim2)"),
+      Seq(
+        Row(Map("a" -> "1", "b" -> "2")),
+        Row(Map("k" -> "2", "v" -> "3"))
+      )
+    )
+
+    val df4 = Seq(
+      ("a:1&b:2", "&"),
+      ("k:2%v:3", "%")
+    ).toDF("str", "delim1")
+
+    checkAnswer(
+      df4.selectExpr("str_to_map(str, delim1)"),
+      Seq(
+        Row(Map("a" -> "1", "b" -> "2")),
+        Row(Map("k" -> "2", "v" -> "3"))
+      )
+    )
   }
 
   test("SPARK-36148: check input data types of regexp_replace") {
-    val m = intercept[AnalysisException] {
-      sql("select regexp_replace(collect_list(1), '1', '2')")
-    }.getMessage
-    assert(m.contains("data type mismatch: argument 1 requires string type"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("select regexp_replace(collect_list(1), '1', '2')")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      sqlState = None,
+      parameters = Map(
+        "sqlExpr" -> "\"regexp_replace(collect_list(1), 1, 2, 1)\"",
+        "paramIndex" -> "1",
+        "inputSql" -> "\"collect_list(1)\"",
+        "inputType" -> "\"ARRAY<INT>\"",
+        "requiredType" -> "\"STRING\""),
+      context = ExpectedContext(
+        fragment = "regexp_replace(collect_list(1), '1', '2')",
+        start = 7,
+        stop = 47))
   }
 }

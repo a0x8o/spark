@@ -37,7 +37,7 @@ import org.apache.spark.sql.catalog.Catalog
 import org.apache.spark.sql.catalyst._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
 import org.apache.spark.sql.catalyst.encoders._
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Parameter}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Range}
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.ExternalCommandRunner
@@ -294,7 +294,7 @@ class SparkSession private(
   /**
    * Creates a new [[Dataset]] of type T containing zero elements.
    *
-   * @return 2.0.0
+   * @since 2.0.0
    */
   def emptyDataset[T: Encoder]: Dataset[T] = {
     val encoder = implicitly[Encoder[T]]
@@ -609,18 +609,48 @@ class SparkSession private(
    * ----------------- */
 
   /**
+   * Executes a SQL query substituting named parameters by the given arguments,
+   * returning the result as a `DataFrame`.
+   * This API eagerly runs DDL/DML commands, but not for SELECT queries.
+   *
+   * @param sqlText A SQL statement with named parameters to execute.
+   * @param args A map of parameter names to literal values.
+   *
+   * @since 3.4.0
+   */
+  @Experimental
+  def sql(sqlText: String, args: Map[String, String]): DataFrame = withActive {
+    val tracker = new QueryPlanningTracker
+    val plan = tracker.measurePhase(QueryPlanningTracker.PARSING) {
+      val parser = sessionState.sqlParser
+      val parsedArgs = args.mapValues(parser.parseExpression).toMap
+      Parameter.bind(parser.parsePlan(sqlText), parsedArgs)
+    }
+    Dataset.ofRows(self, plan, tracker)
+  }
+
+  /**
+   * Executes a SQL query substituting named parameters by the given arguments,
+   * returning the result as a `DataFrame`.
+   * This API eagerly runs DDL/DML commands, but not for SELECT queries.
+   *
+   * @param sqlText A SQL statement with named parameters to execute.
+   * @param args A map of parameter names to literal values.
+   *
+   * @since 3.4.0
+   */
+  @Experimental
+  def sql(sqlText: String, args: java.util.Map[String, String]): DataFrame = {
+    sql(sqlText, args.asScala.toMap)
+  }
+
+  /**
    * Executes a SQL query using Spark, returning the result as a `DataFrame`.
    * This API eagerly runs DDL/DML commands, but not for SELECT queries.
    *
    * @since 2.0.0
    */
-  def sql(sqlText: String): DataFrame = withActive {
-    val tracker = new QueryPlanningTracker
-    val plan = tracker.measurePhase(QueryPlanningTracker.PARSING) {
-      sessionState.sqlParser.parsePlan(sqlText)
-    }
-    Dataset.ofRows(self, plan, tracker)
-  }
+  def sql(sqlText: String): DataFrame = sql(sqlText, Map.empty[String, String])
 
   /**
    * Execute an arbitrary string command inside an external execution engine rather than Spark.
@@ -860,6 +890,31 @@ object SparkSession extends Logging {
     }
 
     /**
+     * Sets a config option. Options set using this method are automatically propagated to
+     * both `SparkConf` and SparkSession's own configuration.
+     *
+     * @since 3.4.0
+     */
+    def config(map: Map[String, Any]): Builder = synchronized {
+      map.foreach {
+        kv: (String, Any) => {
+          options += kv._1 -> kv._2.toString
+        }
+      }
+      this
+    }
+
+    /**
+     * Sets a config option. Options set using this method are automatically propagated to
+     * both `SparkConf` and SparkSession's own configuration.
+     *
+     * @since 3.4.0
+     */
+    def config(map: java.util.Map[String, Any]): Builder = synchronized {
+      config(map.asScala.toMap)
+    }
+
+    /**
      * Sets a list of config options based on the given `SparkConf`.
      *
      * @since 2.0.0
@@ -1023,7 +1078,7 @@ object SparkSession extends Logging {
    * @since 2.2.0
    */
   def getActiveSession: Option[SparkSession] = {
-    if (TaskContext.get != null) {
+    if (Utils.isInRunningSparkTask) {
       // Return None when running on executors.
       None
     } else {
@@ -1039,7 +1094,7 @@ object SparkSession extends Logging {
    * @since 2.2.0
    */
   def getDefaultSession: Option[SparkSession] = {
-    if (TaskContext.get != null) {
+    if (Utils.isInRunningSparkTask) {
       // Return None when running on executors.
       None
     } else {
@@ -1065,18 +1120,35 @@ object SparkSession extends Logging {
   private[sql] def applyModifiableSettings(
       session: SparkSession,
       options: java.util.HashMap[String, String]): Unit = {
+    // Lazy val to avoid an unnecessary session state initialization
+    lazy val conf = session.sessionState.conf
+
+    val dedupOptions = if (options.isEmpty) Map.empty[String, String] else (
+      options.asScala.toSet -- conf.getAllConfs.toSet).toMap
     val (staticConfs, otherConfs) =
-      options.asScala.partition(kv => SQLConf.isStaticConfigKey(kv._1))
+      dedupOptions.partition(kv => SQLConf.isStaticConfigKey(kv._1))
 
-    otherConfs.foreach { case (k, v) => session.sessionState.conf.setConfString(k, v) }
+    otherConfs.foreach { case (k, v) => conf.setConfString(k, v) }
 
-    if (staticConfs.nonEmpty) {
-      logWarning("Using an existing SparkSession; the static sql configurations will not take" +
-        " effect.")
+    // Note that other runtime SQL options, for example, for other third-party datasource
+    // can be marked as an ignored configuration here.
+    val maybeIgnoredConfs = otherConfs.filterNot { case (k, _) => conf.isModifiable(k) }
+
+    if (staticConfs.nonEmpty || maybeIgnoredConfs.nonEmpty) {
+      logWarning(
+        "Using an existing Spark session; only runtime SQL configurations will take effect.")
     }
-    if (otherConfs.nonEmpty) {
-      logWarning("Using an existing SparkSession; some spark core configurations may not take" +
-        " effect.")
+    if (staticConfs.nonEmpty) {
+      logDebug("Ignored static SQL configurations:\n  " +
+        conf.redactOptions(staticConfs).toSeq.map { case (k, v) => s"$k=$v" }.mkString("\n  "))
+    }
+    if (maybeIgnoredConfs.nonEmpty) {
+      // Only print out non-static and non-runtime SQL configurations.
+      // Note that this might show core configurations or source specific
+      // options defined in the third-party datasource.
+      logDebug("Configurations that might not take effect:\n  " +
+        conf.redactOptions(
+          maybeIgnoredConfs).toSeq.map { case (k, v) => s"$k=$v" }.mkString("\n  "))
     }
   }
 
@@ -1087,13 +1159,13 @@ object SparkSession extends Logging {
   private[sql] def getOrCloneSessionWithConfigsOff(
       session: SparkSession,
       configurations: Seq[ConfigEntry[Boolean]]): SparkSession = {
-    val configsEnabled = configurations.filter(session.sessionState.conf.getConf(_))
+    val configsEnabled = configurations.filter(session.conf.get[Boolean])
     if (configsEnabled.isEmpty) {
       session
     } else {
       val newSession = session.cloneSession()
       configsEnabled.foreach(conf => {
-        newSession.sessionState.conf.setConf(conf, false)
+        newSession.conf.set(conf, false)
       })
       newSession
     }

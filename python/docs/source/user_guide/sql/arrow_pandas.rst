@@ -36,7 +36,7 @@ should be installed.
 If you install PySpark using pip, then PyArrow can be brought in as an extra dependency of the
 SQL module with the command ``pip install pyspark[sql]``. Otherwise, you must ensure that PyArrow
 is installed and available on all cluster nodes.
-You can install using pip or conda from the conda-forge channel. See PyArrow
+You can install it using pip or conda from the conda-forge channel. See PyArrow
 `installation <https://arrow.apache.org/docs/python/install.html>`_ for details.
 
 Enabling for Conversion to/from Pandas
@@ -53,7 +53,7 @@ This can be controlled by ``spark.sql.execution.arrow.pyspark.fallback.enabled``
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 35-48
+    :lines: 37-52
     :dedent: 4
 
 Using the above optimizations with Arrow will produce the same results as when Arrow is not
@@ -90,7 +90,7 @@ specify the type hints of ``pandas.Series`` and ``pandas.DataFrame`` as below:
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 54-78
+    :lines: 56-80
     :dedent: 4
 
 In the following sections, it describes the combinations of the supported type hints. For simplicity,
@@ -113,7 +113,7 @@ The following example shows how to create this Pandas UDF that computes the prod
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 82-112
+    :lines: 84-114
     :dedent: 4
 
 For detailed usage, please see :func:`pandas_udf`.
@@ -143,7 +143,7 @@ identically as Series to Series case. The pseudocode below illustrates the examp
         # Do some expensive initialization with a state
         state = very_expensive_initialization()
         for x in iterator:
-            # Use that state for whole iterator.
+            # Use that state for the whole iterator.
             yield calculate_with_state(x, state)
 
     df.select(calculate("value")).show()
@@ -152,7 +152,7 @@ The following example shows how to create this Pandas UDF:
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 116-138
+    :lines: 118-140
     :dedent: 4
 
 For detailed usage, please see :func:`pandas_udf`.
@@ -167,14 +167,14 @@ The type hint can be expressed as ``Iterator[Tuple[pandas.Series, ...]]`` -> ``I
 By using :func:`pandas_udf` with the function having such type hints above, it creates a Pandas UDF where the
 given function takes an iterator of a tuple of multiple ``pandas.Series`` and outputs an iterator of ``pandas.Series``.
 In this case, the created pandas UDF requires multiple input columns as many as the series in the tuple
-when the Pandas UDF is called. Otherwise, it has the same characteristics and restrictions as Iterator of Series
+when the Pandas UDF is called. Otherwise, it has the same characteristics and restrictions as the Iterator of Series
 to Iterator of Series case.
 
 The following example shows how to create this Pandas UDF:
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 142-165
+    :lines: 144-167
     :dedent: 4
 
 For detailed usage, please see :func:`pandas_udf`.
@@ -205,7 +205,7 @@ and window operations:
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 169-210
+    :lines: 171-212
     :dedent: 4
 
 .. currentmodule:: pyspark.sql.functions
@@ -270,7 +270,7 @@ in the group.
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 214-232
+    :lines: 216-234
     :dedent: 4
 
 For detailed usage, please see  please see :meth:`GroupedData.applyInPandas`
@@ -288,7 +288,7 @@ The following example shows how to use :meth:`DataFrame.mapInPandas`:
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 236-247
+    :lines: 238-249
     :dedent: 4
 
 For detailed usage, please see :meth:`DataFrame.mapInPandas`.
@@ -327,7 +327,7 @@ The following example shows how to use ``DataFrame.groupby().cogroup().applyInPa
 
 .. literalinclude:: ../../../../../examples/src/main/python/sql/arrow.py
     :language: python
-    :lines: 251-273
+    :lines: 253-275
     :dedent: 4
 
 
@@ -342,8 +342,9 @@ Supported SQL Types
 .. currentmodule:: pyspark.sql.types
 
 Currently, all Spark SQL data types are supported by Arrow-based conversion except
-:class:`ArrayType` of :class:`TimestampType`, and nested :class:`StructType`.
-:class:`MapType` is only supported when using PyArrow 2.0.0 and above.
+:class:`ArrayType` of :class:`TimestampType`.
+:class:`MapType` and :class:`ArrayType` of nested :class:`StructType` are only supported
+when using PyArrow 2.0.0 and above.
 
 Setting Arrow Batch Size
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -380,7 +381,7 @@ expected format, so it is not necessary to do any of these conversions yourself.
 values will be truncated.
 
 Note that a standard UDF (non-Pandas) will load timestamp data as Python datetime objects, which is
-different than a Pandas timestamp. It is recommended to use Pandas time series functionality when
+different from a Pandas timestamp. It is recommended to use Pandas time series functionality when
 working with timestamps in ``pandas_udf``\s to get the best performance, see
 `here <https://pandas.pydata.org/pandas-docs/stable/timeseries.html>`_ for details.
 

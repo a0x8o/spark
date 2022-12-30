@@ -19,6 +19,9 @@ package org.apache.spark;
 
 import org.apache.spark.annotation.Evolving;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Interface mixed into Throwables thrown from Spark.
  *
@@ -46,4 +49,10 @@ public interface SparkThrowable {
   default boolean isInternalError() {
     return SparkThrowableHelper.isInternalError(this.getErrorClass());
   }
+
+  default Map<String, String> getMessageParameters() {
+    return new HashMap<>();
+  }
+
+  default QueryContext[] getQueryContext() { return new QueryContext[0]; }
 }

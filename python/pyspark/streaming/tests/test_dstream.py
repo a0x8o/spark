@@ -371,7 +371,7 @@ class BasicOperationTests(PySparkStreamingTestCase):
         self.ssc.start()
         try:
             self.ssc.awaitTerminationOrTimeout(10)
-        except:
+        except BaseException:
             import traceback
 
             failure = traceback.format_exc()
@@ -394,7 +394,7 @@ class BasicOperationTests(PySparkStreamingTestCase):
         self.ssc.start()
         try:
             self.ssc.awaitTerminationOrTimeout(10)
-        except:
+        except BaseException:
             import traceback
 
             failure = traceback.format_exc()
@@ -420,7 +420,7 @@ class BasicOperationTests(PySparkStreamingTestCase):
         self.assertEqual(expected, self._collect(input_stream.map(failed_func), 3))
         try:
             self.ssc.awaitTerminationOrTimeout(10)
-        except:
+        except BaseException:
             import traceback
 
             failure = traceback.format_exc()
@@ -573,7 +573,7 @@ class CheckpointTests(unittest.TestCase):
         self.ssc = StreamingContext.getOrCreate(self.cpd, setup)
         try:
             self.ssc.start()
-        except:
+        except BaseException:
             import traceback
 
             failure = traceback.format_exc()
@@ -698,7 +698,7 @@ if __name__ == "__main__":
     from pyspark.streaming.tests.test_dstream import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

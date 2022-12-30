@@ -113,7 +113,17 @@ object functions {
    * @group normal_funcs
    * @since 1.3.0
    */
-  def lit(literal: Any): Column = typedLit(literal)
+  def lit(literal: Any): Column = literal match {
+    case c: Column => c
+    case s: Symbol => new ColumnName(s.name)
+    case _ =>
+      // This is different from `typedlit`. `typedlit` calls `Literal.create` to use
+      // `ScalaReflection` to get the type of `literal`. However, since we use `Any` in this method,
+      // `typedLit[Any](literal)` will always fail and fallback to `Literal.apply`. Hence, we can
+      // just manually call `Literal.apply` to skip the expensive `ScalaReflection` code. This is
+      // significantly better when there are many threads calling `lit` concurrently.
+      Column(Literal(literal))
+  }
 
   /**
    * Creates a [[Column]] of literal value.
@@ -133,6 +143,9 @@ object functions {
    * Otherwise, a new [[Column]] is created to represent the literal value.
    * The difference between this function and [[lit]] is that this function
    * can handle parameterized scala types e.g.: List, Seq and Map.
+   *
+   * @note `typedlit` will call expensive Scala reflection APIs. `lit` is preferred if parameterized
+   * Scala types are not used.
    *
    * @group normal_funcs
    * @since 3.2.0
@@ -353,6 +366,9 @@ object functions {
    * @since 1.6.0
    */
   def collect_set(columnName: String): Column = collect_set(Column(columnName))
+
+  private[spark] def collect_top_k(e: Column, num: Int, reverse: Boolean): Column =
+    withAggregateFunction { CollectTopK(e.expr, num, reverse) }
 
   /**
    * Aggregate function: returns the Pearson Correlation Coefficient for two columns.
@@ -658,6 +674,14 @@ object functions {
   def last(columnName: String): Column = last(Column(columnName), ignoreNulls = false)
 
   /**
+   * Aggregate function: returns the most frequent value in a group.
+   *
+   * @group agg_funcs
+   * @since 3.4.0
+   */
+  def mode(e: Column): Column = withAggregateFunction { Mode(e.expr) }
+
+  /**
    * Aggregate function: returns the maximum value of the expression in a group.
    *
    * @group agg_funcs
@@ -698,6 +722,14 @@ object functions {
    * @since 1.4.0
    */
   def mean(columnName: String): Column = avg(columnName)
+
+  /**
+   * Aggregate function: returns the median of the values in a group.
+   *
+   * @group agg_funcs
+   * @since 3.4.0
+   */
+  def median(e: Column): Column = withAggregateFunction { Median(e.expr) }
 
   /**
    * Aggregate function: returns the minimum value of the expression in a group.
@@ -1755,15 +1787,27 @@ object functions {
   def cbrt(columnName: String): Column = cbrt(Column(columnName))
 
   /**
-   * Computes the ceiling of the given value.
+   * Computes the ceiling of the given value of `e` to `scale` decimal places.
+   *
+   * @group math_funcs
+   * @since 3.3.0
+   */
+  def ceil(e: Column, scale: Column): Column = withExpr {
+    UnresolvedFunction(Seq("ceil"), Seq(e.expr, scale.expr), isDistinct = false)
+  }
+
+  /**
+   * Computes the ceiling of the given value of `e` to 0 decimal places.
    *
    * @group math_funcs
    * @since 1.4.0
    */
-  def ceil(e: Column): Column = withExpr { Ceil(e.expr) }
+  def ceil(e: Column): Column = withExpr {
+    UnresolvedFunction(Seq("ceil"), Seq(e.expr), isDistinct = false)
+  }
 
   /**
-   * Computes the ceiling of the given column.
+   * Computes the ceiling of the given value of `e` to 0 decimal places.
    *
    * @group math_funcs
    * @since 1.4.0
@@ -1875,15 +1919,27 @@ object functions {
   def factorial(e: Column): Column = withExpr { Factorial(e.expr) }
 
   /**
-   * Computes the floor of the given value.
+   * Computes the floor of the given value of `e` to `scale` decimal places.
+   *
+   * @group math_funcs
+   * @since 3.3.0
+   */
+  def floor(e: Column, scale: Column): Column = withExpr {
+    UnresolvedFunction(Seq("floor"), Seq(e.expr, scale.expr), isDistinct = false)
+  }
+
+  /**
+   * Computes the floor of the given value of `e` to 0 decimal places.
    *
    * @group math_funcs
    * @since 1.4.0
    */
-  def floor(e: Column): Column = withExpr { Floor(e.expr) }
+  def floor(e: Column): Column = withExpr {
+    UnresolvedFunction(Seq("floor"), Seq(e.expr), isDistinct = false)
+  }
 
   /**
-   * Computes the floor of the given column.
+   * Computes the floor of the given column value to 0 decimal places.
    *
    * @group math_funcs
    * @since 1.4.0
@@ -2513,7 +2569,7 @@ object functions {
   /**
    * Calculates the hash code of given columns using the 64-bit
    * variant of the xxHash algorithm, and returns the result as a long
-   * column.
+   * column. The hash computation uses an initial seed of 42.
    *
    * @group misc_funcs
    * @since 3.0.0
@@ -2739,7 +2795,7 @@ object functions {
    * @since 3.3.0
    */
   def lpad(str: Column, len: Int, pad: Array[Byte]): Column = withExpr {
-    new BinaryLPad(str.expr, lit(len).expr, lit(pad).expr)
+    UnresolvedFunction("lpad", Seq(str.expr, lit(len).expr, lit(pad).expr), isDistinct = false)
   }
 
   /**
@@ -2828,7 +2884,7 @@ object functions {
    * @since 3.3.0
    */
   def rpad(str: Column, len: Int, pad: Array[Byte]): Column = withExpr {
-    new BinaryRPad(str.expr, lit(len).expr, lit(pad).expr)
+    UnresolvedFunction("rpad", Seq(str.expr, lit(len).expr, lit(pad).expr), isDistinct = false)
   }
 
   /**
@@ -3608,7 +3664,7 @@ object functions {
    * processing time.
    *
    * @param timeColumn The column or the expression to use as the timestamp for windowing by time.
-   *                   The time column must be of TimestampType.
+   *                   The time column must be of TimestampType or TimestampNTZType.
    * @param windowDuration A string specifying the width of the window, e.g. `10 minutes`,
    *                       `1 second`. Check `org.apache.spark.unsafe.types.CalendarInterval` for
    *                       valid duration identifiers. Note that the duration is a fixed length of
@@ -3664,7 +3720,7 @@ object functions {
    * processing time.
    *
    * @param timeColumn The column or the expression to use as the timestamp for windowing by time.
-   *                   The time column must be of TimestampType.
+   *                   The time column must be of TimestampType or TimestampNTZType.
    * @param windowDuration A string specifying the width of the window, e.g. `10 minutes`,
    *                       `1 second`. Check `org.apache.spark.unsafe.types.CalendarInterval` for
    *                       valid duration identifiers. Note that the duration is a fixed length of
@@ -3709,7 +3765,7 @@ object functions {
    * processing time.
    *
    * @param timeColumn The column or the expression to use as the timestamp for windowing by time.
-   *                   The time column must be of TimestampType.
+   *                   The time column must be of TimestampType or TimestampNTZType.
    * @param windowDuration A string specifying the width of the window, e.g. `10 minutes`,
    *                       `1 second`. Check `org.apache.spark.unsafe.types.CalendarInterval` for
    *                       valid duration identifiers.
@@ -3719,6 +3775,23 @@ object functions {
    */
   def window(timeColumn: Column, windowDuration: String): Column = {
     window(timeColumn, windowDuration, windowDuration, "0 second")
+  }
+
+  /**
+   * Extracts the event time from the window column.
+   *
+   * The window column is of StructType { start: Timestamp, end: Timestamp } where start is
+   * inclusive and end is exclusive. Since event time can support microsecond precision,
+   * window_time(window) = window.end - 1 microsecond.
+   *
+   * @param windowColumn The window column (typically produced by window aggregation) of type
+   *                     StructType { start: Timestamp, end: Timestamp }
+   *
+   * @group datetime_funcs
+   * @since 3.4.0
+   */
+  def window_time(windowColumn: Column): Column = withExpr {
+    WindowTime(windowColumn.expr)
   }
 
   /**
@@ -3737,7 +3810,7 @@ object functions {
    * processing time.
    *
    * @param timeColumn The column or the expression to use as the timestamp for windowing by time.
-   *                   The time column must be of TimestampType.
+   *                   The time column must be of TimestampType or TimestampNTZType.
    * @param gapDuration A string specifying the timeout of the session, e.g. `10 minutes`,
    *                    `1 second`. Check `org.apache.spark.unsafe.types.CalendarInterval` for
    *                    valid duration identifiers.
@@ -3774,7 +3847,7 @@ object functions {
    * processing time.
    *
    * @param timeColumn The column or the expression to use as the timestamp for windowing by time.
-   *                   The time column must be of TimestampType.
+   *                   The time column must be of TimestampType or TimestampNTZType.
    * @param gapDuration A column specifying the timeout of the session. It could be static value,
    *                    e.g. `10 minutes`, `1 second`, or an expression/UDF that specifies gap
    *                    duration dynamically based on the input row.
@@ -3789,7 +3862,8 @@ object functions {
   }
 
   /**
-   * Creates timestamp from the number of seconds since UTC epoch.
+   * Converts the number of seconds from the Unix epoch (1970-01-01T00:00:00Z)
+   * to a timestamp.
    * @group datetime_funcs
    * @since 3.1.0
    */
@@ -3905,6 +3979,17 @@ object functions {
   }
 
   /**
+   * Returns element of array at given (0-based) index. If the index points
+   * outside of the array boundaries, then this function returns NULL.
+   *
+   * @group collection_funcs
+   * @since 3.4.0
+   */
+  def get(column: Column, index: Column): Column = withExpr {
+    new Get(column.expr, index.expr)
+  }
+
+  /**
    * Sorts the input array in ascending order. The elements of the input array must be orderable.
    * NaN is greater than any non-NaN elements for double/float type.
    * Null elements will be placed at the end of the returned array.
@@ -3915,6 +4000,19 @@ object functions {
   def array_sort(e: Column): Column = withExpr { new ArraySort(e.expr) }
 
   /**
+   * Sorts the input array based on the given comparator function. The comparator will take two
+   * arguments representing two elements of the array. It returns a negative integer, 0, or a
+   * positive integer as the first element is less than, equal to, or greater than the second
+   * element. If the comparator function returns null, the function will fail and raise an error.
+   *
+   * @group collection_funcs
+   * @since 3.4.0
+   */
+  def array_sort(e: Column, comparator: (Column, Column) => Column): Column = withExpr {
+    new ArraySort(e.expr, createLambda(comparator))
+  }
+
+  /**
    * Remove all elements that equal to element from the given array.
    *
    * @group collection_funcs
@@ -3922,6 +4020,16 @@ object functions {
    */
   def array_remove(column: Column, element: Any): Column = withExpr {
     ArrayRemove(column.expr, lit(element).expr)
+  }
+
+  /**
+   * Remove all null elements from the given array.
+   *
+   * @group collection_funcs
+   * @since 3.4.0
+   */
+  def array_compact(column: Column): Column = withExpr {
+    ArrayCompact(column.expr)
   }
 
   /**
@@ -4264,6 +4372,23 @@ object functions {
    */
   def posexplode_outer(e: Column): Column = withExpr { GeneratorOuter(PosExplode(e.expr)) }
 
+   /**
+   * Creates a new row for each element in the given array of structs.
+   *
+   * @group collection_funcs
+   * @since 3.4.0
+   */
+  def inline(e: Column): Column = withExpr { Inline(e.expr) }
+
+  /**
+   * Creates a new row for each element in the given array of structs.
+   * Unlike inline, if the array is null or empty then null is produced for each nested column.
+   *
+   * @group collection_funcs
+   * @since 3.4.0
+   */
+  def inline_outer(e: Column): Column = withExpr { GeneratorOuter(Inline(e.expr)) }
+
   /**
    * Extracts json object from a json string based on json path specified, and returns json string
    * of the extracted json object. It will return null if the input json string is invalid.
@@ -4448,7 +4573,6 @@ object functions {
     val dataType = parseTypeWithFallback(
       schema,
       DataType.fromJson,
-      "Cannot parse the schema in JSON format: ",
       fallbackParser = DataType.fromDDL)
     from_json(e, dataType, options)
   }
@@ -4709,6 +4833,15 @@ object functions {
    * @since 2.4.0
    */
   def array_repeat(e: Column, count: Int): Column = array_repeat(e, lit(count))
+
+  /**
+   * Returns true if the map contains the key.
+   * @group collection_funcs
+   * @since 3.3.0
+   */
+  def map_contains_key(column: Column, key: Any): Column = withExpr {
+    ArrayContains(MapKeys(column.expr), lit(key).expr)
+  }
 
   /**
    * Returns an unordered array containing the keys of the map.
@@ -5452,5 +5585,14 @@ object functions {
   @scala.annotation.varargs
   def call_udf(udfName: String, cols: Column*): Column = withExpr {
     UnresolvedFunction(udfName, cols.map(_.expr), isDistinct = false)
+  }
+
+  /**
+   * Unwrap UDT data type column into its underlying type.
+   *
+   * @since 3.4.0
+   */
+  def unwrap_udt(column: Column): Column = withExpr {
+    UnwrapUDT(column.expr)
   }
 }

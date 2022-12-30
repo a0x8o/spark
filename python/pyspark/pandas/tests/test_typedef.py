@@ -56,10 +56,27 @@ from pyspark import pandas as ps
 
 
 class TypeHintTests(unittest.TestCase):
-    @unittest.skipIf(
-        sys.version_info < (3, 7),
-        "Type inference from pandas instances is supported with Python 3.7+",
-    )
+    def test_infer_schema_with_no_return(self):
+        def try_infer_return_type():
+            def f():
+                pass
+
+            infer_return_type(f)
+
+        self.assertRaisesRegex(
+            ValueError, "A return value is required for the input function", try_infer_return_type
+        )
+
+        def try_infer_return_type():
+            def f() -> None:
+                pass
+
+            infer_return_type(f)
+
+        self.assertRaisesRegex(
+            TypeError, "Type <class 'NoneType'> was not understood", try_infer_return_type
+        )
+
     def test_infer_schema_from_pandas_instances(self):
         def func() -> pd.Series[int]:
             pass
@@ -116,7 +133,7 @@ class TypeHintTests(unittest.TestCase):
 
         pdf = pd.DataFrame({"a": [1, 2, 3], "b": [3, 4, 5]})
 
-        def func() -> pd.DataFrame[pdf.dtypes]:  # type: ignore[name-defined]
+        def func() -> pd.DataFrame[pdf.dtypes]:
             pass
 
         expected = StructType([StructField("c0", LongType()), StructField("c1", LongType())])
@@ -126,14 +143,14 @@ class TypeHintTests(unittest.TestCase):
 
         pdf = pd.DataFrame({"a": [1, 2, 3], "b": pd.Categorical(["a", "b", "c"])})
 
-        def func() -> pd.Series[pdf.b.dtype]:  # type: ignore[name-defined]
+        def func() -> pd.Series[pdf.b.dtype]:
             pass
 
         inferred = infer_return_type(func)
         self.assertEqual(inferred.dtype, CategoricalDtype(categories=["a", "b", "c"]))
         self.assertEqual(inferred.spark_type, LongType())
 
-        def func() -> pd.DataFrame[pdf.dtypes]:  # type: ignore[name-defined]
+        def func() -> pd.DataFrame[pdf.dtypes]:
             pass
 
         expected = StructType([StructField("c0", LongType()), StructField("c1", LongType())])
@@ -148,10 +165,6 @@ class TypeHintTests(unittest.TestCase):
         assert not ps._frame_has_class_getitem
         assert not ps._series_has_class_getitem
 
-    @unittest.skipIf(
-        sys.version_info < (3, 7),
-        "Type inference from pandas instances is supported with Python 3.7+",
-    )
     def test_infer_schema_with_names_pandas_instances(self):
         def func() -> 'pd.DataFrame["a" : np.float_, "b":str]':  # noqa: F405
             pass
@@ -201,10 +214,6 @@ class TypeHintTests(unittest.TestCase):
         self.assertEqual(inferred.dtypes, [np.int64, CategoricalDtype(categories=["a", "b", "c"])])
         self.assertEqual(inferred.spark_type, expected)
 
-    @unittest.skipIf(
-        sys.version_info < (3, 7),
-        "Type inference from pandas instances is supported with Python 3.7+",
-    )
     def test_infer_schema_with_names_pandas_instances_negative(self):
         def try_infer_return_type():
             def f() -> 'pd.DataFrame["a" : np.float_ : 1, "b":str:2]':  # noqa: F405
@@ -237,7 +246,7 @@ class TypeHintTests(unittest.TestCase):
         pdf = pd.DataFrame({"a": ["a", 2, None]})
 
         def try_infer_return_type():
-            def f() -> pd.DataFrame[pdf.dtypes]:  # type: ignore[name-defined]
+            def f() -> pd.DataFrame[pdf.dtypes]:
                 pass
 
             infer_return_type(f)
@@ -245,7 +254,7 @@ class TypeHintTests(unittest.TestCase):
         self.assertRaisesRegex(TypeError, "object.*not understood", try_infer_return_type)
 
         def try_infer_return_type():
-            def f() -> pd.Series[pdf.a.dtype]:  # type: ignore[name-defined]
+            def f() -> pd.Series[pdf.a.dtype]:
                 pass
 
             infer_return_type(f)
@@ -284,7 +293,7 @@ class TypeHintTests(unittest.TestCase):
         pdf = pd.DataFrame({"a": ["a", 2, None]})
 
         def try_infer_return_type():
-            def f() -> ps.DataFrame[pdf.dtypes]:  # type: ignore[name-defined]
+            def f() -> ps.DataFrame[pdf.dtypes]:
                 pass
 
             infer_return_type(f)
@@ -292,7 +301,7 @@ class TypeHintTests(unittest.TestCase):
         self.assertRaisesRegex(TypeError, "object.*not understood", try_infer_return_type)
 
         def try_infer_return_type():
-            def f() -> ps.Series[pdf.a.dtype]:  # type: ignore[name-defined]
+            def f() -> ps.Series[pdf.a.dtype]:
                 pass
 
             infer_return_type(f)
@@ -430,7 +439,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.test_typedef import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

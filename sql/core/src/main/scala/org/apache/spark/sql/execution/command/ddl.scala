@@ -20,7 +20,6 @@ package org.apache.spark.sql.execution.command
 import java.util.Locale
 import java.util.concurrent.TimeUnit._
 
-import scala.collection.{GenMap, GenSeq}
 import scala.collection.parallel.ForkJoinTaskSupport
 import scala.collection.parallel.immutable.ParVector
 import scala.util.control.NonFatal
@@ -38,7 +37,9 @@ import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.connector.catalog.SupportsNamespaces._
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.errors.QueryExecutionErrors.hiveTableWithAnsiIntervalsError
@@ -180,7 +181,8 @@ case class DescribeDatabaseCommand(
       sparkSession.sessionState.catalog.getDatabaseMetadata(databaseName)
     val allDbProperties = dbMetadata.properties
     val result =
-      Row("Database Name", dbMetadata.name) ::
+      Row("Catalog Name", SESSION_CATALOG_NAME) ::
+        Row("Database Name", dbMetadata.name) ::
         Row("Comment", dbMetadata.description) ::
         Row("Location", CatalogUtils.URIToString(dbMetadata.locationUri))::
         Row("Owner", allDbProperties.getOrElse(PROP_OWNER, "")) :: Nil
@@ -191,7 +193,7 @@ case class DescribeDatabaseCommand(
         if (properties.isEmpty) {
           ""
         } else {
-          properties.toSeq.sortBy(_._1).mkString("(", ", ", ")")
+          conf.redactOptions(properties).toSeq.sortBy(_._1).mkString("(", ", ", ")")
         }
       result :+ Row("Properties", propertiesStr)
     } else {
@@ -201,7 +203,8 @@ case class DescribeDatabaseCommand(
 }
 
 /**
- * Drops a table/view from the metastore and removes it if it is cached.
+ * Drops a table/view from the metastore and removes it if it is cached. This command does not drop
+ * temp views, which should be handled by [[DropTempViewCommand]].
  *
  * The syntax of this command is:
  * {{{
@@ -217,9 +220,8 @@ case class DropTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
-    val isTempView = catalog.isTempView(tableName)
 
-    if (!isTempView && catalog.tableExists(tableName)) {
+    if (catalog.tableExists(tableName)) {
       // If the command DROP VIEW is to drop a table or DROP TABLE is to drop a view
       // issue an exception.
       catalog.getTableMetadata(tableName).tableType match {
@@ -229,14 +231,10 @@ case class DropTableCommand(
           throw QueryCompilationErrors.cannotDropViewWithDropTableError()
         case _ =>
       }
-    }
 
-    if (isTempView || catalog.tableExists(tableName)) {
       try {
-        val hasViewText = isTempView &&
-          catalog.getTempViewOrPermanentTableMetadata(tableName).viewText.isDefined
         sparkSession.sharedState.cacheManager.uncacheQuery(
-          sparkSession.table(tableName), cascade = !isTempView || hasViewText)
+          sparkSession.table(tableName), cascade = true)
       } catch {
         case NonFatal(e) => log.warn(e.toString, e)
       }
@@ -245,7 +243,28 @@ case class DropTableCommand(
     } else if (ifExists) {
       // no-op
     } else {
-      throw QueryCompilationErrors.tableOrViewNotFoundError(tableName.identifier)
+      throw QueryCompilationErrors.noSuchTableError(
+        tableName.catalog.toSeq ++ tableName.database :+ tableName.table)
+    }
+    Seq.empty[Row]
+  }
+}
+
+case class DropTempViewCommand(ident: Identifier) extends LeafRunnableCommand {
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    assert(ident.namespace().isEmpty || ident.namespace().length == 1)
+    val nameParts = ident.namespace() :+ ident.name()
+    val catalog = sparkSession.sessionState.catalog
+    catalog.getRawLocalOrGlobalTempView(nameParts).foreach { view =>
+      val hasViewText = view.tableMeta.viewText.isDefined
+      sparkSession.sharedState.cacheManager.uncacheTableOrView(
+        sparkSession, nameParts, cascade = hasViewText)
+      view.refresh()
+      if (ident.namespace().isEmpty) {
+        catalog.dropTempView(ident.name())
+      } else {
+        catalog.dropGlobalTempView(ident.name())
+      }
     }
     Seq.empty[Row]
   }
@@ -354,7 +373,24 @@ case class AlterTableChangeColumnCommand(
     val newDataSchema = table.dataSchema.fields.map { field =>
       if (field.name == originColumn.name) {
         // Create a new column from the origin column with the new comment.
-        addComment(field, newColumn.getComment)
+        val withNewComment: StructField =
+          addComment(field, newColumn.getComment)
+        // Create a new column from the origin column with the new current default value.
+        if (newColumn.getCurrentDefaultValue().isDefined) {
+          if (newColumn.getCurrentDefaultValue().get.nonEmpty) {
+            val result: StructField =
+              addCurrentDefaultValue(withNewComment, newColumn.getCurrentDefaultValue())
+            // Check that the proposed default value parses and analyzes correctly, and that the
+            // type of the resulting expression is equivalent or coercible to the destination column
+            // type.
+            ResolveDefaultColumns.analyze(result, "ALTER TABLE ALTER COLUMN")
+            result
+          } else {
+            withNewComment.clearCurrentDefaultValue()
+          }
+        } else {
+          withNewComment
+        }
       } else {
         field
       }
@@ -376,6 +412,11 @@ case class AlterTableChangeColumnCommand(
   // Add the comment to a column, if comment is empty, return the original column.
   private def addComment(column: StructField, comment: Option[String]): StructField =
     comment.map(column.withComment).getOrElse(column)
+
+  // Add the current default value to a column, if default value is empty, return the original
+  // column.
+  private def addCurrentDefaultValue(column: StructField, value: Option[String]): StructField =
+    value.map(column.withCurrentDefaultValue).getOrElse(column)
 
   // Compare a [[StructField]] to another, return true if they have the same column
   // name(by resolver) and dataType.
@@ -469,7 +510,7 @@ case class AlterTableAddPartitionCommand(
     // Also the request to metastore times out when adding lot of partitions in one shot.
     // we should split them into smaller batches
     val batchSize = conf.getConf(SQLConf.ADD_PARTITION_BATCH_SIZE)
-    parts.toIterator.grouped(batchSize).foreach { batch =>
+    parts.iterator.grouped(batchSize).foreach { batch =>
       catalog.createPartitions(table.identifier, batch, ignoreIfExists = ifNotExists)
     }
 
@@ -481,6 +522,7 @@ case class AlterTableAddPartitionCommand(
       if (addedSize > 0) {
         val newStats = CatalogStatistics(sizeInBytes = table.stats.get.sizeInBytes + addedSize)
         catalog.alterTableStats(table.identifier, Some(newStats))
+        catalog.alterPartitions(table.identifier, parts)
       }
     } else {
       // Re-calculating of table size including all partitions
@@ -643,7 +685,7 @@ case class RepairTableCommand(
       val pathFilter = getPathFilter(hadoopConf)
 
       val evalPool = ThreadUtils.newForkJoinPool("RepairTableCommand", 8)
-      val partitionSpecsAndLocs: GenSeq[(TablePartitionSpec, Path)] =
+      val partitionSpecsAndLocs: Seq[(TablePartitionSpec, Path)] =
         try {
           scanPartitions(spark, fs, pathFilter, root, Map(), table.partitionColumnNames, threshold,
             spark.sessionState.conf.resolver, new ForkJoinTaskSupport(evalPool)).seq
@@ -656,7 +698,7 @@ case class RepairTableCommand(
       val partitionStats = if (spark.sqlContext.conf.gatherFastStats) {
         gatherPartitionStats(spark, partitionSpecsAndLocs, fs, pathFilter, threshold)
       } else {
-        GenMap.empty[String, PartitionStatistics]
+        Map.empty[String, PartitionStatistics]
       }
       logInfo(s"Finished to gather the fast stats for all $total partitions.")
 
@@ -689,13 +731,13 @@ case class RepairTableCommand(
       partitionNames: Seq[String],
       threshold: Int,
       resolver: Resolver,
-      evalTaskSupport: ForkJoinTaskSupport): GenSeq[(TablePartitionSpec, Path)] = {
+      evalTaskSupport: ForkJoinTaskSupport): Seq[(TablePartitionSpec, Path)] = {
     if (partitionNames.isEmpty) {
       return Seq(spec -> path)
     }
 
     val statuses = fs.listStatus(path, filter)
-    val statusPar: GenSeq[FileStatus] =
+    val statusPar: Seq[FileStatus] =
       if (partitionNames.length > 1 && statuses.length > threshold || partitionNames.length > 2) {
         // parallelize the list of partitions here, then we can have better parallelism later.
         val parArray = new ParVector(statuses.toVector)
@@ -728,10 +770,10 @@ case class RepairTableCommand(
 
   private def gatherPartitionStats(
       spark: SparkSession,
-      partitionSpecsAndLocs: GenSeq[(TablePartitionSpec, Path)],
+      partitionSpecsAndLocs: Seq[(TablePartitionSpec, Path)],
       fs: FileSystem,
       pathFilter: PathFilter,
-      threshold: Int): GenMap[String, PartitionStatistics] = {
+      threshold: Int): Map[String, PartitionStatistics] = {
     if (partitionSpecsAndLocs.length > threshold) {
       val hadoopConf = spark.sessionState.newHadoopConf()
       val serializableConfiguration = new SerializableConfiguration(hadoopConf)
@@ -752,7 +794,7 @@ case class RepairTableCommand(
             val statuses = fs.listStatus(path, pathFilter)
             (path.toString, PartitionStatistics(statuses.length, statuses.map(_.getLen).sum))
           }
-        }.collectAsMap()
+        }.collectAsMap().toMap
     } else {
       partitionSpecsAndLocs.map { case (_, location) =>
         val statuses = fs.listStatus(location, pathFilter)
@@ -764,15 +806,15 @@ case class RepairTableCommand(
   private def addPartitions(
       spark: SparkSession,
       table: CatalogTable,
-      partitionSpecsAndLocs: GenSeq[(TablePartitionSpec, Path)],
-      partitionStats: GenMap[String, PartitionStatistics]): Unit = {
+      partitionSpecsAndLocs: Seq[(TablePartitionSpec, Path)],
+      partitionStats: Map[String, PartitionStatistics]): Unit = {
     val total = partitionSpecsAndLocs.length
     var done = 0L
     // Hive metastore may not have enough memory to handle millions of partitions in single RPC,
     // we should split them into smaller batches. Since Hive client is not thread safe, we cannot
     // do this in parallel.
     val batchSize = spark.conf.get(SQLConf.ADD_PARTITION_BATCH_SIZE)
-    partitionSpecsAndLocs.toIterator.grouped(batchSize).foreach { batch =>
+    partitionSpecsAndLocs.iterator.grouped(batchSize).foreach { batch =>
       val now = MILLISECONDS.toSeconds(System.currentTimeMillis())
       val parts = batch.map { case (spec, location) =>
         val params = partitionStats.get(location.toString).map {

@@ -23,7 +23,7 @@ import scala.util.Try
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.execution.datasources.{ModifiedAfterFilter, ModifiedBeforeFilter}
+import org.apache.spark.sql.execution.datasources.FileIndexOptions
 import org.apache.spark.util.Utils
 
 /**
@@ -33,10 +33,10 @@ class FileStreamOptions(parameters: CaseInsensitiveMap[String]) extends Logging 
 
   def this(parameters: Map[String, String]) = this(CaseInsensitiveMap(parameters))
 
-  checkDisallowedOptions(parameters)
+  checkDisallowedOptions()
 
-  private def checkDisallowedOptions(options: Map[String, String]): Unit = {
-    Seq(ModifiedBeforeFilter.PARAM_NAME, ModifiedAfterFilter.PARAM_NAME).foreach { param =>
+  private def checkDisallowedOptions(): Unit = {
+    Seq(FileIndexOptions.MODIFIED_BEFORE, FileIndexOptions.MODIFIED_AFTER).foreach { param =>
       if (parameters.contains(param)) {
         throw new IllegalArgumentException(s"option '$param' is not allowed in file stream sources")
       }

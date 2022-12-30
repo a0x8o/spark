@@ -57,7 +57,7 @@ private[sql] class JsonInferSchema(options: JSONOptions) extends Serializable {
       columnNameOfCorruptRecord: String, e: Throwable): Option[StructType] = {
     parseMode match {
       case PermissiveMode =>
-        Some(StructType(Seq(StructField(columnNameOfCorruptRecord, StringType))))
+        Some(StructType(Array(StructField(columnNameOfCorruptRecord, StringType))))
       case DropMalformedMode =>
         None
       case FailFastMode =>
@@ -100,7 +100,7 @@ private[sql] class JsonInferSchema(options: JSONOptions) extends Serializable {
             wrappedCharException.initCause(e)
             handleJsonErrorsByParseMode(parseMode, columnNameOfCorruptRecord, wrappedCharException)
         }
-      }.reduceOption(typeMerger).toIterator
+      }.reduceOption(typeMerger).iterator
     }
 
     // Here we manually submit a fold-like Spark job, so that we can set the SQLConf when running
@@ -151,10 +151,10 @@ private[sql] class JsonInferSchema(options: JSONOptions) extends Serializable {
         if (options.prefersDecimal && decimalTry.isDefined) {
           decimalTry.get
         } else if (options.inferTimestamp &&
-            (allCatch opt timestampNTZFormatter.parseWithoutTimeZone(field, false)).isDefined) {
+            timestampNTZFormatter.parseWithoutTimeZoneOptional(field, false).isDefined) {
           SQLConf.get.timestampType
         } else if (options.inferTimestamp &&
-            (allCatch opt timestampFormatter.parse(field)).isDefined) {
+            timestampFormatter.parseOptional(field).isDefined) {
           TimestampType
         } else {
           StringType

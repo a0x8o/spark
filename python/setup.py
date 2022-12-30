@@ -102,7 +102,7 @@ if (in_spark):
     # Construct links for setup
     try:
         os.mkdir(TEMP_PATH)
-    except:
+    except BaseException:
         print("Temp path for symlink to parent already exists {0}".format(TEMP_PATH),
               file=sys.stderr)
         sys.exit(-1)
@@ -113,6 +113,8 @@ if (in_spark):
 # Also don't forget to update python/docs/source/getting_started/install.rst.
 _minimum_pandas_version = "1.0.5"
 _minimum_pyarrow_version = "1.0.0"
+_minimum_grpc_version = "1.48.1"
+_minimum_googleapis_common_protos_version = "1.56.4"
 
 
 class InstallCommand(install):
@@ -215,7 +217,11 @@ try:
                   'pyspark.ml.param',
                   'pyspark.sql',
                   'pyspark.sql.avro',
+                  'pyspark.sql.connect',
+                  'pyspark.sql.connect.proto',
                   'pyspark.sql.pandas',
+                  'pyspark.sql.protobuf',
+                  'pyspark.sql.streaming',
                   'pyspark.streaming',
                   'pyspark.bin',
                   'pyspark.sbin',
@@ -258,29 +264,38 @@ try:
         license='http://www.apache.org/licenses/LICENSE-2.0',
         # Don't forget to update python/docs/source/getting_started/install.rst
         # if you're updating the versions or dependencies.
-        install_requires=['py4j==0.10.9.3'],
+        install_requires=['py4j==0.10.9.7'],
         extras_require={
-            'ml': ['numpy>=1.7'],
-            'mllib': ['numpy>=1.7'],
+            'ml': ['numpy>=1.15'],
+            'mllib': ['numpy>=1.15'],
             'sql': [
                 'pandas>=%s' % _minimum_pandas_version,
                 'pyarrow>=%s' % _minimum_pyarrow_version,
+                'numpy>=1.15',
             ],
             'pandas_on_spark': [
                 'pandas>=%s' % _minimum_pandas_version,
                 'pyarrow>=%s' % _minimum_pyarrow_version,
-                'numpy>=1.14',
+                'numpy>=1.15',
+            ],
+            'connect': [
+                'pandas>=%s' % _minimum_pandas_version,
+                'pyarrow>=%s' % _minimum_pyarrow_version,
+                'grpcio>=%s' % _minimum_grpc_version,
+                'grpcio-status>=%s' % _minimum_grpc_version,
+                'googleapis-common-protos>=%s' % _minimum_googleapis_common_protos_version,
+                'numpy>=1.15',
             ],
         },
-        python_requires='>=3.6',
+        python_requires='>=3.7',
         classifiers=[
             'Development Status :: 5 - Production/Stable',
             'License :: OSI Approved :: Apache Software License',
-            'Programming Language :: Python :: 3.6',
             'Programming Language :: Python :: 3.7',
             'Programming Language :: Python :: 3.8',
             'Programming Language :: Python :: 3.9',
             'Programming Language :: Python :: 3.10',
+            'Programming Language :: Python :: 3.11',
             'Programming Language :: Python :: Implementation :: CPython',
             'Programming Language :: Python :: Implementation :: PyPy',
             'Typing :: Typed'],

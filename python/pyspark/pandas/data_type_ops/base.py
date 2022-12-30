@@ -45,7 +45,6 @@ from pyspark.sql.types import (
     UserDefinedType,
 )
 from pyspark.pandas._typing import Dtype, IndexOpsLike, SeriesOrIndex
-from pyspark.pandas.spark import functions as SF
 from pyspark.pandas.typedef import extension_dtypes
 from pyspark.pandas.typedef.typehints import (
     extension_dtypes_available,
@@ -116,21 +115,24 @@ def _as_categorical_type(
     assert isinstance(dtype, CategoricalDtype)
     if dtype.categories is None:
         codes, uniques = index_ops.factorize()
+        categories = uniques.astype(index_ops.dtype)
         return codes._with_new_scol(
             codes.spark.column,
-            field=codes._internal.data_fields[0].copy(dtype=CategoricalDtype(categories=uniques)),
+            field=codes._internal.data_fields[0].copy(
+                dtype=CategoricalDtype(categories=categories)
+            ),
         )
     else:
         categories = dtype.categories
         if len(categories) == 0:
-            scol = SF.lit(-1)
+            scol = F.lit(-1)
         else:
             kvs = chain(
-                *[(SF.lit(category), SF.lit(code)) for code, category in enumerate(categories)]
+                *[(F.lit(category), F.lit(code)) for code, category in enumerate(categories)]
             )
             map_scol = F.create_map(*kvs)
 
-            scol = F.coalesce(map_scol[index_ops.spark.column], SF.lit(-1))
+            scol = F.coalesce(map_scol[index_ops.spark.column], F.lit(-1))
         return index_ops._with_new_scol(
             scol.cast(spark_type),
             field=index_ops._internal.data_fields[0].copy(
@@ -139,13 +141,13 @@ def _as_categorical_type(
         )
 
 
-def _as_bool_type(index_ops: IndexOpsLike, dtype: Union[str, type, Dtype]) -> IndexOpsLike:
+def _as_bool_type(index_ops: IndexOpsLike, dtype: Dtype) -> IndexOpsLike:
     """Cast `index_ops` to BooleanType Spark type, given `dtype`."""
     spark_type = BooleanType()
     if isinstance(dtype, extension_dtypes):
         scol = index_ops.spark.column.cast(spark_type)
     else:
-        scol = F.when(index_ops.spark.column.isNull(), SF.lit(False)).otherwise(
+        scol = F.when(index_ops.spark.column.isNull(), F.lit(False)).otherwise(
             index_ops.spark.column.cast(spark_type)
         )
     return index_ops._with_new_scol(
@@ -154,7 +156,7 @@ def _as_bool_type(index_ops: IndexOpsLike, dtype: Union[str, type, Dtype]) -> In
 
 
 def _as_string_type(
-    index_ops: IndexOpsLike, dtype: Union[str, type, Dtype], *, null_str: str = str(None)
+    index_ops: IndexOpsLike, dtype: Dtype, *, null_str: str = str(None)
 ) -> IndexOpsLike:
     """Cast `index_ops` to StringType Spark type, given `dtype` and `null_str`,
     representing null Spark column. Note that `null_str` is for non-extension dtypes only.
@@ -170,9 +172,7 @@ def _as_string_type(
     )
 
 
-def _as_other_type(
-    index_ops: IndexOpsLike, dtype: Union[str, type, Dtype], spark_type: DataType
-) -> IndexOpsLike:
+def _as_other_type(index_ops: IndexOpsLike, dtype: Dtype, spark_type: DataType) -> IndexOpsLike:
     """Cast `index_ops` to a `dtype` (`spark_type`) that needs no pre-processing.
 
     Destination types that need pre-processing: CategoricalDtype, BooleanType, and StringType.
@@ -385,7 +385,6 @@ class DataTypeOps(object, metaclass=ABCMeta):
             from pyspark.pandas.frame import DataFrame
             from pyspark.pandas.internal import NATURAL_ORDER_COLUMN_NAME, InternalField
 
-            len_right = len(right)
             if len(left) != len(right):
                 raise ValueError("Lengths must be equal")
 

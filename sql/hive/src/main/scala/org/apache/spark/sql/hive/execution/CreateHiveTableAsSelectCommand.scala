@@ -24,21 +24,23 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.command.{DataWritingCommand, DDLUtils}
+import org.apache.spark.sql.execution.command.{DataWritingCommand, DDLUtils, LeafRunnableCommand}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation}
 import org.apache.spark.sql.hive.HiveSessionCatalog
 import org.apache.spark.util.Utils
 
-trait CreateHiveTableAsSelectBase extends DataWritingCommand {
+trait CreateHiveTableAsSelectBase extends LeafRunnableCommand {
   val tableDesc: CatalogTable
   val query: LogicalPlan
   val outputColumnNames: Seq[String]
   val mode: SaveMode
 
+  assert(query.resolved)
+  override def innerChildren: Seq[LogicalPlan] = query :: Nil
+
   protected val tableIdentifier = tableDesc.identifier
 
-  override def run(sparkSession: SparkSession, child: SparkPlan): Seq[Row] = {
+  override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
     val tableExists = catalog.tableExists(tableIdentifier)
 
@@ -55,8 +57,8 @@ trait CreateHiveTableAsSelectBase extends DataWritingCommand {
       }
 
       val command = getWritingCommand(catalog, tableDesc, tableExists = true)
-      command.run(sparkSession, child)
-      DataWritingCommand.propogateMetrics(sparkSession.sparkContext, command, metrics)
+      val qe = sparkSession.sessionState.executePlan(command)
+      qe.assertCommandExecuted()
     } else {
         tableDesc.storage.locationUri.foreach { p =>
           DataWritingCommand.assertEmptyRootPath(p, mode, sparkSession.sessionState.newHadoopConf)
@@ -64,6 +66,7 @@ trait CreateHiveTableAsSelectBase extends DataWritingCommand {
       // TODO ideally, we should get the output data ready first and then
       // add the relation into catalog, just in case of failure occurs while data
       // processing.
+      val outputColumns = DataWritingCommand.logicalPlanOutputWithNames(query, outputColumnNames)
       val tableSchema = CharVarcharUtils.getRawSchema(
         outputColumns.toStructType, sparkSession.sessionState.conf)
       assert(tableDesc.schema.isEmpty)
@@ -74,8 +77,8 @@ trait CreateHiveTableAsSelectBase extends DataWritingCommand {
         // Read back the metadata of the table which was created just now.
         val createdTableMeta = catalog.getTableMetadata(tableDesc.identifier)
         val command = getWritingCommand(catalog, createdTableMeta, tableExists = false)
-        command.run(sparkSession, child)
-        DataWritingCommand.propogateMetrics(sparkSession.sparkContext, command, metrics)
+        val qe = sparkSession.sessionState.executePlan(command)
+        qe.assertCommandExecuted()
       } catch {
         case NonFatal(e) =>
           // drop the created table.
@@ -135,9 +138,6 @@ case class CreateHiveTableAsSelectCommand(
 
   override def writingCommandClassName: String =
     Utils.getSimpleName(classOf[InsertIntoHiveTable])
-
-  override protected def withNewChildInternal(
-    newChild: LogicalPlan): CreateHiveTableAsSelectCommand = copy(query = newChild)
 }
 
 /**
@@ -185,7 +185,4 @@ case class OptimizedCreateHiveTableAsSelectCommand(
 
   override def writingCommandClassName: String =
     Utils.getSimpleName(classOf[InsertIntoHadoopFsRelationCommand])
-
-  override protected def withNewChildInternal(
-    newChild: LogicalPlan): OptimizedCreateHiveTableAsSelectCommand = copy(query = newChild)
 }

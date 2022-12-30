@@ -20,9 +20,12 @@ package org.apache.spark.sql
 import org.scalatest.matchers.must.Matchers.the
 
 import org.apache.spark.TestUtils.{assertNotSpilled, assertSpilled}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, Lag, Literal, NonFoldableLiteral}
 import org.apache.spark.sql.catalyst.optimizer.TransposeWindow
+import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
-import org.apache.spark.sql.execution.exchange.Exchange
+import org.apache.spark.sql.execution.exchange.{ENSURE_REQUIREMENTS, Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.expressions.{Aggregator, MutableAggregationBuffer, UserDefinedAggregateFunction, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -34,7 +37,7 @@ import org.apache.spark.sql.types._
  */
 class DataFrameWindowFunctionsSuite extends QueryTest
   with SharedSparkSession
-  with AdaptiveSparkPlanHelper{
+  with AdaptiveSparkPlanHelper {
 
   import testImplicits._
 
@@ -94,7 +97,8 @@ class DataFrameWindowFunctionsSuite extends QueryTest
   }
 
   test("corr, covar_pop, stddev_pop functions in specific window") {
-    withSQLConf(SQLConf.LEGACY_STATISTICAL_AGGREGATE.key -> "true") {
+    withSQLConf(SQLConf.LEGACY_STATISTICAL_AGGREGATE.key -> "true",
+      SQLConf.ANSI_ENABLED.key -> "false") {
       val df = Seq(
         ("a", "p1", 10.0, 20.0),
         ("b", "p1", 20.0, 10.0),
@@ -147,7 +151,8 @@ class DataFrameWindowFunctionsSuite extends QueryTest
   test("SPARK-13860: " +
     "corr, covar_pop, stddev_pop functions in specific window " +
     "LEGACY_STATISTICAL_AGGREGATE off") {
-    withSQLConf(SQLConf.LEGACY_STATISTICAL_AGGREGATE.key -> "false") {
+    withSQLConf(SQLConf.LEGACY_STATISTICAL_AGGREGATE.key -> "false",
+      SQLConf.ANSI_ENABLED.key -> "false") {
       val df = Seq(
         ("a", "p1", 10.0, 20.0),
         ("b", "p1", 20.0, 10.0),
@@ -399,27 +404,33 @@ class DataFrameWindowFunctionsSuite extends QueryTest
     val df = Seq((1, "1")).toDF("key", "value")
     val e = intercept[AnalysisException](
       df.select($"key", count("invalid").over()))
-    assert(e.getErrorClass == "MISSING_COLUMN")
-    assert(e.messageParameters.sameElements(Array("invalid", "value, key")))
+    checkError(
+      exception = e,
+      errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+      parameters = Map(
+        "objectName" -> "`invalid`",
+        "proposal" -> "`value`, `key`"))
   }
 
   test("numerical aggregate functions on string column") {
-    val df = Seq((1, "a", "b")).toDF("key", "value1", "value2")
-    checkAnswer(
-      df.select($"key",
-        var_pop("value1").over(),
-        variance("value1").over(),
-        stddev_pop("value1").over(),
-        stddev("value1").over(),
-        sum("value1").over(),
-        mean("value1").over(),
-        avg("value1").over(),
-        corr("value1", "value2").over(),
-        covar_pop("value1", "value2").over(),
-        covar_samp("value1", "value2").over(),
-        skewness("value1").over(),
-        kurtosis("value1").over()),
-      Seq(Row(1, null, null, null, null, null, null, null, null, null, null, null, null)))
+    if (!conf.ansiEnabled) {
+      val df = Seq((1, "a", "b")).toDF("key", "value1", "value2")
+      checkAnswer(
+        df.select($"key",
+          var_pop("value1").over(),
+          variance("value1").over(),
+          stddev_pop("value1").over(),
+          stddev("value1").over(),
+          sum("value1").over(),
+          mean("value1").over(),
+          avg("value1").over(),
+          corr("value1", "value2").over(),
+          covar_pop("value1", "value2").over(),
+          covar_samp("value1", "value2").over(),
+          skewness("value1").over(),
+          kurtosis("value1").over()),
+        Seq(Row(1, null, null, null, null, null, null, null, null, null, null, null, null)))
+    }
   }
 
   test("statistical functions") {
@@ -703,6 +714,50 @@ class DataFrameWindowFunctionsSuite extends QueryTest
         Row("a", 4, "x", "x", "y", "x", "x", "y"),
         Row("b", 1, null, null, null, null, null, null),
         Row("b", 2, null, null, null, null, null, null)))
+
+    val df2 = Seq(
+      ("a", 1, "x"),
+      ("a", 2, "y"),
+      ("a", 3, "z")).
+      toDF("key", "order", "value")
+    checkAnswer(
+      df2.select(
+        $"key",
+        $"order",
+        nth_value($"value", 2).over(window1),
+        nth_value($"value", 2, ignoreNulls = true).over(window1),
+        nth_value($"value", 2).over(window2),
+        nth_value($"value", 2, ignoreNulls = true).over(window2),
+        nth_value($"value", 3).over(window1),
+        nth_value($"value", 3, ignoreNulls = true).over(window1),
+        nth_value($"value", 3).over(window2),
+        nth_value($"value", 3, ignoreNulls = true).over(window2),
+        nth_value($"value", 4).over(window1),
+        nth_value($"value", 4, ignoreNulls = true).over(window1),
+        nth_value($"value", 4).over(window2),
+        nth_value($"value", 4, ignoreNulls = true).over(window2)),
+      Seq(
+        Row("a", 1, "y", "y", null, null, "z", "z", null, null, null, null, null, null),
+        Row("a", 2, "y", "y", "y", "y", "z", "z", null, null, null, null, null, null),
+        Row("a", 3, "y", "y", "y", "y", "z", "z", "z", "z", null, null, null, null)))
+
+    val df3 = Seq(
+      ("a", 1, "x"),
+      ("a", 2, nullStr),
+      ("a", 3, "z")).
+      toDF("key", "order", "value")
+    checkAnswer(
+      df3.select(
+        $"key",
+        $"order",
+        nth_value($"value", 3).over(window1),
+        nth_value($"value", 3, ignoreNulls = true).over(window1),
+        nth_value($"value", 3).over(window2),
+        nth_value($"value", 3, ignoreNulls = true).over(window2)),
+      Seq(
+        Row("a", 1, "z", null, null, null),
+        Row("a", 2, "z", null, null, null),
+        Row("a", 3, "z", null, "z", null)))
   }
 
   test("nth_value on descending ordered window") {
@@ -789,6 +844,51 @@ class DataFrameWindowFunctionsSuite extends QueryTest
           "z", null, "v", "z", "y", "x", "za"),
         Row("a", 8, null, null, null, null, null, null, null, null,
           "v", "z", null, "v", "z", "y", "va")))
+  }
+
+  test("lag - Offset expression <offset> must be a literal") {
+    val nullStr: String = null
+    val df = Seq(
+      ("a", 0, nullStr),
+      ("a", 1, "x"),
+      ("b", 2, nullStr),
+      ("c", 3, nullStr),
+      ("a", 4, "y"),
+      ("b", 5, nullStr),
+      ("a", 6, "z"),
+      ("a", 7, "v"),
+      ("a", 8, nullStr)).
+      toDF("key", "order", "value")
+    val window = Window.orderBy($"order")
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.select(
+          $"key",
+          $"order",
+          $"value",
+          lead($"value", 1).over(window),
+          lead($"value", 2).over(window),
+          lead($"value", 0, null, true).over(window),
+          lead($"value", 1, null, true).over(window),
+          lead($"value", 2, null, true).over(window),
+          lead($"value", 3, null, true).over(window),
+          lead(concat($"value", $"key"), 1, null, true).over(window),
+          Column(Lag($"value".expr, NonFoldableLiteral(1), Literal(null), true)).over(window),
+          lag($"value", 2).over(window),
+          lag($"value", 0, null, true).over(window),
+          lag($"value", 1, null, true).over(window),
+          lag($"value", 2, null, true).over(window),
+          lag($"value", 3, null, true).over(window),
+          lag(concat($"value", $"key"), 1, null, true).over(window)).orderBy($"order").collect()
+      },
+      errorClass = "DATATYPE_MISMATCH.NON_FOLDABLE_INPUT",
+      parameters = Map(
+        "sqlExpr" -> "\"lag(value, nonfoldableliteral(), NULL)\"",
+        "inputName" -> "offset",
+        "inputType" -> "\"INT\"",
+        "inputExpr" -> "\"(- nonfoldableliteral())\""
+      )
+    )
   }
 
   test("SPARK-12989 ExtractWindowExpressions treats alias as regular attribute") {
@@ -1070,5 +1170,99 @@ class DataFrameWindowFunctionsSuite extends QueryTest
         Row("a", 0, "x", null),
         Row("a", 1, "x", "x"),
         Row("b", 0, null, null)))
+  }
+
+  test("SPARK-38237: require all cluster keys for child required distribution for window query") {
+    def partitionExpressionsColumns(expressions: Seq[Expression]): Seq[String] = {
+      expressions.flatMap {
+        case ref: AttributeReference => Some(ref.name)
+      }
+    }
+
+    def isShuffleExecByRequirement(
+        plan: ShuffleExchangeExec,
+        desiredClusterColumns: Seq[String]): Boolean = plan match {
+      case ShuffleExchangeExec(op: HashPartitioning, _, ENSURE_REQUIREMENTS) =>
+        partitionExpressionsColumns(op.expressions) === desiredClusterColumns
+      case _ => false
+    }
+
+    val df = Seq(("a", 1, 1), ("a", 2, 2), ("b", 1, 3), ("b", 1, 4)).toDF("key1", "key2", "value")
+    val windowSpec = Window.partitionBy("key1", "key2").orderBy("value")
+
+    withSQLConf(
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false",
+      SQLConf.REQUIRE_ALL_CLUSTER_KEYS_FOR_DISTRIBUTION.key -> "true") {
+
+      val windowed = df
+        // repartition by subset of window partitionBy keys which satisfies ClusteredDistribution
+        .repartition($"key1")
+        .select(
+          lead($"key1", 1).over(windowSpec),
+          lead($"value", 1).over(windowSpec))
+
+      checkAnswer(windowed, Seq(Row("b", 4), Row(null, null), Row(null, null), Row(null, null)))
+
+      val shuffleByRequirement = windowed.queryExecution.executedPlan.exists {
+        case w: WindowExec =>
+          w.child.exists {
+            case s: ShuffleExchangeExec => isShuffleExecByRequirement(s, Seq("key1", "key2"))
+            case _ => false
+          }
+        case _ => false
+      }
+
+      assert(shuffleByRequirement, "Can't find desired shuffle node from the query plan")
+    }
+  }
+
+  test("SPARK-38308: Properly handle Stream of window expressions") {
+    val df = Seq(
+      (1, 2, 3),
+      (1, 3, 4),
+      (2, 4, 5),
+      (2, 5, 6)
+    ).toDF("a", "b", "c")
+
+    val w = Window.partitionBy("a").orderBy("b")
+    val selectExprs = Stream(
+      sum("c").over(w.rowsBetween(Window.unboundedPreceding, Window.currentRow)).as("sumc"),
+      avg("c").over(w.rowsBetween(Window.unboundedPreceding, Window.currentRow)).as("avgc")
+    )
+    checkAnswer(
+      df.select(selectExprs: _*),
+      Seq(
+        Row(3, 3),
+        Row(7, 3.5),
+        Row(5, 5),
+        Row(11, 5.5)
+      )
+    )
+  }
+
+  test("SPARK-38614: percent_rank should apply before limit") {
+    val df = Seq.tabulate(101)(identity).toDF("id")
+    val w = Window.orderBy("id")
+    checkAnswer(
+      df.select($"id", percent_rank().over(w)).limit(3),
+      Seq(
+        Row(0, 0.0d),
+        Row(1, 0.01d),
+        Row(2, 0.02d)
+      )
+    )
+  }
+
+  test("SPARK-40002: ntile should apply before limit") {
+    val df = Seq.tabulate(101)(identity).toDF("id")
+    val w = Window.orderBy("id")
+    checkAnswer(
+      df.select($"id", ntile(10).over(w)).limit(3),
+      Seq(
+        Row(0, 1),
+        Row(1, 1),
+        Row(2, 1)
+      )
+    )
   }
 }

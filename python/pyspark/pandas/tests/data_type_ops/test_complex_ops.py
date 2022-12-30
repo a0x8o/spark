@@ -21,11 +21,10 @@ import datetime
 import pandas as pd
 
 from pyspark import pandas as ps
-from pyspark.pandas.tests.data_type_ops.testing_utils import TestCasesUtils
-from pyspark.testing.pandasutils import PandasOnSparkTestCase
+from pyspark.pandas.tests.data_type_ops.testing_utils import OpsTestBase
 
 
-class ComplexOpsTest(PandasOnSparkTestCase, TestCasesUtils):
+class ComplexOpsTest(OpsTestBase):
     @property
     def pser(self):
         return pd.Series([[1, 2, 3]])
@@ -184,7 +183,7 @@ class ComplexOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 
     def test_pow(self):
         self.assertRaises(TypeError, lambda: self.psser ** "x")
-        self.assertRaises(TypeError, lambda: self.psser ** 1)
+        self.assertRaises(TypeError, lambda: self.psser**1)
 
         psdf = self.array_psdf
         for col in self.array_df_cols:
@@ -216,7 +215,7 @@ class ComplexOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 
     def test_rpow(self):
         self.assertRaises(TypeError, lambda: "x" ** self.psser)
-        self.assertRaises(TypeError, lambda: 1 ** self.psser)
+        self.assertRaises(TypeError, lambda: 1**self.psser)
 
     def test_and(self):
         self.assertRaises(TypeError, lambda: self.psser & True)
@@ -240,7 +239,7 @@ class ComplexOpsTest(PandasOnSparkTestCase, TestCasesUtils):
         pdf, psdf = self.array_pdf, self.array_psdf
         for col in self.array_df_cols:
             pser, psser = pdf[col], psdf[col]
-            self.assert_eq(pser, psser.to_pandas())
+            self.assert_eq(pser, psser._to_pandas())
             self.assert_eq(ps.from_pandas(pser), psser)
 
     def test_isnull(self):
@@ -357,7 +356,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.data_type_ops.test_complex_ops import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

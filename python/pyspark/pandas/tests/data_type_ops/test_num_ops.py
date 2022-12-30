@@ -25,17 +25,16 @@ from pandas.api.types import CategoricalDtype
 
 from pyspark import pandas as ps
 from pyspark.pandas.config import option_context
-from pyspark.pandas.tests.data_type_ops.testing_utils import TestCasesUtils
+from pyspark.pandas.tests.data_type_ops.testing_utils import OpsTestBase
 from pyspark.pandas.typedef.typehints import (
     extension_dtypes_available,
     extension_float_dtypes_available,
     extension_object_dtypes_available,
 )
 from pyspark.sql.types import DecimalType, IntegralType
-from pyspark.testing.pandasutils import PandasOnSparkTestCase
 
 
-class NumOpsTest(PandasOnSparkTestCase, TestCasesUtils):
+class NumOpsTest(OpsTestBase):
     """Unit tests for arithmetic operations of numeric data types.
 
     A few test cases are disabled because pandas-on-Spark returns float64 whereas pandas
@@ -164,12 +163,12 @@ class NumOpsTest(PandasOnSparkTestCase, TestCasesUtils):
         for col in self.numeric_df_cols:
             pser, psser = pdf[col], psdf[col]
             if col in ["float", "float_w_nan"]:
-                self.assert_eq(pser ** pser, psser ** psser)
+                self.assert_eq(pser**pser, psser**psser)
                 self.assert_eq(pser ** pser.astype(bool), psser ** psser.astype(bool))
-                self.assert_eq(pser ** True, psser ** True)
-                self.assert_eq(pser ** False, psser ** False)
-                self.assert_eq(pser ** 1, psser ** 1)
-                self.assert_eq(pser ** 0, psser ** 0)
+                self.assert_eq(pser**True, psser**True)
+                self.assert_eq(pser**False, psser**False)
+                self.assert_eq(pser**1, psser**1)
+                self.assert_eq(pser**0, psser**0)
 
             for n_col in self.non_numeric_df_cols:
                 if n_col == "bool":
@@ -244,8 +243,8 @@ class NumOpsTest(PandasOnSparkTestCase, TestCasesUtils):
             # self.assert_eq(1 ** pser, 1 ** psser)
             # self.assert_eq(0.1 ** pser, 0.1 ** psser)
             self.assertRaises(TypeError, lambda: "x" ** psser)
-            self.assert_eq((True ** pser).astype(float), True ** psser)
-            self.assert_eq((False ** pser).astype(float), False ** psser)
+            self.assert_eq((True**pser).astype(float), True**psser)
+            self.assert_eq((False**pser).astype(float), False**psser)
             self.assertRaises(TypeError, lambda: datetime.date(1994, 1, 1) ** psser)
             self.assertRaises(TypeError, lambda: datetime.datetime(1994, 1, 1) ** psser)
 
@@ -321,7 +320,7 @@ class NumOpsTest(PandasOnSparkTestCase, TestCasesUtils):
         pdf, psdf = self.pdf, self.psdf
         for col in self.numeric_df_cols:
             pser, psser = pdf[col], psdf[col]
-            self.assert_eq(pser, psser.to_pandas())
+            self.assert_eq(pser, psser._to_pandas())
             self.assert_eq(ps.from_pandas(pser), psser)
 
     def test_isnull(self):
@@ -450,7 +449,7 @@ class NumOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 
 
 @unittest.skipIf(not extension_dtypes_available, "pandas extension dtypes are not available")
-class IntegralExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
+class IntegralExtensionOpsTest(OpsTestBase):
     @property
     def intergral_extension_psers(self):
         return [pd.Series([1, 2, 3, None], dtype=dtype) for dtype in self.integral_extension_dtypes]
@@ -465,7 +464,7 @@ class IntegralExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 
     def test_from_to_pandas(self):
         for pser, psser in self.intergral_extension_pser_psser_pairs:
-            self.check_extension(pser, psser.to_pandas())
+            self.check_extension(pser, psser._to_pandas())
             self.check_extension(ps.from_pandas(pser), psser)
 
     def test_isnull(self):
@@ -590,7 +589,7 @@ class IntegralExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 @unittest.skipIf(
     not extension_float_dtypes_available, "pandas extension float dtypes are not available"
 )
-class FractionalExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
+class FractionalExtensionOpsTest(OpsTestBase):
     @property
     def fractional_extension_psers(self):
         return [
@@ -608,7 +607,7 @@ class FractionalExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
 
     def test_from_to_pandas(self):
         for pser, psser in self.fractional_extension_pser_psser_pairs:
-            self.check_extension(pser, psser.to_pandas())
+            self.check_extension(pser, psser._to_pandas())
             self.check_extension(ps.from_pandas(pser), psser)
 
     def test_isnull(self):
@@ -621,6 +620,7 @@ class FractionalExtensionOpsTest(PandasOnSparkTestCase, TestCasesUtils):
                 self.check_extension(pser.astype(dtype), psser.astype(dtype))
         for pser, psser in self.fractional_extension_pser_psser_pairs:
             self.assert_eq(pser.astype(float), psser.astype(float))
+            self.assert_eq(pser.astype("category"), psser.astype("category"))
             self.assert_eq(pser.astype(np.float32), psser.astype(np.float32))
             with ps.option_context("compute.eager_check", True):
                 self.assertRaisesRegex(
@@ -694,7 +694,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.data_type_ops.test_num_ops import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

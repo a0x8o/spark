@@ -101,7 +101,15 @@ class MultilayerPerceptronClassifierTest(SparkSessionTestCase):
         expected_rawPrediction = [-11.6081922998, -8.15827998691, 22.17757045]
         self.assertTrue(result.prediction, expected_prediction)
         self.assertTrue(np.allclose(result.probability, expected_probability, atol=1e-4))
-        self.assertTrue(np.allclose(result.rawPrediction, expected_rawPrediction, rtol=0.11))
+        # Use `assert_allclose` to show the value of `result.rawPrediction` in the assertion error
+        # message
+        np.testing.assert_allclose(
+            result.rawPrediction,
+            expected_rawPrediction,
+            rtol=0.3,
+            # Use the same default value as `np.allclose`
+            atol=1e-08,
+        )
 
 
 class OneVsRestTests(SparkSessionTestCase):
@@ -405,7 +413,7 @@ if __name__ == "__main__":
     from pyspark.ml.tests.test_algorithms import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

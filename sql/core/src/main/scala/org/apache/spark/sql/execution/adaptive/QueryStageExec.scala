@@ -96,7 +96,8 @@ abstract class QueryStageExec extends LeafExecNode {
     val runtimeStats = getRuntimeStatistics
     val dataSize = runtimeStats.sizeInBytes.max(0)
     val numOutputRows = runtimeStats.rowCount.map(_.max(0))
-    Some(Statistics(dataSize, numOutputRows, isRuntime = true))
+    val attributeStats = runtimeStats.attributeStats
+    Some(Statistics(dataSize, numOutputRows, attributeStats, isRuntime = true))
   } else {
     None
   }
@@ -124,6 +125,10 @@ abstract class QueryStageExec extends LeafExecNode {
 
   protected override def stringArgs: Iterator[Any] = Iterator.single(id)
 
+  override def simpleStringWithNodeId(): String = {
+    super.simpleStringWithNodeId() + computeStats().map(", " + _.toString).getOrElse("")
+  }
+
   override def generateTreeString(
       depth: Int,
       lastChildren: Seq[Boolean],
@@ -145,6 +150,11 @@ abstract class QueryStageExec extends LeafExecNode {
       indent)
     plan.generateTreeString(
       depth + 1, lastChildren :+ true, append, verbose, "", false, maxFields, printNodeId, indent)
+  }
+
+  override protected[sql] def cleanupResources(): Unit = {
+    plan.cleanupResources()
+    super.cleanupResources()
   }
 }
 

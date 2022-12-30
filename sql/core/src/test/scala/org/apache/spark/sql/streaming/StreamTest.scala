@@ -341,7 +341,8 @@ trait StreamTest extends QueryTest with SharedSparkSession with TimeLimits with 
    */
   def testStream(
       _stream: Dataset[_],
-      outputMode: OutputMode = OutputMode.Append)(actions: StreamAction*): Unit = synchronized {
+      outputMode: OutputMode = OutputMode.Append,
+      extraOptions: Map[String, String] = Map.empty)(actions: StreamAction*): Unit = synchronized {
     import org.apache.spark.sql.streaming.util.StreamManualClock
 
     // `synchronized` is added to prevent the user from calling multiple `testStream`s concurrently
@@ -528,8 +529,10 @@ trait StreamTest extends QueryTest with SharedSparkSession with TimeLimits with 
           verify(triggerClock.isInstanceOf[SystemClock]
             || triggerClock.isInstanceOf[StreamManualClock],
             "Use either SystemClock or StreamManualClock to start the stream")
-          if (triggerClock.isInstanceOf[StreamManualClock]) {
-            manualClockExpectedTime = triggerClock.asInstanceOf[StreamManualClock].getTimeMillis()
+          triggerClock match {
+            case clock: StreamManualClock =>
+              manualClockExpectedTime = clock.getTimeMillis()
+            case _ =>
           }
           val metadataRoot = Option(checkpointLocation).getOrElse(defaultCheckpointLocation)
 
@@ -550,7 +553,7 @@ trait StreamTest extends QueryTest with SharedSparkSession with TimeLimits with 
                 None,
                 Some(metadataRoot),
                 stream,
-                Map(),
+                extraOptions,
                 sink,
                 outputMode,
                 trigger = trigger,

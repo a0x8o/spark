@@ -43,28 +43,29 @@ import org.apache.spark.sql.types._
  *
  * To run the entire test suite:
  * {{{
- *   build/sbt -Phive-thriftserver "hive-thriftserver/testOnly *ThriftServerQueryTestSuite"
+ *   build/sbt -Phive-thriftserver "hive-thriftserver/testOnly org.apache.spark.sql.hive.thriftserver.ThriftServerQueryTestSuite"
  * }}}
  *
  * To run a single test file upon change:
  * {{{
- *   build/sbt -Phive-thriftserver "hive-thriftserver/testOnly *ThriftServerQueryTestSuite -- -z inline-table.sql"
+ *   build/sbt -Phive-thriftserver "hive-thriftserver/testOnly org.apache.spark.sql.hive.thriftserver.ThriftServerQueryTestSuite -- -z inline-table.sql"
  * }}}
  *
  * This test suite won't generate golden files. To re-generate golden files for entire suite, run:
  * {{{
- *   SPARK_GENERATE_GOLDEN_FILES=1 build/sbt "sql/testOnly *SQLQueryTestSuite"
+ *   SPARK_GENERATE_GOLDEN_FILES=1 build/sbt "sql/testOnly org.apache.spark.sql.SQLQueryTestSuite"
  * }}}
  *
  * To re-generate golden file for a single test, run:
  * {{{
- *   SPARK_GENERATE_GOLDEN_FILES=1 build/sbt "sql/testOnly *SQLQueryTestSuite -- -z describe.sql"
+ *   SPARK_GENERATE_GOLDEN_FILES=1 build/sbt "sql/testOnly org.apache.spark.sql.SQLQueryTestSuite -- -z describe.sql"
  * }}}
  *
  * TODO:
  *   1. Support UDF testing.
  *   2. Support DESC command.
  *   3. Support SHOW command.
+ *   4. Support UDAF testing.
  */
 // scalastyle:on line.size.limit
 class ThriftServerQueryTestSuite extends SQLQueryTestSuite with SharedThriftServer {
@@ -246,6 +247,8 @@ class ThriftServerQueryTestSuite extends SQLQueryTestSuite with SharedThriftServ
       val testCaseName = absPath.stripPrefix(inputFilePath).stripPrefix(File.separator)
 
       if (file.getAbsolutePath.startsWith(s"$inputFilePath${File.separator}udf")) {
+        Seq.empty
+      } else if (file.getAbsolutePath.startsWith(s"$inputFilePath${File.separator}udaf")) {
         Seq.empty
       } else if (file.getAbsolutePath.startsWith(s"$inputFilePath${File.separator}postgreSQL")) {
         PgSQLTestCase(testCaseName, absPath, resultFile) :: Nil

@@ -317,7 +317,10 @@ trait Row extends Serializable {
    *
    * @throws ClassCastException when data type does not match.
    */
-  def getSeq[T](i: Int): Seq[T] = getAs[scala.collection.Seq[T]](i).toSeq
+  def getSeq[T](i: Int): Seq[T] = {
+    val res = getAs[scala.collection.Seq[T]](i)
+    if (res != null) res.toSeq else null
+  }
 
   /**
    * Returns the value at position i of array type as `java.util.List`.
@@ -580,6 +583,8 @@ trait Row extends Serializable {
       case (t: Timestamp, _) => JString(timestampFormatter.format(t))
       case (i: CalendarInterval, _) => JString(i.toString)
       case (a: Array[_], ArrayType(elementType, _)) =>
+        iteratorToJsonArray(a.iterator, elementType)
+      case (a: mutable.ArraySeq[_], ArrayType(elementType, _)) =>
         iteratorToJsonArray(a.iterator, elementType)
       case (s: Seq[_], ArrayType(elementType, _)) =>
         iteratorToJsonArray(s.iterator, elementType)

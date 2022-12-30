@@ -303,7 +303,6 @@ class StreamingLogisticRegressionWithSGDTests(MLLibStreamingTestCase):
             true, predicted = zip(*rdd.collect())
             errors.append(self.calculate_accuracy_error(true, predicted))
 
-        true_predicted = []
         input_stream = self.ssc.queueStream(input_batches)
         predict_stream = self.ssc.queueStream(predict_batches)
         slr.trainOn(input_stream)
@@ -464,7 +463,7 @@ if __name__ == "__main__":
     from pyspark.mllib.tests.test_streaming_algorithms import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

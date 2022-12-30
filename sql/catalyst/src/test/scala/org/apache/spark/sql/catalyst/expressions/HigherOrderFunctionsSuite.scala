@@ -17,8 +17,10 @@
 
 package org.apache.spark.sql.catalyst.expressions
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SparkException, SparkFunSuite}
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult
+import org.apache.spark.sql.catalyst.analysis.TypeCheckResult.DataTypeMismatch
+import org.apache.spark.sql.catalyst.expressions.Cast._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -524,8 +526,9 @@ class HigherOrderFunctionsSuite extends SparkFunSuite with ExpressionEvalHelper 
     val map = transformKeys(ai0, makeMap)
     map.checkInputDataTypes() match {
       case TypeCheckResult.TypeCheckSuccess => fail("should not allow map as map key")
-      case TypeCheckResult.TypeCheckFailure(msg) =>
-        assert(msg.contains("The key of map cannot be/contain map"))
+      case TypeCheckResult.DataTypeMismatch(errorSubClass, messageParameters) =>
+        assert(errorSubClass == "INVALID_MAP_KEY_TYPE")
+        assert(messageParameters === Map("keyType" -> "\"MAP<INT, INT>\""))
     }
   }
 
@@ -837,5 +840,41 @@ class HigherOrderFunctionsSuite extends SparkFunSuite with ExpressionEvalHelper 
     checkEvaluation(arraySort(
       Literal.create(Seq(Double.NaN, 1d, 2d, null), ArrayType(DoubleType))),
       Seq(1d, 2d, Double.NaN, null))
+  }
+
+  test("SPARK-39419: ArraySort should throw an exception when the comparator returns null") {
+    val comparator = {
+      val comp = ArraySort.comparator _
+      (left: Expression, right: Expression) =>
+        If(comp(left, right) === 0, Literal.create(null, IntegerType), comp(left, right))
+    }
+
+    withSQLConf(
+        SQLConf.LEGACY_ALLOW_NULL_COMPARISON_RESULT_IN_ARRAY_SORT.key -> "false") {
+      checkExceptionInExpression[SparkException](
+        arraySort(Literal.create(Seq(3, 1, 1, 2)), comparator), "The comparison result is null")
+    }
+
+    withSQLConf(
+        SQLConf.LEGACY_ALLOW_NULL_COMPARISON_RESULT_IN_ARRAY_SORT.key -> "true") {
+      checkEvaluation(arraySort(Literal.create(Seq(3, 1, 1, 2)), comparator),
+        Seq(1, 1, 2, 3))
+    }
+  }
+
+  test("Return type of the given function has to be IntegerType") {
+    val comparator = {
+      val comp = ArraySort.comparator _
+      (left: Expression, right: Expression) => Literal.create("hello", StringType)
+    }
+
+    val result = arraySort(Literal.create(Seq(3, 1, 1, 2)), comparator).checkInputDataTypes()
+    assert(result == DataTypeMismatch(
+      errorSubClass = "UNEXPECTED_RETURN_TYPE",
+      messageParameters = Map(
+        "functionName" -> toSQLId("lambdafunction"),
+        "expectedType" -> toSQLType(IntegerType),
+        "actualType" -> toSQLType(StringType)
+      )))
   }
 }

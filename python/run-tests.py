@@ -20,6 +20,7 @@
 import logging
 from argparse import ArgumentParser
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -70,7 +71,22 @@ else:
     raise RuntimeError("Cannot find assembly build directory, please build Spark first.")
 
 
-def run_individual_python_test(target_dir, test_name, pyspark_python):
+def run_individual_python_test(target_dir, test_name, pyspark_python, keep_test_output):
+    """
+    Runs an individual test. This function is called by the multi-process runner of all tests.
+
+    Parameters
+    ----------
+    target_dir
+        Destination for the Hive and log directory.
+    test_name
+        Test name.
+    pyspark_python
+        Python version used to run the test.
+    keep_test_output
+        Flag indicating if the test output should be retained after successful execution.
+
+    """
     env = dict(os.environ)
     env.update({
         'SPARK_DIST_CLASSPATH': SPARK_DIST_CLASSPATH,
@@ -95,17 +111,22 @@ def run_individual_python_test(target_dir, test_name, pyspark_python):
     os.mkdir(metastore_dir)
 
     # Also override the JVM's temp directory by setting driver and executor options.
-    java_options = "-Djava.io.tmpdir={0} -Dio.netty.tryReflectionSetAccessible=true".format(tmp_dir)
+    java_options = "-Djava.io.tmpdir={0}".format(tmp_dir)
+    java_options = java_options + " -Dio.netty.tryReflectionSetAccessible=true -Xss4M"
     spark_args = [
         "--conf", "spark.driver.extraJavaOptions='{0}'".format(java_options),
         "--conf", "spark.executor.extraJavaOptions='{0}'".format(java_options),
         "--conf", "spark.sql.warehouse.dir='{0}'".format(metastore_dir),
-        "pyspark-shell"
+        "pyspark-shell",
     ]
+
     env["PYSPARK_SUBMIT_ARGS"] = " ".join(spark_args)
 
     output_prefix = get_valid_filename(pyspark_python + "__" + test_name + "__").lstrip("_")
-    per_test_output = tempfile.NamedTemporaryFile(prefix=output_prefix, suffix=".log")
+    # Delete is always set to False since the cleanup will be either done by removing the
+    # whole test dir, or the test output is retained.
+    per_test_output = tempfile.NamedTemporaryFile(prefix=output_prefix, dir=tmp_dir,
+                                                  suffix=".log", delete=False)
     LOGGER.info(
         "Starting test(%s): %s (temp output: %s)", pyspark_python, test_name, per_test_output.name)
     start_time = time.time()
@@ -113,8 +134,14 @@ def run_individual_python_test(target_dir, test_name, pyspark_python):
         retcode = subprocess.Popen(
             [os.path.join(SPARK_HOME, "bin/pyspark")] + test_name.split(),
             stderr=per_test_output, stdout=per_test_output, env=env).wait()
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-    except:
+        if not keep_test_output:
+            # There exists a race condition in Python and it causes flakiness in MacOS
+            # https://github.com/python/cpython/issues/73885
+            if platform.system() == "Darwin":
+                os.system("rm -rf " + tmp_dir)
+            else:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+    except BaseException:
         LOGGER.exception("Got exception while running %s with %s", test_name, pyspark_python)
         # Here, we use os._exit() instead of sys.exit() in order to force Python to exit even if
         # this code is invoked from a thread other than the main thread.
@@ -133,7 +160,7 @@ def run_individual_python_test(target_dir, test_name, pyspark_python):
                     if not re.match('[0-9]+', decoded_line):
                         print(decoded_line, end='')
                 per_test_output.close()
-        except:
+        except BaseException:
             LOGGER.exception("Got an exception while trying to print failed test output")
         finally:
             print_red("\nHad test failures in %s with %s; see logs." % (test_name, pyspark_python))
@@ -156,7 +183,7 @@ def run_individual_python_test(target_dir, test_name, pyspark_python):
                 assert SKIPPED_TESTS is not None
                 SKIPPED_TESTS[key] = skipped_tests
             per_test_output.close()
-        except:
+        except BaseException:
             import traceback
             print_red("\nGot an exception while trying to store "
                       "skipped test output:\n%s" % traceback.format_exc())
@@ -173,9 +200,9 @@ def run_individual_python_test(target_dir, test_name, pyspark_python):
 
 
 def get_default_python_executables():
-    python_execs = [x for x in ["python3.6", "pypy3"] if which(x)]
+    python_execs = [x for x in ["python3.9", "pypy3"] if which(x)]
 
-    if "python3.6" not in python_execs:
+    if "python3.9" not in python_execs:
         p = which("python3")
         if not p:
             LOGGER.error("No python3 executable found.  Exiting!")
@@ -219,6 +246,13 @@ def parse_opts():
             "'pyspark.sql.tests FooTests.test_foo' to run the specific unittest in the class. "
             "'--modules' option is ignored if they are given.")
     )
+    group.add_argument(
+        "-k", "--keep-test-output", action='store_true',
+        default=False,
+        help=("If set to true will retain the temporary test directories. In addition, the "
+              "standard output and standard error are redirected to a file in the target "
+              "directory.")
+    )
 
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -234,7 +268,7 @@ def _check_coverage(python_exec):
         subprocess_check_output(
             [python_exec, "-c", "import coverage"],
             stderr=open(os.devnull, 'w'))
-    except:
+    except BaseException:
         print_red("Coverage is not installed in Python executable '%s' "
                   "but 'COVERAGE_PROCESS_START' environment variable is set, "
                   "exiting." % python_exec)
@@ -310,7 +344,8 @@ def main():
             except Queue.Empty:
                 break
             try:
-                run_individual_python_test(target_dir, test_goal, python_exec)
+                run_individual_python_test(target_dir, test_goal,
+                                           python_exec, opts.keep_test_output)
             finally:
                 task_queue.task_done()
 

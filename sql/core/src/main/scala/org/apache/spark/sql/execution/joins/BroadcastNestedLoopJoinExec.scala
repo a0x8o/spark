@@ -152,6 +152,7 @@ case class BroadcastNestedLoopJoinExec(
         // the next index of buildRows to try
         private var nextIndex: Int = 0
 
+        @scala.annotation.tailrec
         private def findNextMatch(): Boolean = {
           if (streamRow == null) {
             if (!streamedIter.hasNext) {
@@ -285,21 +286,25 @@ case class BroadcastNestedLoopJoinExec(
    */
   private def defaultJoin(relation: Broadcast[Array[InternalRow]]): RDD[InternalRow] = {
     val streamRdd = streamed.execute()
-    val matchedBroadcastRows = getMatchedBroadcastRowsBitSet(streamRdd, relation)
-    val notMatchedBroadcastRows: Seq[InternalRow] = {
-      val nulls = new GenericInternalRow(streamed.output.size)
-      val buf: CompactBuffer[InternalRow] = new CompactBuffer()
-      val joinedRow = new JoinedRow
-      joinedRow.withLeft(nulls)
-      var i = 0
-      val buildRows = relation.value
-      while (i < buildRows.length) {
-        if (!matchedBroadcastRows.get(i)) {
-          buf += joinedRow.withRight(buildRows(i)).copy()
+    def notMatchedBroadcastRows: RDD[InternalRow] = {
+      getMatchedBroadcastRowsBitSetRDD(streamRdd, relation)
+        .repartition(1)
+        .mapPartitions(iter => Seq(iter.fold(new BitSet(relation.value.length))(_ | _)).toIterator)
+        .flatMap { matchedBroadcastRows =>
+          val nulls = new GenericInternalRow(streamed.output.size)
+          val buf: CompactBuffer[InternalRow] = new CompactBuffer()
+          val joinedRow = new JoinedRow
+          joinedRow.withLeft(nulls)
+          var i = 0
+          val buildRows = relation.value
+          while (i < buildRows.length) {
+            if (!matchedBroadcastRows.get(i)) {
+              buf += joinedRow.withRight(buildRows(i)).copy()
+            }
+            i += 1
+          }
+          buf.iterator
         }
-        i += 1
-      }
-      buf
     }
 
     val matchedStreamRows = streamRdd.mapPartitionsInternal { streamedIter =>
@@ -329,7 +334,7 @@ case class BroadcastNestedLoopJoinExec(
 
     sparkContext.union(
       matchedStreamRows,
-      sparkContext.makeRDD(notMatchedBroadcastRows)
+      notMatchedBroadcastRows
     )
   }
 
@@ -341,6 +346,13 @@ case class BroadcastNestedLoopJoinExec(
   private def getMatchedBroadcastRowsBitSet(
       streamRdd: RDD[InternalRow],
       relation: Broadcast[Array[InternalRow]]): BitSet = {
+    getMatchedBroadcastRowsBitSetRDD(streamRdd, relation)
+      .fold(new BitSet(relation.value.length))(_ | _)
+  }
+
+  private def getMatchedBroadcastRowsBitSetRDD(
+      streamRdd: RDD[InternalRow],
+      relation: Broadcast[Array[InternalRow]]): RDD[BitSet] = {
     val matchedBuildRows = streamRdd.mapPartitionsInternal { streamedIter =>
       val buildRows = relation.value
       val matched = new BitSet(buildRows.length)
@@ -355,10 +367,10 @@ case class BroadcastNestedLoopJoinExec(
           i += 1
         }
       }
-      Seq(matched).toIterator
+      Seq(matched).iterator
     }
 
-    matchedBuildRows.fold(new BitSet(relation.value.length))(_ | _)
+    matchedBuildRows
   }
 
   protected override def doExecute(): RDD[InternalRow] = {

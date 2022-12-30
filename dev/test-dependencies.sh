@@ -33,6 +33,7 @@ export LC_ALL=C
 HADOOP_MODULE_PROFILES="-Phive-thriftserver -Pmesos -Pkubernetes -Pyarn -Phive \
     -Pspark-ganglia-lgpl -Pkinesis-asl -Phadoop-cloud"
 MVN="build/mvn"
+VERSIONS_MAVEN_PLUGIN="org.codehaus.mojo:versions-maven-plugin:2.14.1"
 HADOOP_HIVE_PROFILES=(
     hadoop-2-hive-2.3
     hadoop-3-hive-2.3
@@ -50,9 +51,9 @@ OLD_VERSION=$($MVN -q \
     --non-recursive \
     org.codehaus.mojo:exec-maven-plugin:1.6.0:exec | grep -E '[0-9]+\.[0-9]+\.[0-9]+')
 # dependency:get for guava and jetty-io are workaround for SPARK-37302.
-GUAVA_VERSION=`build/mvn help:evaluate -Dexpression=guava.version -q -DforceStdout`
+GUAVA_VERSION=$(build/mvn help:evaluate -Dexpression=guava.version -q -DforceStdout | grep -E "^[0-9.]+$")
 build/mvn dependency:get -Dartifact=com.google.guava:guava:${GUAVA_VERSION} -q
-JETTY_VERSION=`build/mvn help:evaluate -Dexpression=jetty.version -q -DforceStdout`
+JETTY_VERSION=$(build/mvn help:evaluate -Dexpression=jetty.version -q -DforceStdout | grep -E "^[0-9.]+v[0-9]+")
 build/mvn dependency:get -Dartifact=org.eclipse.jetty:jetty-io:${JETTY_VERSION} -q
 if [ $? != 0 ]; then
     echo -e "Error while getting version string from Maven:\n$OLD_VERSION"
@@ -76,11 +77,11 @@ function reset_version {
   find "$HOME/.m2/" | grep "$TEMP_VERSION" | xargs rm -rf
 
   # Restore the original version number:
-  $MVN -q versions:set -DnewVersion=$OLD_VERSION -DgenerateBackupPoms=false > /dev/null
+  $MVN -q $VERSIONS_MAVEN_PLUGIN:set -DnewVersion=$OLD_VERSION -DgenerateBackupPoms=false > /dev/null
 }
 trap reset_version EXIT
 
-$MVN -q versions:set -DnewVersion=$TEMP_VERSION -DgenerateBackupPoms=false > /dev/null
+$MVN -q $VERSIONS_MAVEN_PLUGIN:set -DnewVersion=$TEMP_VERSION -DgenerateBackupPoms=false > /dev/null
 
 # Generate manifests for each Hadoop profile:
 for HADOOP_HIVE_PROFILE in "${HADOOP_HIVE_PROFILES[@]}"; do

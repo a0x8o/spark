@@ -706,40 +706,35 @@ class InsertSuite extends QueryTest with TestHiveSingleton with BeforeAndAfter
   test("insert overwrite to dir with mixed syntax") {
     withTempView("test_insert_table") {
       spark.range(10).selectExpr("id", "id AS str").createOrReplaceTempView("test_insert_table")
-
-      val e = intercept[ParseException] {
-        sql(
-          s"""
-             |INSERT OVERWRITE DIRECTORY 'file://tmp'
+      checkError(
+        exception = intercept[ParseException] { sql(
+          s"""INSERT OVERWRITE DIRECTORY 'file://tmp'
              |USING json
              |ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
-             |SELECT * FROM test_insert_table
-           """.stripMargin)
-      }.getMessage
-
-      assert(e.contains("mismatched input 'ROW'"))
+             |SELECT * FROM test_insert_table""".stripMargin)
+        },
+        errorClass = "PARSE_SYNTAX_ERROR",
+        parameters = Map("error" -> "'ROW'", "hint" -> ""))
     }
   }
 
   test("insert overwrite to dir with multi inserts") {
     withTempView("test_insert_table") {
       spark.range(10).selectExpr("id", "id AS str").createOrReplaceTempView("test_insert_table")
-
-      val e = intercept[ParseException] {
-        sql(
-          s"""
-             |INSERT OVERWRITE DIRECTORY 'file://tmp2'
-             |USING json
-             |ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
-             |SELECT * FROM test_insert_table
-             |INSERT OVERWRITE DIRECTORY 'file://tmp2'
-             |USING json
-             |ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
-             |SELECT * FROM test_insert_table
-           """.stripMargin)
-      }.getMessage
-
-      assert(e.contains("mismatched input 'ROW'"))
+      checkError(
+        exception = intercept[ParseException] {
+          sql(
+            s"""INSERT OVERWRITE DIRECTORY 'file://tmp2'
+               |USING json
+               |ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+               |SELECT * FROM test_insert_table
+               |INSERT OVERWRITE DIRECTORY 'file://tmp2'
+               |USING json
+               |ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+               |SELECT * FROM test_insert_table""".stripMargin)
+        },
+        errorClass = "PARSE_SYNTAX_ERROR",
+        parameters = Map("error" -> "'ROW'", "hint" -> ""))
     }
   }
 
@@ -747,11 +742,13 @@ class InsertSuite extends QueryTest with TestHiveSingleton with BeforeAndAfter
   test("insert overwrite to dir from non-existent table") {
     withTempDir { dir =>
       val path = dir.toURI.getPath
-
+      val stmt = s"INSERT OVERWRITE LOCAL DIRECTORY '${path}' TABLE nonexistent"
       val e = intercept[AnalysisException] {
-        sql(s"INSERT OVERWRITE LOCAL DIRECTORY '${path}' TABLE nonexistent")
-      }.getMessage
-      assert(e.contains("Table or view not found"))
+        sql(stmt)
+      }
+      checkErrorTableNotFound(e, "`nonexistent`",
+        ExpectedContext("TABLE nonexistent", stmt.length - "TABLE nonexistent".length,
+          stmt.length - 1))
     }
   }
 
@@ -795,15 +792,18 @@ class InsertSuite extends QueryTest with TestHiveSingleton with BeforeAndAfter
           s"(caseSensitivity=$caseSensitivity, format=$format)") {
           withTempDir { dir =>
             withSQLConf(SQLConf.CASE_SENSITIVE.key -> s"$caseSensitivity") {
-              val m = intercept[AnalysisException] {
+              val e = intercept[AnalysisException] {
                 sql(
                   s"""
                      |INSERT OVERWRITE $local DIRECTORY '${dir.toURI}'
                      |STORED AS $format
                      |SELECT 'id', 'id2' ${if (caseSensitivity) "id" else "ID"}
                    """.stripMargin)
-              }.getMessage
-              assert(m.contains("Found duplicate column(s) when inserting into"))
+              }
+              checkError(
+                exception = e,
+                errorClass = "COLUMN_ALREADY_EXISTS",
+                parameters = Map("columnName" -> "`id`"))
             }
           }
         }
@@ -857,52 +857,65 @@ class InsertSuite extends QueryTest with TestHiveSingleton with BeforeAndAfter
   }
 
   test("SPARK-35531: Insert data with different cases of bucket column") {
-    withTable("test1") {
-      Seq(true, false).foreach { isHiveTable =>
-        val createSpark = if (isHiveTable) {
-          """
-            |CREATE TABLE TEST1(
-            |v1 BIGINT,
-            |s1 INT)
-            |PARTITIONED BY (pk BIGINT)
-            |CLUSTERED BY (v1)
-            |SORTED BY (s1)
-            |INTO 200 BUCKETS
-            |STORED AS PARQUET
+    def testDefaultColumn: Unit = {
+      withTable("test1") {
+        Seq(true, false).foreach { isHiveTable =>
+          val createSpark = if (isHiveTable) {
+            """
+              |CREATE TABLE TEST1(
+              |v1 BIGINT,
+              |s1 INT)
+              |PARTITIONED BY (pk BIGINT)
+              |CLUSTERED BY (v1)
+              |SORTED BY (s1)
+              |INTO 200 BUCKETS
+              |STORED AS PARQUET
           """.stripMargin
-        } else {
-          """
-             |CREATE TABLE test1(
-             |v1 BIGINT,
-             |s1 INT)
-             |USING PARQUET
-             |PARTITIONED BY (pk BIGINT)
-             |CLUSTERED BY (v1)
-             |SORTED BY (s1)
-             |INTO 200 BUCKETS
+          } else {
+            """
+              |CREATE TABLE test1(
+              |v1 BIGINT,
+              |s1 INT)
+              |USING PARQUET
+              |PARTITIONED BY (pk BIGINT)
+              |CLUSTERED BY (v1)
+              |SORTED BY (s1)
+              |INTO 200 BUCKETS
           """.stripMargin
+          }
+
+          val insertString =
+            """
+              |INSERT INTO test1
+              |SELECT * FROM VALUES(1,1,1)
+          """.stripMargin
+
+          val dropString = "DROP TABLE IF EXISTS test1"
+
+          sql(dropString)
+          sql(createSpark.toLowerCase(Locale.ROOT))
+
+          sql(insertString.toLowerCase(Locale.ROOT))
+          sql(insertString.toUpperCase(Locale.ROOT))
+
+          sql(dropString)
+          sql(createSpark.toUpperCase(Locale.ROOT))
+
+          sql(insertString.toLowerCase(Locale.ROOT))
+          sql(insertString.toUpperCase(Locale.ROOT))
         }
-
-        val insertString =
-          """
-            |INSERT INTO test1
-            |SELECT * FROM VALUES(1,1,1)
-          """.stripMargin
-
-        val dropString = "DROP TABLE IF EXISTS test1"
-
-        sql(dropString)
-        sql(createSpark.toLowerCase(Locale.ROOT))
-
-        sql(insertString.toLowerCase(Locale.ROOT))
-        sql(insertString.toUpperCase(Locale.ROOT))
-
-        sql(dropString)
-        sql(createSpark.toUpperCase(Locale.ROOT))
-
-        sql(insertString.toLowerCase(Locale.ROOT))
-        sql(insertString.toUpperCase(Locale.ROOT))
       }
+    }
+    withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "false") {
+      testDefaultColumn
+    }
+    withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "true",
+      SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES.key -> "false") {
+      testDefaultColumn
+    }
+    withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "true",
+      SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES.key -> "true") {
+      testDefaultColumn
     }
   }
 }

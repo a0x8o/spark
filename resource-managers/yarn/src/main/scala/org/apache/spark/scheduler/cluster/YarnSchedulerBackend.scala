@@ -319,10 +319,10 @@ private[spark] abstract class YarnSchedulerBackend(
       removeExecutorMessage.foreach { message => driverEndpoint.send(message) }
     }
 
-    private[cluster] def handleClientModeDriverStop(): Unit = {
+    private[cluster] def signalDriverStop(exitCode: Int): Unit = {
       amEndpoint match {
         case Some(am) =>
-          am.send(Shutdown)
+          am.send(Shutdown(exitCode))
         case None =>
           logWarning("Attempted to send shutdown message before the AM has registered!")
       }
@@ -333,6 +333,10 @@ private[spark] abstract class YarnSchedulerBackend(
         logInfo(s"ApplicationMaster registered as $am")
         amEndpoint = Option(am)
         reset()
+
+      case s @ DecommissionExecutorsOnHost(hostId) =>
+        logDebug(s"Requesting to decommission host ${hostId}. Sending to driver")
+        driverEndpoint.send(s)
 
       case AddWebUIFilter(filterName, filterParams, proxyBase) =>
         addWebUIFilter(filterName, filterParams, proxyBase)

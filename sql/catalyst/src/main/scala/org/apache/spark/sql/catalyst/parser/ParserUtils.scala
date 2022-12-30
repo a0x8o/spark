@@ -98,7 +98,7 @@ object ParserUtils {
   def string(node: TerminalNode): String = unescapeSQLString(node.getText)
 
   /** Convert a string node into a string without unescaping. */
-  def stringWithoutUnescape(node: TerminalNode): String = {
+  def stringWithoutUnescape(node: Token): String = {
     // STRING parser rule forces that the input always has quotes at the starting and ending.
     node.getText.slice(1, node.getText.size - 1)
   }
@@ -114,10 +114,31 @@ object ParserUtils {
     Origin(opt.map(_.getLine), opt.map(_.getCharPositionInLine))
   }
 
+  def positionAndText(
+      startToken: Token,
+      stopToken: Token,
+      sqlText: String,
+      objectType: Option[String],
+      objectName: Option[String]): Origin = {
+    val startOpt = Option(startToken)
+    val stopOpt = Option(stopToken)
+    Origin(
+      line = startOpt.map(_.getLine),
+      startPosition = startOpt.map(_.getCharPositionInLine),
+      startIndex = startOpt.map(_.getStartIndex),
+      stopIndex = stopOpt.map(_.getStopIndex),
+      sqlText = Some(sqlText),
+      objectType = objectType,
+      objectName = objectName)
+  }
+
   /** Validate the condition. If it doesn't throw a parse exception. */
   def validate(f: => Boolean, message: String, ctx: ParserRuleContext): Unit = {
     if (!f) {
-      throw new ParseException(message, ctx)
+      throw new ParseException(
+        errorClass = "_LEGACY_ERROR_TEMP_0064",
+        messageParameters = Map("msg" -> message),
+        ctx)
     }
   }
 
@@ -126,9 +147,15 @@ object ParserUtils {
    * registered origin. This method restores the previously set origin after completion of the
    * closure.
    */
-  def withOrigin[T](ctx: ParserRuleContext)(f: => T): T = {
+  def withOrigin[T](ctx: ParserRuleContext, sqlText: Option[String] = None)(f: => T): T = {
     val current = CurrentOrigin.get
-    CurrentOrigin.set(position(ctx.getStart))
+    val text = sqlText.orElse(current.sqlText)
+    if (text.isEmpty) {
+      CurrentOrigin.set(position(ctx.getStart))
+    } else {
+      CurrentOrigin.set(positionAndText(ctx.getStart, ctx.getStop, text.get,
+        current.objectType, current.objectName))
+    }
     try {
       f
     } finally {

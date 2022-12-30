@@ -64,9 +64,9 @@ class ColumnTests(ReusedSQLTestCase):
     def test_column_operators(self):
         ci = self.df.key
         cs = self.df.value
-        c = ci == cs
+        ci == cs
         self.assertTrue(isinstance((-ci - 1 - 2) % 3 * 2.5 / 3.5, Column))
-        rcc = (1 + ci), (1 - ci), (1 * ci), (1 / ci), (1 % ci), (1 ** ci), (ci ** 1)
+        rcc = (1 + ci), (1 - ci), (1 * ci), (1 / ci), (1 % ci), (1**ci), (ci**1)
         self.assertTrue(all(isinstance(c, Column) for c in rcc))
         cb = [ci == 5, ci != 0, ci > 3, ci < 4, ci >= 0, ci <= 7]
         self.assertTrue(all(isinstance(c, Column) for c in cb))
@@ -192,7 +192,7 @@ if __name__ == "__main__":
     from pyspark.sql.tests.test_column import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

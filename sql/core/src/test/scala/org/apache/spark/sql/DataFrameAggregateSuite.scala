@@ -191,29 +191,12 @@ class DataFrameAggregateSuite extends QueryTest
     )
 
     intercept[AnalysisException] {
-      courseSales.groupBy().agg(grouping("course")).explain()
+      courseSales.agg(grouping("course")).explain()
     }
 
     intercept[AnalysisException] {
-      courseSales.groupBy().agg(grouping_id("course")).explain()
+      courseSales.agg(grouping_id("course")).explain()
     }
-
-    val groupingColMismatchEx = intercept[AnalysisException] {
-      courseSales.cube("course", "year").agg(grouping("earnings")).explain()
-    }
-    assert(groupingColMismatchEx.getErrorClass == "GROUPING_COLUMN_MISMATCH")
-    assert(groupingColMismatchEx.getMessage.matches(
-      "Column of grouping \\(earnings.*\\) can't be found in grouping columns course.*,year.*"))
-
-
-    val groupingIdColMismatchEx = intercept[AnalysisException] {
-      courseSales.cube("course", "year").agg(grouping_id("earnings")).explain()
-    }
-    assert(groupingIdColMismatchEx.getErrorClass == "GROUPING_ID_COLUMN_MISMATCH")
-    assert(groupingIdColMismatchEx.getMessage.matches(
-      "Columns of grouping_id \\(earnings.*\\) does not match " +
-        "grouping columns \\(course.*,year.*\\)"),
-      groupingIdColMismatchEx.getMessage)
   }
 
   test("grouping/grouping_id inside window function") {
@@ -339,6 +322,10 @@ class DataFrameAggregateSuite extends QueryTest
       decimalData.agg(
         avg($"a" cast DecimalType(10, 2)), sum_distinct($"a" cast DecimalType(10, 2))),
       Row(new java.math.BigDecimal(2), new java.math.BigDecimal(6)) :: Nil)
+
+    checkAnswer(
+      emptyTestData.agg(avg($"key" cast DecimalType(10, 0))),
+      Row(null))
   }
 
   test("null average") {
@@ -601,7 +588,15 @@ class DataFrameAggregateSuite extends QueryTest
     val error = intercept[AnalysisException] {
       df.select(collect_set($"a"), collect_set($"b"))
     }
-    assert(error.message.contains("collect_set() cannot have map type data"))
+    checkError(
+      exception = error,
+      errorClass = "DATATYPE_MISMATCH.UNSUPPORTED_INPUT_TYPE",
+      parameters = Map(
+        "functionName" -> "`collect_set`",
+        "dataType" -> "\"MAP\"",
+        "sqlExpr" -> "\"collect_set(b)\""
+      )
+    )
   }
 
   test("SPARK-17641: collect functions should not collect null values") {
@@ -668,10 +663,13 @@ class DataFrameAggregateSuite extends QueryTest
   }
 
   test("aggregate function in GROUP BY") {
-    val e = intercept[AnalysisException] {
-      testData.groupBy(sum($"key")).count()
-    }
-    assert(e.message.contains("aggregate functions are not allowed in GROUP BY"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        testData.groupBy(sum($"key")).count()
+      },
+      errorClass = "GROUP_BY_AGGREGATE",
+      parameters = Map("sqlExpr" -> "sum(key)")
+    )
   }
 
   private def assertNoExceptions(c: Column): Unit = {
@@ -768,11 +766,11 @@ class DataFrameAggregateSuite extends QueryTest
     // explicit global aggregations
     val emptyAgg = Map.empty[String, String]
     checkAnswer(spark.emptyDataFrame.agg(emptyAgg), Seq(Row()))
-    checkAnswer(spark.emptyDataFrame.groupBy().agg(emptyAgg), Seq(Row()))
-    checkAnswer(spark.emptyDataFrame.groupBy().agg(count("*")), Seq(Row(0)))
+    checkAnswer(spark.emptyDataFrame.agg(emptyAgg), Seq(Row()))
+    checkAnswer(spark.emptyDataFrame.agg(count("*")), Seq(Row(0)))
     checkAnswer(spark.emptyDataFrame.dropDuplicates().agg(emptyAgg), Seq(Row()))
-    checkAnswer(spark.emptyDataFrame.dropDuplicates().groupBy().agg(emptyAgg), Seq(Row()))
-    checkAnswer(spark.emptyDataFrame.dropDuplicates().groupBy().agg(count("*")), Seq(Row(0)))
+    checkAnswer(spark.emptyDataFrame.dropDuplicates().agg(emptyAgg), Seq(Row()))
+    checkAnswer(spark.emptyDataFrame.dropDuplicates().agg(count("*")), Seq(Row(0)))
 
     // global aggregation is converted to grouping aggregation:
     assert(spark.emptyDataFrame.dropDuplicates().count() == 0)
@@ -926,8 +924,17 @@ class DataFrameAggregateSuite extends QueryTest
       val error = intercept[AnalysisException] {
         sql("SELECT max_by(x, y) FROM tempView").show
       }
-      assert(
-        error.message.contains("function max_by does not support ordering on type map<int,string>"))
+      checkError(
+        exception = error,
+        errorClass = "DATATYPE_MISMATCH.INVALID_ORDERING_TYPE",
+        sqlState = None,
+        parameters = Map(
+          "functionName" -> "`max_by`",
+          "dataType" -> "\"MAP<INT, STRING>\"",
+          "sqlExpr" -> "\"max_by(x, y)\""
+        ),
+        context = ExpectedContext(fragment = "max_by(x, y)", start = 7, stop = 18)
+      )
     }
   }
 
@@ -987,8 +994,17 @@ class DataFrameAggregateSuite extends QueryTest
       val error = intercept[AnalysisException] {
         sql("SELECT min_by(x, y) FROM tempView").show
       }
-      assert(
-        error.message.contains("function min_by does not support ordering on type map<int,string>"))
+      checkError(
+        exception = error,
+        errorClass = "DATATYPE_MISMATCH.INVALID_ORDERING_TYPE",
+        sqlState = None,
+        parameters = Map(
+          "functionName" -> "`min_by`",
+          "dataType" -> "\"MAP<INT, STRING>\"",
+          "sqlExpr" -> "\"min_by(x, y)\""
+        ),
+        context = ExpectedContext(fragment = "min_by(x, y)", start = 7, stop = 18)
+      )
     }
   }
 
@@ -1025,10 +1041,23 @@ class DataFrameAggregateSuite extends QueryTest
         sql("SELECT x FROM tempView GROUP BY x HAVING COUNT_IF(NULL) > 0"),
         Nil)
 
-      val error = intercept[AnalysisException] {
-        sql("SELECT COUNT_IF(x) FROM tempView")
+      // When ANSI mode is on, it will implicit cast the string as boolean and throw a runtime
+      // error. Here we simply test with ANSI mode off.
+      if (!conf.ansiEnabled) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql("SELECT COUNT_IF(x) FROM tempView")
+          },
+          errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+          sqlState = None,
+          parameters = Map(
+            "sqlExpr" -> "\"count_if(x)\"",
+            "paramIndex" -> "1",
+            "inputSql" -> "\"x\"",
+            "inputType" -> "\"STRING\"",
+            "requiredType" -> "\"BOOLEAN\""),
+          context = ExpectedContext(fragment = "COUNT_IF(x)", start = 7, stop = 17))
       }
-      assert(error.message.contains("function count_if requires boolean type"))
     }
   }
 
@@ -1135,13 +1164,23 @@ class DataFrameAggregateSuite extends QueryTest
     val mapDF = Seq(Tuple1(Map("a" -> "a"))).toDF("col")
     checkAnswer(mapDF.groupBy(struct($"col.a")).count().select("count"), Row(1))
 
-    val nonStringMapDF = Seq(Tuple1(Map(1 -> 1))).toDF("col")
-    // Spark implicit casts string literal "a" to int to match the key type.
-    checkAnswer(nonStringMapDF.groupBy(struct($"col.a")).count().select("count"), Row(1))
+    if (!conf.ansiEnabled) {
+      val nonStringMapDF = Seq(Tuple1(Map(1 -> 1))).toDF("col")
+      // Spark implicit casts string literal "a" to int to match the key type.
+      checkAnswer(nonStringMapDF.groupBy(struct($"col.a")).count().select("count"), Row(1))
+    }
 
-    val arrayDF = Seq(Tuple1(Seq(1))).toDF("col")
-    val e = intercept[AnalysisException](arrayDF.groupBy(struct($"col.a")).count())
-    assert(e.message.contains("requires integral type"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        Seq(Tuple1(Seq(1))).toDF("col").groupBy(struct($"col.a")).count()
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"col[a]\"",
+        "paramIndex" -> "2",
+        "inputSql" -> "\"a\"",
+        "inputType" -> "\"STRING\"",
+        "requiredType" -> "\"INTEGRAL\""))
   }
 
   test("SPARK-34716: Support ANSI SQL intervals by the aggregate function `sum`") {
@@ -1271,12 +1310,14 @@ class DataFrameAggregateSuite extends QueryTest
     val error = intercept[SparkException] {
       checkAnswer(df2.select(sum($"year-month")), Nil)
     }
-    assert(error.toString contains "java.lang.ArithmeticException: integer overflow")
+    assert(error.toString contains
+      "SparkArithmeticException: [INTERVAL_ARITHMETIC_OVERFLOW] integer overflow")
 
     val error2 = intercept[SparkException] {
       checkAnswer(df2.select(sum($"day")), Nil)
     }
-    assert(error2.toString contains "java.lang.ArithmeticException: long overflow")
+    assert(error2.toString contains
+      "SparkArithmeticException: [INTERVAL_ARITHMETIC_OVERFLOW] long overflow")
   }
 
   test("SPARK-34837: Support ANSI SQL intervals by the aggregate function `avg`") {
@@ -1405,12 +1446,14 @@ class DataFrameAggregateSuite extends QueryTest
     val error = intercept[SparkException] {
       checkAnswer(df2.select(avg($"year-month")), Nil)
     }
-    assert(error.toString contains "java.lang.ArithmeticException: integer overflow")
+    assert(error.toString contains
+      "SparkArithmeticException: [INTERVAL_ARITHMETIC_OVERFLOW] integer overflow")
 
     val error2 = intercept[SparkException] {
       checkAnswer(df2.select(avg($"day")), Nil)
     }
-    assert(error2.toString contains "java.lang.ArithmeticException: long overflow")
+    assert(error2.toString contains
+      "SparkArithmeticException: [INTERVAL_ARITHMETIC_OVERFLOW] long overflow")
 
     val df3 = intervalData.filter($"class" > 4)
     val avgDF3 = df3.select(avg($"year-month"), avg($"day"))
@@ -1442,6 +1485,60 @@ class DataFrameAggregateSuite extends QueryTest
     val df = (1 to 10).map(_ => "9999999999.99").toDF("d")
     val res = df.select($"d".cast("decimal(12, 2)").as("d")).agg(avg($"d").cast("string"))
     checkAnswer(res, Row("9999999999.990000"))
+  }
+
+  test("SPARK-38185: Fix data incorrect if aggregate function is empty") {
+    val emptyAgg = Map.empty[String, String]
+    assert(spark.range(2).where("id > 2").agg(emptyAgg).limit(1).count == 1)
+  }
+
+  test("SPARK-38221: group by stream of complex expressions should not fail") {
+    val df = Seq(1).toDF("id").groupBy(Stream($"id" + 1, $"id" + 2): _*).sum("id")
+    checkAnswer(df, Row(2, 3, 1))
+  }
+
+  test("SPARK-40382: Distinct aggregation expression grouping by semantic equivalence") {
+   Seq(
+      (1, 1, 3),
+      (1, 2, 3),
+      (1, 2, 3),
+      (2, 1, 1),
+      (2, 2, 5)
+    ).toDF("k", "c1", "c2").createOrReplaceTempView("df")
+
+    // all distinct aggregation children are semantically equivalent
+    val res1 = sql(
+      """select k, sum(distinct c1 + 1), avg(distinct 1 + c1), count(distinct 1 + C1)
+        |from df
+        |group by k
+        |""".stripMargin)
+    checkAnswer(res1, Row(1, 5, 2.5, 2) :: Row(2, 5, 2.5, 2) :: Nil)
+
+    // some distinct aggregation children are semantically equivalent
+    val res2 = sql(
+      """select k, sum(distinct c1 + 2), avg(distinct 2 + c1), count(distinct c2)
+        |from df
+        |group by k
+        |""".stripMargin)
+    checkAnswer(res2, Row(1, 7, 3.5, 1) :: Row(2, 7, 3.5, 2) :: Nil)
+
+    // no distinct aggregation children are semantically equivalent
+    val res3 = sql(
+      """select k, sum(distinct c1 + 2), avg(distinct 3 + c1), count(distinct c2)
+        |from df
+        |group by k
+        |""".stripMargin)
+    checkAnswer(res3, Row(1, 7, 4.5, 1) :: Row(2, 7, 4.5, 2) :: Nil)
+  }
+
+  test("SPARK-41035: Reuse of literal in distinct aggregations should work") {
+    val res = sql(
+      """select a, count(distinct 100), count(distinct b, 100)
+        |from values (1, 2), (4, 5), (4, 6) as data(a, b)
+        |group by a;
+        |""".stripMargin
+    )
+    checkAnswer(res, Row(1, 1, 1) :: Row(4, 1, 2) :: Nil)
   }
 }
 

@@ -166,6 +166,18 @@ abstract class TypeCoercionBase {
     }
   }
 
+  protected def findWiderDateTimeType(d1: DatetimeType, d2: DatetimeType): DatetimeType =
+    (d1, d2) match {
+      case (_: TimestampType, _: DateType) | (_: DateType, _: TimestampType) =>
+        TimestampType
+
+      case (_: TimestampType, _: TimestampNTZType) | (_: TimestampNTZType, _: TimestampType) =>
+        TimestampType
+
+      case (_: TimestampNTZType, _: DateType) | (_: DateType, _: TimestampNTZType) =>
+        TimestampNTZType
+    }
+
   /**
    * Type coercion rule that combines multiple type coercion rules and applies them in a single tree
    * traversal.
@@ -183,6 +195,32 @@ abstract class TypeCoercionBase {
           None
         }
       }
+    }
+  }
+
+  /**
+   * Widens the data types of the [[Unpivot]] values.
+   */
+  object UnpivotCoercion extends Rule[LogicalPlan] {
+    override def apply(plan: LogicalPlan): LogicalPlan = plan resolveOperators {
+      case up: Unpivot if up.canBeCoercioned && !up.valuesTypeCoercioned =>
+        // get wider data type of inner values at same idx
+        val valueDataTypes = up.values.get.head.zipWithIndex.map {
+          case (_, idx) => findWiderTypeWithoutStringPromotion(up.values.get.map(_ (idx).dataType))
+        }
+
+        // cast inner values to type according to their idx
+        val values = up.values.get.map(values =>
+          values.zipWithIndex.map {
+            case (value, idx) => (value, valueDataTypes(idx))
+          } map {
+            case (value, Some(valueType)) if value.dataType != valueType =>
+              Alias(Cast(value, valueType), value.name)()
+            case (value, _) => value
+          }
+        )
+
+        up.copy(values = Some(values))
     }
   }
 
@@ -322,7 +360,7 @@ abstract class TypeCoercionBase {
 
       // Handle type casting required between value expression and subquery output
       // in IN subquery.
-      case i @ InSubquery(lhs, ListQuery(sub, children, exprId, _, conditions))
+      case i @ InSubquery(lhs, ListQuery(sub, children, exprId, _, conditions, _))
           if !i.resolved && lhs.length == sub.output.length =>
         // LHS is the value expressions of IN subquery.
         // RHS is the subquery output.
@@ -760,7 +798,7 @@ abstract class TypeCoercionBase {
       case e if !e.childrenResolved => e
       case DateAdd(l, r) if r.dataType == StringType && r.foldable =>
         val days = try {
-          AnsiCast(r, IntegerType).eval().asInstanceOf[Int]
+          Cast(r, IntegerType, ansiEnabled = true).eval().asInstanceOf[Int]
         } catch {
           case e: NumberFormatException =>
             throw QueryCompilationErrors.secondArgumentOfFunctionIsNotIntegerError("date_add", e)
@@ -768,7 +806,7 @@ abstract class TypeCoercionBase {
         DateAdd(l, Literal(days))
       case DateSub(l, r) if r.dataType == StringType && r.foldable =>
         val days = try {
-          AnsiCast(r, IntegerType).eval().asInstanceOf[Int]
+          Cast(r, IntegerType, ansiEnabled = true).eval().asInstanceOf[Int]
         } catch {
           case e: NumberFormatException =>
             throw QueryCompilationErrors.secondArgumentOfFunctionIsNotIntegerError("date_sub", e)
@@ -794,6 +832,7 @@ abstract class TypeCoercionBase {
 object TypeCoercion extends TypeCoercionBase {
 
   override def typeCoercionRules: List[Rule[LogicalPlan]] =
+    UnpivotCoercion ::
     WidenSetOperationTypes ::
     new CombinedTypeCoercionRule(
       InConversion ::
@@ -843,16 +882,12 @@ object TypeCoercion extends TypeCoercionBase {
         val index = numericPrecedence.lastIndexWhere(t => t == t1 || t == t2)
         Some(numericPrecedence(index))
 
-      case (_: TimestampType, _: DateType) | (_: DateType, _: TimestampType) =>
-        Some(TimestampType)
+      case (d1: DatetimeType, d2: DatetimeType) => Some(findWiderDateTimeType(d1, d2))
 
       case (t1: DayTimeIntervalType, t2: DayTimeIntervalType) =>
         Some(DayTimeIntervalType(t1.startField.min(t2.startField), t1.endField.max(t2.endField)))
       case (t1: YearMonthIntervalType, t2: YearMonthIntervalType) =>
         Some(YearMonthIntervalType(t1.startField.min(t2.startField), t1.endField.max(t2.endField)))
-
-      case (_: TimestampNTZType, _: DateType) | (_: DateType, _: TimestampNTZType) =>
-        Some(TimestampNTZType)
 
       case (t1, t2) => findTypeForComplex(t1, t2, findTightestCommonType)
   }
@@ -959,15 +994,13 @@ object TypeCoercion extends TypeCoercionBase {
       case (_: NumericType, target: NumericType) => target
 
       // Implicit cast between date time types
-      case (DateType, TimestampType) => TimestampType
-      case (DateType, AnyTimestampType) => AnyTimestampType.defaultConcreteType
-      case (TimestampType | TimestampNTZType, DateType) => DateType
+      case (_: DatetimeType, d: DatetimeType) => d
+      case (_: DatetimeType, AnyTimestampType) => AnyTimestampType.defaultConcreteType
 
       // Implicit cast from/to string
       case (StringType, DecimalType) => DecimalType.SYSTEM_DEFAULT
       case (StringType, target: NumericType) => target
-      case (StringType, DateType) => DateType
-      case (StringType, TimestampType) => TimestampType
+      case (StringType, datetime: DatetimeType) => datetime
       case (StringType, AnyTimestampType) => AnyTimestampType.defaultConcreteType
       case (StringType, BinaryType) => BinaryType
       // Cast any atomic type to string.
@@ -1047,6 +1080,7 @@ object TypeCoercion extends TypeCoercionBase {
   /**
    * Whether the data type contains StringType.
    */
+  @tailrec
   def hasStringType(dt: DataType): Boolean = dt match {
     case StringType => true
     case ArrayType(et, _) => hasStringType(et)
@@ -1088,24 +1122,6 @@ object TypeCoercion extends TypeCoercionBase {
           if findCommonTypeForBinaryComparison(left.dataType, right.dataType, conf).isDefined =>
         val commonType = findCommonTypeForBinaryComparison(left.dataType, right.dataType, conf).get
         p.makeCopy(Array(castExpr(left, commonType), castExpr(right, commonType)))
-
-      case Abs(e @ StringType(), failOnError) => Abs(Cast(e, DoubleType), failOnError)
-      case Sum(e @ StringType(), _) => Sum(Cast(e, DoubleType))
-      case Average(e @ StringType(), _) => Average(Cast(e, DoubleType))
-      case s @ StddevPop(e @ StringType(), _) =>
-        s.withNewChildren(Seq(Cast(e, DoubleType)))
-      case s @ StddevSamp(e @ StringType(), _) =>
-        s.withNewChildren(Seq(Cast(e, DoubleType)))
-      case m @ UnaryMinus(e @ StringType(), _) => m.withNewChildren(Seq(Cast(e, DoubleType)))
-      case UnaryPositive(e @ StringType()) => UnaryPositive(Cast(e, DoubleType))
-      case v @ VariancePop(e @ StringType(), _) =>
-        v.withNewChildren(Seq(Cast(e, DoubleType)))
-      case v @ VarianceSamp(e @ StringType(), _) =>
-        v.withNewChildren(Seq(Cast(e, DoubleType)))
-      case s @ Skewness(e @ StringType(), _) =>
-        s.withNewChildren(Seq(Cast(e, DoubleType)))
-      case k @ Kurtosis(e @ StringType(), _) =>
-        k.withNewChildren(Seq(Cast(e, DoubleType)))
     }
   }
 
@@ -1207,13 +1223,13 @@ trait TypeCoercionRule extends Rule[LogicalPlan] with Logging {
     // Check if the inputs have changed.
     val references = AttributeMap(plan.references.collect {
       case a if a.resolved => a -> a
-    }.toSeq)
+    })
     def sameButDifferent(a: Attribute): Boolean = {
       references.get(a).exists(b => b.dataType != a.dataType || b.nullable != a.nullable)
     }
     val inputMap = AttributeMap(plan.inputSet.collect {
       case a if a.resolved && sameButDifferent(a) => a -> a
-    }.toSeq)
+    })
     if (inputMap.isEmpty) {
       // Nothing changed.
       plan

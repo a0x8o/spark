@@ -54,6 +54,7 @@ which contains two batches of two objects:
 """
 
 import sys
+import os
 from itertools import chain, product
 import marshal
 import struct
@@ -66,7 +67,7 @@ import pickle
 pickle_protocol = pickle.HIGHEST_PROTOCOL
 
 from pyspark import cloudpickle
-from pyspark.util import print_exec  # type: ignore
+from pyspark.util import print_exec
 
 
 __all__ = [
@@ -78,7 +79,7 @@ __all__ = [
 ]
 
 
-class SpecialLengths(object):
+class SpecialLengths:
     END_OF_DATA_SECTION = -1
     PYTHON_EXCEPTION_THROWN = -2
     TIMING_DATA = -3
@@ -87,7 +88,7 @@ class SpecialLengths(object):
     START_ARROW_STREAM = -6
 
 
-class Serializer(object):
+class Serializer:
     def dump_stream(self, iterator, stream):
         """
         Serialize an iterator of objects to the output stream.
@@ -97,6 +98,13 @@ class Serializer(object):
     def load_stream(self, stream):
         """
         Return an iterator of deserialized objects from the input stream.
+        """
+        raise NotImplementedError
+
+    def dumps(self, obj):
+        """
+        Serialize an object into a byte array.
+        When batching is used, this will be called with an array of objects.
         """
         raise NotImplementedError
 
@@ -350,14 +358,14 @@ class NoOpSerializer(FramedSerializer):
         return obj
 
 
-if sys.version_info < (3, 8):
+if sys.version_info < (3, 8) or os.environ.get("PYSPARK_ENABLE_NAMEDTUPLE_PATCH") == "1":
     # Hack namedtuple, make it picklable.
     # For Python 3.8+, we use CPickle-based cloudpickle.
     # For Python 3.7 and below, we use legacy build-in CPickle which
     # requires namedtuple hack.
     # The whole hack here should be removed once we drop Python 3.7.
 
-    __cls = {}  # type: ignore
+    __cls = {}  # type: ignore[var-annotated]
 
     def _restore(name, fields, value):
         """Restore an object of namedtuple"""
@@ -464,10 +472,10 @@ class CloudPickleSerializer(FramedSerializer):
         return cloudpickle.loads(obj, encoding=encoding)
 
 
-if sys.version_info < (3, 8):
+if sys.version_info < (3, 8) or os.environ.get("PYSPARK_ENABLE_NAMEDTUPLE_PATCH") == "1":
     CPickleSerializer = PickleSerializer
 else:
-    CPickleSerializer = CloudPickleSerializer
+    CPickleSerializer = CloudPickleSerializer  # type: ignore[misc, assignment]
 
 
 class MarshalSerializer(FramedSerializer):
@@ -605,7 +613,7 @@ def write_with_length(obj, stream):
     stream.write(obj)
 
 
-class ChunkedStream(object):
+class ChunkedStream:
 
     """
     This is a file-like object takes a stream of data, of unknown length, and breaks it into fixed

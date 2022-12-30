@@ -14,33 +14,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
 import sys
 from typing import cast, Iterable, List, Tuple, TYPE_CHECKING, Union
 
-from pyspark import since, SparkContext
-from pyspark.sql.column import _to_seq, _to_java_column
+from py4j.java_gateway import JavaObject
 
-from py4j.java_gateway import JavaObject  # type: ignore[import]
+from pyspark import SparkContext
+from pyspark.sql.column import _to_seq, _to_java_column
+from pyspark.sql.utils import try_remote_window
 
 if TYPE_CHECKING:
-    from pyspark.sql._typing import ColumnOrName
+    from pyspark.sql._typing import ColumnOrName, ColumnOrName_
 
 __all__ = ["Window", "WindowSpec"]
 
 
-def _to_java_cols(cols: Tuple[Union["ColumnOrName", List["ColumnOrName"]], ...]) -> int:
-    sc = SparkContext._active_spark_context  # type: ignore[attr-defined]
+def _to_java_cols(cols: Tuple[Union["ColumnOrName", List["ColumnOrName_"]], ...]) -> JavaObject:
+    sc = SparkContext._active_spark_context
     if len(cols) == 1 and isinstance(cols[0], list):
         cols = cols[0]  # type: ignore[assignment]
+    assert sc is not None
     return _to_seq(sc, cast(Iterable["ColumnOrName"], cols), _to_java_column)
 
 
-class Window(object):
+class Window:
     """
     Utility functions for defining window in DataFrames.
 
-    .. versionadded:: 1.4
+    .. versionadded:: 1.4.0
+
+    .. versionchanged:: 3.4.0
+        Support Spark Connect.
 
     Notes
     -----
@@ -69,26 +73,119 @@ class Window(object):
     currentRow: int = 0
 
     @staticmethod
-    @since(1.4)
-    def partitionBy(*cols: Union["ColumnOrName", List["ColumnOrName"]]) -> "WindowSpec":
+    @try_remote_window
+    def partitionBy(*cols: Union["ColumnOrName", List["ColumnOrName_"]]) -> "WindowSpec":
         """
         Creates a :class:`WindowSpec` with the partitioning defined.
+
+        .. versionadded:: 1.4.0
+
+        Parameters
+        ----------
+        cols : str, :class:`Column` or list
+            names of columns or expressions
+
+        Returns
+        -------
+        :class: `WindowSpec`
+            A :class:`WindowSpec` with the partitioning defined.
+
+        Examples
+        --------
+        >>> from pyspark.sql import Window
+        >>> from pyspark.sql.functions import row_number
+        >>> df = spark.createDataFrame(
+        ...      [(1, "a"), (1, "a"), (2, "a"), (1, "b"), (2, "b"), (3, "b")], ["id", "category"])
+        >>> df.show()
+        +---+--------+
+        | id|category|
+        +---+--------+
+        |  1|       a|
+        |  1|       a|
+        |  2|       a|
+        |  1|       b|
+        |  2|       b|
+        |  3|       b|
+        +---+--------+
+
+        Show row number order by ``id`` in partition ``category``.
+
+        >>> window = Window.partitionBy("category").orderBy("id")
+        >>> df.withColumn("row_number", row_number().over(window)).show()
+        +---+--------+----------+
+        | id|category|row_number|
+        +---+--------+----------+
+        |  1|       a|         1|
+        |  1|       a|         2|
+        |  2|       a|         3|
+        |  1|       b|         1|
+        |  2|       b|         2|
+        |  3|       b|         3|
+        +---+--------+----------+
         """
-        sc = SparkContext._active_spark_context  # type: ignore[attr-defined]
+        sc = SparkContext._active_spark_context
+        assert sc is not None and sc._jvm is not None
         jspec = sc._jvm.org.apache.spark.sql.expressions.Window.partitionBy(_to_java_cols(cols))
         return WindowSpec(jspec)
 
     @staticmethod
-    @since(1.4)
-    def orderBy(*cols: Union["ColumnOrName", List["ColumnOrName"]]) -> "WindowSpec":
+    @try_remote_window
+    def orderBy(*cols: Union["ColumnOrName", List["ColumnOrName_"]]) -> "WindowSpec":
         """
         Creates a :class:`WindowSpec` with the ordering defined.
+
+        .. versionadded:: 1.4.0
+
+        Parameters
+        ----------
+        cols : str, :class:`Column` or list
+            names of columns or expressions
+
+        Returns
+        -------
+        :class: `WindowSpec`
+            A :class:`WindowSpec` with the ordering defined.
+
+        Examples
+        --------
+        >>> from pyspark.sql import Window
+        >>> from pyspark.sql.functions import row_number
+        >>> df = spark.createDataFrame(
+        ...      [(1, "a"), (1, "a"), (2, "a"), (1, "b"), (2, "b"), (3, "b")], ["id", "category"])
+        >>> df.show()
+        +---+--------+
+        | id|category|
+        +---+--------+
+        |  1|       a|
+        |  1|       a|
+        |  2|       a|
+        |  1|       b|
+        |  2|       b|
+        |  3|       b|
+        +---+--------+
+
+        Show row number order by ``category`` in partition ``id``.
+
+        >>> window = Window.partitionBy("id").orderBy("category")
+        >>> df.withColumn("row_number", row_number().over(window)).show()
+        +---+--------+----------+
+        | id|category|row_number|
+        +---+--------+----------+
+        |  1|       a|         1|
+        |  1|       a|         2|
+        |  1|       b|         3|
+        |  2|       a|         1|
+        |  2|       b|         2|
+        |  3|       b|         1|
+        +---+--------+----------+
         """
-        sc = SparkContext._active_spark_context  # type: ignore[attr-defined]
+        sc = SparkContext._active_spark_context
+        assert sc is not None and sc._jvm is not None
         jspec = sc._jvm.org.apache.spark.sql.expressions.Window.orderBy(_to_java_cols(cols))
         return WindowSpec(jspec)
 
     @staticmethod
+    @try_remote_window
     def rowsBetween(start: int, end: int) -> "WindowSpec":
         """
         Creates a :class:`WindowSpec` with the frame boundaries defined,
@@ -121,15 +218,33 @@ class Window(object):
             The frame is unbounded if this is ``Window.unboundedFollowing``, or
             any value greater than or equal to 9223372036854775807.
 
+        Returns
+        -------
+        :class: `WindowSpec`
+            A :class:`WindowSpec` with the frame boundaries defined,
+            from `start` (inclusive) to `end` (inclusive).
+
         Examples
         --------
         >>> from pyspark.sql import Window
         >>> from pyspark.sql import functions as func
-        >>> from pyspark.sql import SQLContext
-        >>> sc = SparkContext.getOrCreate()
-        >>> sqlContext = SQLContext(sc)
-        >>> tup = [(1, "a"), (1, "a"), (2, "a"), (1, "b"), (2, "b"), (3, "b")]
-        >>> df = sqlContext.createDataFrame(tup, ["id", "category"])
+        >>> df = spark.createDataFrame(
+        ...      [(1, "a"), (1, "a"), (2, "a"), (1, "b"), (2, "b"), (3, "b")], ["id", "category"])
+        >>> df.show()
+        +---+--------+
+        | id|category|
+        +---+--------+
+        |  1|       a|
+        |  1|       a|
+        |  2|       a|
+        |  1|       b|
+        |  2|       b|
+        |  3|       b|
+        +---+--------+
+
+        Calculate sum of ``id`` in the range from currentRow to currentRow + 1
+        in partition ``category``
+
         >>> window = Window.partitionBy("category").orderBy("id").rowsBetween(Window.currentRow, 1)
         >>> df.withColumn("sum", func.sum("id").over(window)).sort("id", "category", "sum").show()
         +---+--------+---+
@@ -148,11 +263,13 @@ class Window(object):
             start = Window.unboundedPreceding
         if end >= Window._FOLLOWING_THRESHOLD:
             end = Window.unboundedFollowing
-        sc = SparkContext._active_spark_context  # type: ignore[attr-defined]
+        sc = SparkContext._active_spark_context
+        assert sc is not None and sc._jvm is not None
         jspec = sc._jvm.org.apache.spark.sql.expressions.Window.rowsBetween(start, end)
         return WindowSpec(jspec)
 
     @staticmethod
+    @try_remote_window
     def rangeBetween(start: int, end: int) -> "WindowSpec":
         """
         Creates a :class:`WindowSpec` with the frame boundaries defined,
@@ -188,15 +305,33 @@ class Window(object):
             The frame is unbounded if this is ``Window.unboundedFollowing``, or
             any value greater than or equal to min(sys.maxsize, 9223372036854775807).
 
+        Returns
+        -------
+        :class: `WindowSpec`
+            A :class:`WindowSpec` with the frame boundaries defined,
+            from `start` (inclusive) to `end` (inclusive).
+
         Examples
         --------
         >>> from pyspark.sql import Window
         >>> from pyspark.sql import functions as func
-        >>> from pyspark.sql import SQLContext
-        >>> sc = SparkContext.getOrCreate()
-        >>> sqlContext = SQLContext(sc)
-        >>> tup = [(1, "a"), (1, "a"), (2, "a"), (1, "b"), (2, "b"), (3, "b")]
-        >>> df = sqlContext.createDataFrame(tup, ["id", "category"])
+        >>> df = spark.createDataFrame(
+        ...      [(1, "a"), (1, "a"), (2, "a"), (1, "b"), (2, "b"), (3, "b")], ["id", "category"])
+        >>> df.show()
+        +---+--------+
+        | id|category|
+        +---+--------+
+        |  1|       a|
+        |  1|       a|
+        |  2|       a|
+        |  1|       b|
+        |  2|       b|
+        |  3|       b|
+        +---+--------+
+
+        Calculate sum of ``id`` in the range from ``id`` of currentRow to ``id`` of currentRow + 1
+        in partition ``category``
+
         >>> window = Window.partitionBy("category").orderBy("id").rangeBetween(Window.currentRow, 1)
         >>> df.withColumn("sum", func.sum("id").over(window)).sort("id", "category").show()
         +---+--------+---+
@@ -215,12 +350,13 @@ class Window(object):
             start = Window.unboundedPreceding
         if end >= Window._FOLLOWING_THRESHOLD:
             end = Window.unboundedFollowing
-        sc = SparkContext._active_spark_context  # type: ignore[attr-defined]
+        sc = SparkContext._active_spark_context
+        assert sc is not None and sc._jvm is not None
         jspec = sc._jvm.org.apache.spark.sql.expressions.Window.rangeBetween(start, end)
         return WindowSpec(jspec)
 
 
-class WindowSpec(object):
+class WindowSpec:
     """
     A window specification that defines the partitioning, ordering,
     and frame boundaries.
@@ -228,12 +364,16 @@ class WindowSpec(object):
     Use the static methods in :class:`Window` to create a :class:`WindowSpec`.
 
     .. versionadded:: 1.4.0
+
+    .. versionchanged:: 3.4.0
+        Support Spark Connect.
     """
 
     def __init__(self, jspec: JavaObject) -> None:
         self._jspec = jspec
 
-    def partitionBy(self, *cols: Union["ColumnOrName", List["ColumnOrName"]]) -> "WindowSpec":
+    @try_remote_window
+    def partitionBy(self, *cols: Union["ColumnOrName", List["ColumnOrName_"]]) -> "WindowSpec":
         """
         Defines the partitioning columns in a :class:`WindowSpec`.
 
@@ -246,7 +386,8 @@ class WindowSpec(object):
         """
         return WindowSpec(self._jspec.partitionBy(_to_java_cols(cols)))
 
-    def orderBy(self, *cols: Union["ColumnOrName", List["ColumnOrName"]]) -> "WindowSpec":
+    @try_remote_window
+    def orderBy(self, *cols: Union["ColumnOrName", List["ColumnOrName_"]]) -> "WindowSpec":
         """
         Defines the ordering columns in a :class:`WindowSpec`.
 
@@ -259,6 +400,7 @@ class WindowSpec(object):
         """
         return WindowSpec(self._jspec.orderBy(_to_java_cols(cols)))
 
+    @try_remote_window
     def rowsBetween(self, start: int, end: int) -> "WindowSpec":
         """
         Defines the frame boundaries, from `start` (inclusive) to `end` (inclusive).
@@ -290,6 +432,7 @@ class WindowSpec(object):
             end = Window.unboundedFollowing
         return WindowSpec(self._jspec.rowsBetween(start, end))
 
+    @try_remote_window
     def rangeBetween(self, start: int, end: int) -> "WindowSpec":
         """
         Defines the frame boundaries, from `start` (inclusive) to `end` (inclusive).
@@ -324,13 +467,17 @@ class WindowSpec(object):
 
 def _test() -> None:
     import doctest
+    from pyspark.sql import SparkSession
     import pyspark.sql.window
 
-    SparkContext("local[4]", "PythonTest")
     globs = pyspark.sql.window.__dict__.copy()
+    spark = SparkSession.builder.master("local[4]").appName("sql.window tests").getOrCreate()
+    globs["spark"] = spark
+
     (failure_count, test_count) = doctest.testmod(
         pyspark.sql.window, globs=globs, optionflags=doctest.NORMALIZE_WHITESPACE
     )
+    spark.stop()
     if failure_count:
         sys.exit(-1)
 

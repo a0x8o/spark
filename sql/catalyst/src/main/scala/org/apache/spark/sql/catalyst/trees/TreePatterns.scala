@@ -25,7 +25,7 @@ object TreePattern extends Enumeration  {
   // Expression patterns (alphabetically ordered)
   val AGGREGATE_EXPRESSION = Value(0)
   val ALIAS: Value = Value
-  val AND_OR: Value = Value
+  val AND: Value = Value
   val ARRAYS_ZIP: Value = Value
   val ATTRIBUTE_REFERENCE: Value = Value
   val APPEND_COLUMNS: Value = Value
@@ -33,13 +33,11 @@ object TreePattern extends Enumeration  {
   val GROUPING_ANALYTICS: Value = Value
   val BINARY_ARITHMETIC: Value = Value
   val BINARY_COMPARISON: Value = Value
-  val BOOL_AGG: Value = Value
   val CASE_WHEN: Value = Value
   val CAST: Value = Value
   val COALESCE: Value = Value
   val CONCAT: Value = Value
   val COUNT: Value = Value
-  val COUNT_IF: Value = Value
   val CREATE_NAMED_STRUCT: Value = Value
   val CURRENT_LIKE: Value = Value
   val DESERIALIZE_TO_OBJECT: Value = Value
@@ -56,9 +54,11 @@ object TreePattern extends Enumeration  {
   val IN_SUBQUERY: Value = Value
   val INSET: Value = Value
   val INTERSECT: Value = Value
+  val INVOKE: Value = Value
   val JSON_TO_STRUCT: Value = Value
   val LAMBDA_FUNCTION: Value = Value
   val LAMBDA_VARIABLE: Value = Value
+  val LATERAL_COLUMN_ALIAS_REFERENCE: Value = Value
   val LATERAL_SUBQUERY: Value = Value
   val LIKE_FAMLIY: Value = Value
   val LIST_SUBQUERY: Value = Value
@@ -70,13 +70,19 @@ object TreePattern extends Enumeration  {
   val NULL_CHECK: Value = Value
   val NULL_LITERAL: Value = Value
   val SERIALIZE_FROM_OBJECT: Value = Value
+  val OR: Value = Value
   val OUTER_REFERENCE: Value = Value
+  val PARAMETER: Value = Value
   val PIVOT: Value = Value
   val PLAN_EXPRESSION: Value = Value
   val PYTHON_UDF: Value = Value
+  val REGEXP_EXTRACT_FAMILY: Value = Value
+  val REGEXP_REPLACE: Value = Value
   val RUNTIME_REPLACEABLE: Value = Value
   val SCALAR_SUBQUERY: Value = Value
+  val SCALAR_SUBQUERY_REFERENCE: Value = Value
   val SCALA_UDF: Value = Value
+  val SESSION_WINDOW: Value = Value
   val SORT: Value = Value
   val SUBQUERY_ALIAS: Value = Value
   val SUM: Value = Value
@@ -84,7 +90,9 @@ object TreePattern extends Enumeration  {
   val TIME_ZONE_AWARE_EXPRESSION: Value = Value
   val TRUE_OR_FALSE_LITERAL: Value = Value
   val WINDOW_EXPRESSION: Value = Value
+  val WINDOW_TIME: Value = Value
   val UNARY_POSITIVE: Value = Value
+  val UNPIVOT: Value = Value
   val UPDATE_FIELDS: Value = Value
   val UPPER_OR_LOWER: Value = Value
   val UP_CAST: Value = Value
@@ -110,6 +118,7 @@ object TreePattern extends Enumeration  {
   val PROJECT: Value = Value
   val RELATION_TIME_TRAVEL: Value = Value
   val REPARTITION_OPERATION: Value = Value
+  val REBALANCE_PARTITIONS: Value = Value
   val UNION: Value = Value
   val UNRESOLVED_RELATION: Value = Value
   val UNRESOLVED_WITH: Value = Value
@@ -127,8 +136,9 @@ object TreePattern extends Enumeration  {
   val UNRESOLVED_WINDOW_EXPRESSION: Value = Value
 
   // Unresolved Plan patterns (Alphabetically ordered)
-  val UNRESOLVED_SUBQUERY_COLUMN_ALIAS: Value = Value
   val UNRESOLVED_FUNC: Value = Value
+  val UNRESOLVED_SUBQUERY_COLUMN_ALIAS: Value = Value
+  val UNRESOLVED_TABLE_VALUED_FUNCTION: Value = Value
 
   // Execution expression patterns (alphabetically ordered)
   val IN_SUBQUERY_EXEC: Value = Value

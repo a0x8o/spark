@@ -44,9 +44,9 @@ class TimestampFormatterSuite extends DatetimeFormatterSuite {
       CET.getId -> 1543741872001234L,
       "Africa/Dakar" -> 1543745472001234L,
       "America/Los_Angeles" -> 1543774272001234L,
-      "Antarctica/Vostok" -> 1543723872001234L,
+      "Asia/Urumqi" -> 1543723872001234L,
       "Asia/Hong_Kong" -> 1543716672001234L,
-      "Europe/Amsterdam" -> 1543741872001234L)
+      "Europe/Brussels" -> 1543741872001234L)
     outstandingTimezonesIds.foreach { zoneId =>
       val formatter = TimestampFormatter(
         "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
@@ -65,9 +65,9 @@ class TimestampFormatterSuite extends DatetimeFormatterSuite {
       CET.getId -> "2018-12-02 11:11:12.001234",
       "Africa/Dakar" -> "2018-12-02 10:11:12.001234",
       "America/Los_Angeles" -> "2018-12-02 02:11:12.001234",
-      "Antarctica/Vostok" -> "2018-12-02 16:11:12.001234",
+      "Asia/Urumqi" -> "2018-12-02 16:11:12.001234",
       "Asia/Hong_Kong" -> "2018-12-02 18:11:12.001234",
-      "Europe/Amsterdam" -> "2018-12-02 11:11:12.001234")
+      "Europe/Brussels" -> "2018-12-02 11:11:12.001234")
     outstandingTimezonesIds.foreach { zoneId =>
       Seq(
         TimestampFormatter(
@@ -453,7 +453,23 @@ class TimestampFormatterSuite extends DatetimeFormatterSuite {
       val errMsg = intercept[DateTimeException] {
         formatter.parse("x123")
       }.getMessage
-      assert(errMsg.contains("Cannot cast x123 to TimestampType"))
+      assert(errMsg.contains(
+        """The value 'x123' of the type "STRING" cannot be cast to "TIMESTAMP""""))
     }
+  }
+
+  test("SPARK-39193: support returning optional parse results in the default formatter") {
+    val formatter = new DefaultTimestampFormatter(
+      DateTimeTestUtils.LA,
+      locale = DateFormatter.defaultLocale,
+      legacyFormat = LegacyDateFormats.SIMPLE_DATE_FORMAT,
+      isParsing = true)
+    assert(formatter.parseOptional("2021-01-01T00:00:00").contains(1609488000000000L))
+    assert(
+      formatter.parseWithoutTimeZoneOptional("2021-01-01T00:00:00", false)
+        .contains(1609459200000000L))
+    assert(formatter.parseOptional("abc").isEmpty)
+    assert(
+      formatter.parseWithoutTimeZoneOptional("abc", false).isEmpty)
   }
 }

@@ -23,6 +23,7 @@ import org.apache.orc.mapred.{OrcList, OrcMap, OrcStruct, OrcTimestamp}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{SpecificInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.catalyst.util._
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -46,7 +47,24 @@ class OrcDeserializer(
         if (requestedColIds(index) == -1) {
           null
         } else {
-          val writer = newWriter(f.dataType, new RowUpdater(resultRow))
+          // Create a RowUpdater instance for converting Orc objects to Catalyst rows. If any fields
+          // in the Orc result schema have associated existence default values, maintain a
+          // boolean array to track which fields have been explicitly assigned for each row.
+          val rowUpdater: RowUpdater =
+            if (requiredSchema.hasExistenceDefaultValues) {
+              resetExistenceDefaultsBitmask(requiredSchema)
+              new RowUpdaterWithBitmask(resultRow, requiredSchema.existenceDefaultsBitmask)
+            } else {
+              new RowUpdater(resultRow)
+            }
+          val writer: (Int, WritableComparable[_]) => Unit =
+            (ordinal, value) =>
+              if (value == null) {
+                rowUpdater.setNullAt(ordinal)
+              } else {
+                val writerFunc = newWriter(f.dataType, rowUpdater)
+                writerFunc(ordinal, value)
+              }
           (value: WritableComparable[_]) => writer(index, value)
         }
       }.toArray
@@ -57,14 +75,11 @@ class OrcDeserializer(
     while (targetColumnIndex < fieldWriters.length) {
       if (fieldWriters(targetColumnIndex) != null) {
         val value = orcStruct.getFieldValue(requestedColIds(targetColumnIndex))
-        if (value == null) {
-          resultRow.setNullAt(targetColumnIndex)
-        } else {
-          fieldWriters(targetColumnIndex)(value)
-        }
+        fieldWriters(targetColumnIndex)(value)
       }
       targetColumnIndex += 1
     }
+    applyExistenceDefaultValuesToRow(requiredSchema, resultRow)
     resultRow
   }
 
@@ -73,11 +88,7 @@ class OrcDeserializer(
     while (targetColumnIndex < fieldWriters.length) {
       if (fieldWriters(targetColumnIndex) != null) {
         val value = orcValues(requestedColIds(targetColumnIndex))
-        if (value == null) {
-          resultRow.setNullAt(targetColumnIndex)
-        } else {
-          fieldWriters(targetColumnIndex)(value)
-        }
+        fieldWriters(targetColumnIndex)(value)
       }
       targetColumnIndex += 1
     }
@@ -105,7 +116,7 @@ class OrcDeserializer(
       case IntegerType | _: YearMonthIntervalType => (ordinal, value) =>
         updater.setInt(ordinal, value.asInstanceOf[IntWritable].get)
 
-      case LongType | _: DayTimeIntervalType => (ordinal, value) =>
+      case LongType | _: DayTimeIntervalType | _: TimestampNTZType => (ordinal, value) =>
         updater.setLong(ordinal, value.asInstanceOf[LongWritable].get)
 
       case FloatType => (ordinal, value) =>
@@ -129,34 +140,43 @@ class OrcDeserializer(
       case TimestampType => (ordinal, value) =>
         updater.setLong(ordinal, DateTimeUtils.fromJavaTimestamp(value.asInstanceOf[OrcTimestamp]))
 
-      case TimestampNTZType => (ordinal, value) =>
-        updater.setLong(ordinal, OrcUtils.fromOrcNTZ(value.asInstanceOf[OrcTimestamp]))
-
       case DecimalType.Fixed(precision, scale) => (ordinal, value) =>
         val v = OrcShimUtils.getDecimal(value)
         v.changePrecision(precision, scale)
         updater.set(ordinal, v)
 
-      case st: StructType => (ordinal, value) =>
+      case st: StructType =>
         val result = new SpecificInternalRow(st)
         val fieldUpdater = new RowUpdater(result)
         val fieldConverters = st.map(_.dataType).map { dt =>
           newWriter(dt, fieldUpdater)
         }.toArray
-        val orcStruct = value.asInstanceOf[OrcStruct]
 
-        var i = 0
-        while (i < st.length) {
-          val value = orcStruct.getFieldValue(i)
-          if (value == null) {
-            result.setNullAt(i)
-          } else {
-            fieldConverters(i)(i, value)
-          }
-          i += 1
+        val containerUpdater = updater match {
+          case r: RowUpdater => r
+          case _ =>
+            // If the struct is contained by an array or map, we cannot reuse the same result row.
+            // We must copy the result row before setting it into the array or map
+            new CatalystDataUpdater {
+              override def set(ordinal: Int, value: Any) = {
+                updater.set(ordinal, value.asInstanceOf[SpecificInternalRow].copy())
+              }
+            }
         }
 
-        updater.set(ordinal, result)
+        (ordinal, value) =>
+          val orcStruct = value.asInstanceOf[OrcStruct]
+          var i = 0
+          while (i < st.length) {
+            val value = orcStruct.getFieldValue(i)
+            if (value == null) {
+              result.setNullAt(i)
+            } else {
+              fieldConverters(i)(i, value)
+            }
+            i += 1
+          }
+          containerUpdater.set(ordinal, result)
 
       case ArrayType(elementType, _) => (ordinal, value) =>
         val orcArray = value.asInstanceOf[OrcList[WritableComparable[_]]]
@@ -242,7 +262,7 @@ class OrcDeserializer(
     def setFloat(ordinal: Int, value: Float): Unit = set(ordinal, value)
   }
 
-  final class RowUpdater(row: InternalRow) extends CatalystDataUpdater {
+  class RowUpdater(row: InternalRow) extends CatalystDataUpdater {
     override def setNullAt(ordinal: Int): Unit = row.setNullAt(ordinal)
     override def set(ordinal: Int, value: Any): Unit = row.update(ordinal, value)
 
@@ -266,5 +286,50 @@ class OrcDeserializer(
     override def setLong(ordinal: Int, value: Long): Unit = array.setLong(ordinal, value)
     override def setDouble(ordinal: Int, value: Double): Unit = array.setDouble(ordinal, value)
     override def setFloat(ordinal: Int, value: Float): Unit = array.setFloat(ordinal, value)
+  }
+
+  /**
+   * Subclass of RowUpdater that also updates a boolean array bitmask. In this way, after all
+   * assignments are complete, it is possible to inspect the bitmask to determine which columns have
+   * been written at least once.
+   */
+  final class RowUpdaterWithBitmask(
+      row: InternalRow, bitmask: Array[Boolean]) extends RowUpdater(row) {
+    override def setNullAt(ordinal: Int): Unit = {
+      bitmask(ordinal) = false
+      super.setNullAt(ordinal)
+    }
+    override def set(ordinal: Int, value: Any): Unit = {
+      bitmask(ordinal) = false
+      super.set(ordinal, value)
+    }
+    override def setBoolean(ordinal: Int, value: Boolean): Unit = {
+      bitmask(ordinal) = false
+      super.setBoolean(ordinal, value)
+    }
+    override def setByte(ordinal: Int, value: Byte): Unit = {
+      bitmask(ordinal) = false
+      super.setByte(ordinal, value)
+    }
+    override def setShort(ordinal: Int, value: Short): Unit = {
+      bitmask(ordinal) = false
+      super.setShort(ordinal, value)
+    }
+    override def setInt(ordinal: Int, value: Int): Unit = {
+      bitmask(ordinal) = false
+      super.setInt(ordinal, value)
+    }
+    override def setLong(ordinal: Int, value: Long): Unit = {
+      bitmask(ordinal) = false
+      super.setLong(ordinal, value)
+    }
+    override def setDouble(ordinal: Int, value: Double): Unit = {
+      bitmask(ordinal) = false
+      super.setDouble(ordinal, value)
+    }
+    override def setFloat(ordinal: Int, value: Float): Unit = {
+      bitmask(ordinal) = false
+      super.setFloat(ordinal, value)
+    }
   }
 }

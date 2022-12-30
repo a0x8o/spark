@@ -20,14 +20,13 @@ package org.apache.spark.status
 import java.io.File
 import java.util.{Date, Properties}
 
-import scala.collection.JavaConverters._
-import scala.collection.immutable.Map
 import scala.reflect.{classTag, ClassTag}
 
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark._
 import org.apache.spark.executor.{ExecutorMetrics, TaskMetrics}
+import org.apache.spark.internal.config.History.{HYBRID_STORE_DISK_BACKEND, HybridStoreDiskBackend}
 import org.apache.spark.internal.config.Status._
 import org.apache.spark.metrics.ExecutorMetricType
 import org.apache.spark.resource.ResourceProfile
@@ -40,20 +39,21 @@ import org.apache.spark.tags.ExtendedLevelDBTest
 import org.apache.spark.util.Utils
 import org.apache.spark.util.kvstore.{InMemoryStore, KVStore}
 
-@ExtendedLevelDBTest
-class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
-  private val conf = new SparkConf()
-    .set(LIVE_ENTITY_UPDATE_PERIOD, 0L)
-    .set(ASYNC_TRACKING_ENABLED, false)
+abstract class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
 
   private val twoReplicaMemAndDiskLevel = StorageLevel(true, true, false, true, 2)
 
   private var time: Long = _
-  private var testDir: File = _
+  protected var testDir: File = _
   private var store: ElementTrackingStore = _
   private var taskIdTracker = -1L
 
-  protected def createKVStore: KVStore = KVUtils.open(testDir, getClass().getName())
+  protected def conf: SparkConf = new SparkConf()
+    .set(LIVE_ENTITY_UPDATE_PERIOD, 0L)
+    .set(ASYNC_TRACKING_ENABLED, false)
+
+  protected def createKVStore: KVStore =
+    KVUtils.open(testDir, getClass().getName(), conf, live = false)
 
   before {
     time = 0L
@@ -253,8 +253,8 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
         assert(stage.info.memoryBytesSpilled === s1Tasks.size * value)
       }
 
-      val execs = store.view(classOf[ExecutorStageSummaryWrapper]).index("stage")
-        .first(key(stages.head)).last(key(stages.head)).asScala.toSeq
+      val execs = KVUtils.viewToSeq(store.view(classOf[ExecutorStageSummaryWrapper]).index("stage")
+        .first(key(stages.head)).last(key(stages.head)))
       assert(execs.size > 0)
       execs.foreach { exec =>
         assert(exec.info.memoryBytesSpilled === s1Tasks.size * value / 2)
@@ -271,10 +271,9 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
       stageAttemptId = stages.head.attemptNumber))
 
     val executorStageSummaryWrappers =
-      store.view(classOf[ExecutorStageSummaryWrapper]).index("stage")
+      KVUtils.viewToSeq(store.view(classOf[ExecutorStageSummaryWrapper]).index("stage")
         .first(key(stages.head))
-        .last(key(stages.head))
-        .asScala.toSeq
+        .last(key(stages.head)))
 
     assert(executorStageSummaryWrappers.nonEmpty)
     executorStageSummaryWrappers.foreach { exec =>
@@ -300,10 +299,9 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
       stageAttemptId = stages.head.attemptNumber))
 
     val executorStageSummaryWrappersForNode =
-      store.view(classOf[ExecutorStageSummaryWrapper]).index("stage")
+      KVUtils.viewToSeq(store.view(classOf[ExecutorStageSummaryWrapper]).index("stage")
         .first(key(stages.head))
-        .last(key(stages.head))
-        .asScala.toSeq
+        .last(key(stages.head)))
 
     assert(executorStageSummaryWrappersForNode.nonEmpty)
     executorStageSummaryWrappersForNode.foreach { exec =>
@@ -344,6 +342,11 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
     check[TaskDataWrapper](reattempt.taskId) { task =>
       assert(task.index === s1Tasks.head.index)
       assert(task.attempt === reattempt.attemptNumber)
+    }
+
+    check[SpeculationStageSummaryWrapper](key(stages.head)) { stage =>
+      assert(stage.info.numActiveTasks == 2)
+      assert(stage.info.numTasks == 2)
     }
 
     // Kill one task, restart it.
@@ -428,6 +431,11 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
       assert(stage.info.numKilledTasks === 2)
       assert(stage.info.numActiveTasks === 0)
       assert(stage.info.numCompleteTasks === pending.size)
+    }
+
+    check[SpeculationStageSummaryWrapper](key(stages.head)) { stage =>
+      assert(stage.info.numCompletedTasks == 2)
+      assert(stage.info.numKilledTasks == 2)
     }
 
     pending.foreach { task =>
@@ -1353,13 +1361,13 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
         TaskKilled(reason = "Killed"), tasks(1), new ExecutorMetrics, null))
 
     // Ensure killed task metrics are updated
-    val allStages = store.view(classOf[StageDataWrapper]).reverse().asScala.map(_.info)
+    val allStages = KVUtils.viewToSeq(store.view(classOf[StageDataWrapper]).reverse()).map(_.info)
     val failedStages = allStages.filter(_.status == v1.StageStatus.FAILED)
     assert(failedStages.size == 1)
     assert(failedStages.head.numKilledTasks == 1)
     assert(failedStages.head.numCompleteTasks == 1)
 
-    val allJobs = store.view(classOf[JobDataWrapper]).reverse().asScala.map(_.info)
+    val allJobs = KVUtils.viewToSeq(store.view(classOf[JobDataWrapper]).reverse()).map(_.info)
     assert(allJobs.size == 1)
     assert(allJobs.head.numKilledTasks == 1)
     assert(allJobs.head.numCompletedTasks == 1)
@@ -1416,14 +1424,15 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
         ExecutorLostFailure("2", true, Some("Lost executor")), tasks(3), new ExecutorMetrics,
         null))
 
-      val esummary = store.view(classOf[ExecutorStageSummaryWrapper]).asScala.map(_.info)
+      val esummary = KVUtils.viewToSeq(store.view(classOf[ExecutorStageSummaryWrapper])).map(_.info)
       esummary.foreach { execSummary =>
         assert(execSummary.failedTasks === 1)
         assert(execSummary.succeededTasks === 1)
         assert(execSummary.killedTasks === 0)
       }
 
-      val allExecutorSummary = store.view(classOf[ExecutorSummaryWrapper]).asScala.map(_.info)
+      val allExecutorSummary =
+        KVUtils.viewToSeq(store.view(classOf[ExecutorSummaryWrapper])).map(_.info)
       assert(allExecutorSummary.size === 2)
       allExecutorSummary.foreach { allExecSummary =>
         assert(allExecSummary.failedTasks === 1)
@@ -1661,7 +1670,7 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
     }
 
     // check peak executor metric values for each stage and executor
-    val stageExecSummaries = store.view(classOf[ExecutorStageSummaryWrapper]).asScala.toSeq
+    val stageExecSummaries = KVUtils.viewToSeq(store.view(classOf[ExecutorStageSummaryWrapper]))
     stageExecSummaries.foreach { exec =>
       expectedStageValues.get(exec.stageId) match {
         case Some(stageValue) =>
@@ -1840,6 +1849,68 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
     checkInfoPopulated(listener, logUrlMap, processId)
   }
 
+  test("SPARK-41187: Stage should be removed from liveStages to avoid deadExecutors accumulated") {
+
+    val listener = new AppStatusListener(store, conf, true)
+
+    listener.onExecutorAdded(createExecutorAddedEvent(1))
+    listener.onExecutorAdded(createExecutorAddedEvent(2))
+    val stage = new StageInfo(1, 0, "stage", 4, Nil, Nil, "details",
+      resourceProfileId = ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID)
+    listener.onJobStart(SparkListenerJobStart(1, time, Seq(stage), null))
+
+    time += 1
+    stage.submissionTime = Some(time)
+    listener.onStageSubmitted(SparkListenerStageSubmitted(stage, new Properties()))
+
+    val tasks = createTasks(2, Array("1", "2"))
+    tasks.foreach { task =>
+      listener.onTaskStart(SparkListenerTaskStart(stage.stageId, stage.attemptNumber, task))
+    }
+
+    time += 1
+    tasks(0).markFinished(TaskState.FINISHED, time)
+    listener.onTaskEnd(SparkListenerTaskEnd(stage.stageId, stage.attemptNumber, "taskType",
+      Success, tasks(0), new ExecutorMetrics, null))
+
+    // executor lost, success task will be resubmitted
+    time += 1
+    listener.onTaskEnd(SparkListenerTaskEnd(stage.stageId, stage.attemptNumber, "taskType",
+      Resubmitted, tasks(0), new ExecutorMetrics, null))
+
+    // executor lost, running task will be failed and rerun
+    time += 1
+    tasks(1).markFinished(TaskState.FAILED, time)
+    listener.onTaskEnd(SparkListenerTaskEnd(stage.stageId, stage.attemptNumber, "taskType",
+      ExecutorLostFailure("1", true, Some("Lost executor")), tasks(1), new ExecutorMetrics,
+      null))
+
+    tasks.foreach { task =>
+      listener.onTaskStart(SparkListenerTaskStart(stage.stageId, stage.attemptNumber, task))
+    }
+
+    time += 1
+    tasks(0).markFinished(TaskState.FINISHED, time)
+    listener.onTaskEnd(SparkListenerTaskEnd(stage.stageId, stage.attemptNumber, "taskType",
+      Success, tasks(0), new ExecutorMetrics, null))
+
+    time += 1
+    tasks(1).markFinished(TaskState.FINISHED, time)
+    listener.onTaskEnd(SparkListenerTaskEnd(stage.stageId, stage.attemptNumber, "taskType",
+      Success, tasks(1), new ExecutorMetrics, null))
+
+    listener.onStageCompleted(SparkListenerStageCompleted(stage))
+    time += 1
+    listener.onJobEnd(SparkListenerJobEnd(1, time, JobSucceeded ))
+
+    time += 1
+    listener.onExecutorRemoved(SparkListenerExecutorRemoved(time, "1", "Test"))
+    time += 1
+    listener.onExecutorRemoved(SparkListenerExecutorRemoved(time, "2", "Test"))
+
+    assert(listener.deadExecutors.size === 0)
+  }
+
   private def key(stage: StageInfo): Array[Int] = Array(stage.stageId, stage.attemptNumber)
 
   private def check[T: ClassTag](key: Any)(fn: T => Unit): Unit = {
@@ -1849,7 +1920,8 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
 
   private def newAttempt(orig: TaskInfo, nextId: Long): TaskInfo = {
     // Task reattempts have a different ID, but the same index as the original.
-    new TaskInfo(nextId, orig.index, orig.attemptNumber + 1, time, orig.executorId,
+    new TaskInfo(
+      nextId, orig.index, orig.attemptNumber + 1, orig.partitionId, time, orig.executorId,
       s"${orig.executorId}.example.com", TaskLocality.PROCESS_LOCAL, orig.speculative)
   }
 
@@ -1857,7 +1929,9 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
     (1 to count).map { id =>
       val exec = execs(id.toInt % execs.length)
       val taskId = nextTaskId()
-      new TaskInfo(taskId, taskId.toInt, 1, time, exec, s"$exec.example.com",
+      val taskIndex = id - 1
+      val partitionId = taskIndex
+      new TaskInfo(taskId, taskIndex, 1, partitionId, time, exec, s"$exec.example.com",
         TaskLocality.PROCESS_LOCAL, id % 2 == 0)
     }
   }
@@ -1880,4 +1954,24 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
 
 class AppStatusListenerWithInMemoryStoreSuite extends AppStatusListenerSuite {
   override def createKVStore: KVStore = new InMemoryStore()
+}
+
+@ExtendedLevelDBTest
+class AppStatusListenerWithLevelDBSuite extends AppStatusListenerSuite {
+  override def conf: SparkConf = super.conf
+    .set(HYBRID_STORE_DISK_BACKEND, HybridStoreDiskBackend.LEVELDB.toString)
+}
+
+class AppStatusListenerWithRocksDBSuite extends AppStatusListenerSuite {
+  override def conf: SparkConf = super.conf
+    .set(HYBRID_STORE_DISK_BACKEND, HybridStoreDiskBackend.ROCKSDB.toString)
+}
+
+class AppStatusListenerWithProtobufSerializerSuite extends AppStatusListenerSuite {
+  override def createKVStore: KVStore =
+    KVUtils.open(
+      testDir,
+      getClass().getName(),
+      conf,
+      live = true)
 }

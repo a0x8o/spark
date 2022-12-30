@@ -20,8 +20,9 @@ package org.apache.spark.sql.execution.vectorized
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
+import java.sql.{Date, Timestamp}
+import java.time.LocalDateTime
 import java.util
-import java.util.NoSuchElementException
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -1378,12 +1379,26 @@ class ColumnarBatchSuite extends SparkFunSuite {
             "Seed = " + seed)
           case DoubleType => assert(doubleEquals(r1.getDouble(ordinal), r2.getDouble(ordinal)),
             "Seed = " + seed)
+          case DateType =>
+            assert(r1.getInt(ordinal) == DateTimeUtils.fromJavaDate(r2.getDate(ordinal)),
+              "Seed = " + seed)
+          case TimestampType =>
+            assert(r1.getLong(ordinal) ==
+              DateTimeUtils.fromJavaTimestamp(r2.getTimestamp(ordinal)),
+              "Seed = " + seed)
+          case TimestampNTZType =>
+            assert(r1.getLong(ordinal) ==
+              DateTimeUtils.localDateTimeToMicros(r2.getAs[LocalDateTime](ordinal)),
+              "Seed = " + seed)
           case t: DecimalType =>
             val d1 = r1.getDecimal(ordinal, t.precision, t.scale).toBigDecimal
             val d2 = r2.getDecimal(ordinal)
             assert(d1.compare(d2) == 0, "Seed = " + seed)
           case StringType =>
             assert(r1.getString(ordinal) == r2.getString(ordinal), "Seed = " + seed)
+          case BinaryType =>
+            assert(r1.getBinary(ordinal) sameElements r2.getAs[Array[Byte]](ordinal),
+              "Seed = " + seed)
           case CalendarIntervalType =>
             assert(r1.getInterval(ordinal) === r2.get(ordinal).asInstanceOf[CalendarInterval])
           case ArrayType(childType, n) =>
@@ -1403,6 +1418,50 @@ class ColumnarBatchSuite extends SparkFunSuite {
                 while (i < a1.length) {
                   assert(doubleEquals(a1(i).asInstanceOf[Float], a2(i).asInstanceOf[Float]),
                     "Seed = " + seed)
+                  i += 1
+                }
+              case StringType =>
+                var i = 0
+                while (i < a1.length) {
+                  assert((a1(i) == null) == (a2(i) == null), "Seed = " + seed)
+                  if (a1(i) != null) {
+                    val s1 = a1(i).asInstanceOf[UTF8String].toString
+                    val s2 = a2(i).asInstanceOf[String]
+                    assert(s1 === s2, "Seed = " + seed)
+                  }
+                  i += 1
+                }
+              case DateType =>
+                var i = 0
+                while (i < a1.length) {
+                  assert((a1(i) == null) == (a2(i) == null), "Seed = " + seed)
+                  if (a1(i) != null) {
+                    val i1 = a1(i).asInstanceOf[Int]
+                    val i2 = DateTimeUtils.fromJavaDate(a2(i).asInstanceOf[Date])
+                    assert(i1 === i2, "Seed = " + seed)
+                  }
+                  i += 1
+                }
+              case TimestampType =>
+                var i = 0
+                while (i < a1.length) {
+                  assert((a1(i) == null) == (a2(i) == null), "Seed = " + seed)
+                  if (a1(i) != null) {
+                    val i1 = a1(i).asInstanceOf[Long]
+                    val i2 = DateTimeUtils.fromJavaTimestamp(a2(i).asInstanceOf[Timestamp])
+                    assert(i1 === i2, "Seed = " + seed)
+                  }
+                  i += 1
+                }
+              case TimestampNTZType =>
+                var i = 0
+                while (i < a1.length) {
+                  assert((a1(i) == null) == (a2(i) == null), "Seed = " + seed)
+                  if (a1(i) != null) {
+                    val i1 = a1(i).asInstanceOf[Long]
+                    val i2 = DateTimeUtils.localDateTimeToMicros(a2(i).asInstanceOf[LocalDateTime])
+                    assert(i1 === i2, "Seed = " + seed)
+                  }
                   i += 1
                 }
               case t: DecimalType =>
@@ -1456,12 +1515,12 @@ class ColumnarBatchSuite extends SparkFunSuite {
    * results.
    */
   def testRandomRows(flatSchema: Boolean, numFields: Int): Unit = {
-    // TODO: Figure out why StringType doesn't work on jenkins.
     val types = Array(
       BooleanType, ByteType, FloatType, DoubleType, IntegerType, LongType, ShortType,
       DecimalType.ShortDecimal, DecimalType.IntDecimal, DecimalType.ByteDecimal,
       DecimalType.FloatDecimal, DecimalType.LongDecimal, new DecimalType(5, 2),
-      new DecimalType(12, 2), new DecimalType(30, 10), CalendarIntervalType)
+      new DecimalType(12, 2), new DecimalType(30, 10), CalendarIntervalType,
+      DateType, StringType, BinaryType, TimestampType, TimestampNTZType)
     val seed = System.nanoTime()
     val NUM_ROWS = 200
     val NUM_ITERS = 1000
@@ -1591,10 +1650,21 @@ class ColumnarBatchSuite extends SparkFunSuite {
         )) ::
         StructField("int_to_int", MapType(IntegerType, IntegerType)) ::
         StructField("binary", BinaryType) ::
+        StructField("ts_ntz", TimestampNTZType) ::
         Nil)
     var mapBuilder = new ArrayBasedMapBuilder(IntegerType, IntegerType)
     mapBuilder.put(1, 10)
     mapBuilder.put(20, null)
+
+    val tsString1 = "2015-01-01 23:50:59.123"
+    val ts1 = DateTimeUtils.fromJavaTimestamp(java.sql.Timestamp.valueOf(tsString1))
+    val tsNTZ1 =
+      DateTimeUtils.localDateTimeToMicros(LocalDateTime.parse(tsString1.replace(" ", "T")))
+    val tsString2 = "1880-01-05 12:45:21.321"
+    val ts2 = DateTimeUtils.fromJavaTimestamp(java.sql.Timestamp.valueOf(tsString2))
+    val tsNTZ2 =
+      DateTimeUtils.localDateTimeToMicros(LocalDateTime.parse(tsString2.replace(" ", "T")))
+
     val row1 = new GenericInternalRow(Array[Any](
       UTF8String.fromString("a string"),
       true,
@@ -1606,12 +1676,13 @@ class ColumnarBatchSuite extends SparkFunSuite {
       0.75D,
       Decimal("1234.23456"),
       DateTimeUtils.fromJavaDate(java.sql.Date.valueOf("2015-01-01")),
-      DateTimeUtils.fromJavaTimestamp(java.sql.Timestamp.valueOf("2015-01-01 23:50:59.123")),
+      ts1,
       new CalendarInterval(1, 0, 0),
       new GenericArrayData(Array(1, 2, 3, 4, null)),
       new GenericInternalRow(Array[Any](5.asInstanceOf[Any], 10)),
       mapBuilder.build(),
-      "Spark SQL".getBytes()
+      "Spark SQL".getBytes(),
+      tsNTZ1
     ))
 
     mapBuilder = new ArrayBasedMapBuilder(IntegerType, IntegerType)
@@ -1628,15 +1699,17 @@ class ColumnarBatchSuite extends SparkFunSuite {
       Double.PositiveInfinity,
       Decimal("0.01000"),
       DateTimeUtils.fromJavaDate(java.sql.Date.valueOf("1875-12-12")),
-      DateTimeUtils.fromJavaTimestamp(java.sql.Timestamp.valueOf("1880-01-05 12:45:21.321")),
+      ts2,
       new CalendarInterval(-10, -50, -100),
       new GenericArrayData(Array(5, 10, -100)),
       new GenericInternalRow(Array[Any](20.asInstanceOf[Any], null)),
       mapBuilder.build(),
-      "Parquet".getBytes()
+      "Parquet".getBytes(),
+      tsNTZ2
     ))
 
     val row3 = new GenericInternalRow(Array[Any](
+      null,
       null,
       null,
       null,
@@ -1716,10 +1789,8 @@ class ColumnarBatchSuite extends SparkFunSuite {
       assert(columns(9).isNullAt(2))
 
       assert(columns(10).dataType() == TimestampType)
-      assert(columns(10).getLong(0) ==
-        DateTimeUtils.fromJavaTimestamp(java.sql.Timestamp.valueOf("2015-01-01 23:50:59.123")))
-      assert(columns(10).getLong(1) ==
-        DateTimeUtils.fromJavaTimestamp(java.sql.Timestamp.valueOf("1880-01-05 12:45:21.321")))
+      assert(columns(10).getLong(0) == ts1)
+      assert(columns(10).getLong(1) == ts2)
       assert(columns(10).isNullAt(2))
 
       assert(columns(11).dataType() == CalendarIntervalType)
@@ -1777,6 +1848,11 @@ class ColumnarBatchSuite extends SparkFunSuite {
       assert(new String(columns(15).getBinary(0)) == "Spark SQL")
       assert(new String(columns(15).getBinary(1)) == "Parquet")
       assert(columns(15).isNullAt(2))
+
+      assert(columns(16).dataType() == TimestampNTZType)
+      assert(columns(16).getLong(0) == tsNTZ1)
+      assert(columns(16).getLong(1) == tsNTZ2)
+      assert(columns(16).isNullAt(2))
     } finally {
       batch.close()
     }

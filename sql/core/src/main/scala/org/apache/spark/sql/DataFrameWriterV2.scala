@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.annotation.Experimental
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchTableException, TableAlreadyExistsException, UnresolvedDBObjectName, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchTableException, TableAlreadyExistsException, UnresolvedIdentifier, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Bucket, Days, Hours, Literal, Months, Years}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CreateTableAsSelect, LogicalPlan, OverwriteByExpression, OverwritePartitionsDynamic, ReplaceTableAsSelect, TableSpec}
 import org.apache.spark.sql.connector.expressions.{LogicalExpressions, NamedReference, Transform}
@@ -108,7 +108,6 @@ final class DataFrameWriterV2[T] private[sql](table: String, ds: Dataset[T])
 
   override def create(): Unit = {
     val tableSpec = TableSpec(
-      bucketSpec = None,
       properties = properties.toMap,
       provider = provider,
       options = Map.empty,
@@ -118,7 +117,7 @@ final class DataFrameWriterV2[T] private[sql](table: String, ds: Dataset[T])
       external = false)
     runCommand(
       CreateTableAsSelect(
-        UnresolvedDBObjectName(tableName, isNamespace = false),
+        UnresolvedIdentifier(tableName),
         partitioning.getOrElse(Seq.empty),
         logicalPlan,
         tableSpec,
@@ -198,7 +197,6 @@ final class DataFrameWriterV2[T] private[sql](table: String, ds: Dataset[T])
 
   private def internalReplace(orCreate: Boolean): Unit = {
     val tableSpec = TableSpec(
-      bucketSpec = None,
       properties = properties.toMap,
       provider = provider,
       options = Map.empty,
@@ -207,7 +205,7 @@ final class DataFrameWriterV2[T] private[sql](table: String, ds: Dataset[T])
       serde = None,
       external = false)
     runCommand(ReplaceTableAsSelect(
-      UnresolvedDBObjectName(tableName, isNamespace = false),
+      UnresolvedIdentifier(tableName),
       partitioning.getOrElse(Seq.empty),
       logicalPlan,
       tableSpec,

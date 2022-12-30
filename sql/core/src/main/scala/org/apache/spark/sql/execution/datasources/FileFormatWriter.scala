@@ -35,14 +35,11 @@ import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
-import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
-import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
+import org.apache.spark.sql.connector.write.WriterCommitMessage
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.execution.{ProjectExec, SortExec, SparkPlan, SQLExecution, UnsafeExternalRowSorter}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.StringType
-import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 
@@ -54,30 +51,18 @@ object FileFormatWriter extends Logging {
       customPartitionLocations: Map[TablePartitionSpec, String],
       outputColumns: Seq[Attribute])
 
-  /** A function that converts the empty string to null for partition values. */
-  case class Empty2Null(child: Expression) extends UnaryExpression with String2StringExpression {
-    override def convert(v: UTF8String): UTF8String = if (v.numBytes() == 0) null else v
-    override def nullable: Boolean = true
-    override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
-      nullSafeCodeGen(ctx, ev, c => {
-        s"""if ($c.numBytes() == 0) {
-           |  ${ev.isNull} = true;
-           |  ${ev.value} = null;
-           |} else {
-           |  ${ev.value} = $c;
-           |}""".stripMargin
-      })
-    }
-
-    override protected def withNewChildInternal(newChild: Expression): Empty2Null =
-      copy(child = newChild)
-  }
-
   /** Describes how concurrent output writers should be executed. */
   case class ConcurrentOutputWriterSpec(
       maxWriters: Int,
       createSorter: () => UnsafeExternalRowSorter)
 
+  /**
+   * A variable used in tests to check whether the output ordering of the query matches the
+   * required ordering of the write command.
+   */
+  private[sql] var outputOrderingMatched: Boolean = false
+
+  // scalastyle:off argcount
   /**
    * Basic work flow of this command is:
    * 1. Driver side setup, including output committer initialization and data source specific
@@ -102,8 +87,10 @@ object FileFormatWriter extends Logging {
       partitionColumns: Seq[Attribute],
       bucketSpec: Option[BucketSpec],
       statsTrackers: Seq[WriteJobStatsTracker],
-      options: Map[String, String])
+      options: Map[String, String],
+      numStaticPartitionCols: Int = 0)
     : Set[String] = {
+    require(partitionColumns.size >= numStaticPartitionCols)
 
     val job = Job.getInstance(hadoopConf)
     job.setOutputKeyClass(classOf[Void])
@@ -111,54 +98,20 @@ object FileFormatWriter extends Logging {
     FileOutputFormat.setOutputPath(job, new Path(outputSpec.outputPath))
 
     val partitionSet = AttributeSet(partitionColumns)
-    val dataColumns = outputSpec.outputColumns.filterNot(partitionSet.contains)
+    // cleanup the internal metadata information of
+    // the file source metadata attribute if any before write out
+    val finalOutputSpec = outputSpec.copy(outputColumns = outputSpec.outputColumns
+      .map(FileSourceMetadataAttribute.cleanupFileSourceMetadataInformation))
+    val dataColumns = finalOutputSpec.outputColumns.filterNot(partitionSet.contains)
 
-    var needConvert = false
-    val projectList: Seq[NamedExpression] = plan.output.map {
-      case p if partitionSet.contains(p) && p.dataType == StringType && p.nullable =>
-        needConvert = true
-        Alias(Empty2Null(p), p.name)()
-      case attr => attr
-    }
-    val empty2NullPlan = if (needConvert) ProjectExec(projectList, plan) else plan
-
-    val writerBucketSpec = bucketSpec.map { spec =>
-      val bucketColumns = spec.bucketColumnNames.map(c => dataColumns.find(_.name == c).get)
-
-      if (options.getOrElse(BucketingUtils.optionForHiveCompatibleBucketWrite, "false") ==
-        "true") {
-        // Hive bucketed table: use `HiveHash` and bitwise-and as bucket id expression.
-        // Without the extra bitwise-and operation, we can get wrong bucket id when hash value of
-        // columns is negative. See Hive implementation in
-        // `org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorUtils#getBucketNumber()`.
-        val hashId = BitwiseAnd(HiveHash(bucketColumns), Literal(Int.MaxValue))
-        val bucketIdExpression = Pmod(hashId, Literal(spec.numBuckets))
-
-        // The bucket file name prefix is following Hive, Presto and Trino conversion, so this
-        // makes sure Hive bucketed table written by Spark, can be read by other SQL engines.
-        //
-        // Hive: `org.apache.hadoop.hive.ql.exec.Utilities#getBucketIdFromFile()`.
-        // Trino: `io.trino.plugin.hive.BackgroundHiveSplitLoader#BUCKET_PATTERNS`.
-        val fileNamePrefix = (bucketId: Int) => f"$bucketId%05d_0_"
-        WriterBucketSpec(bucketIdExpression, fileNamePrefix)
-      } else {
-        // Spark bucketed table: use `HashPartitioning.partitionIdExpression` as bucket id
-        // expression, so that we can guarantee the data distribution is same between shuffle and
-        // bucketed data source, which enables us to only shuffle one side when join a bucketed
-        // table and a normal one.
-        val bucketIdExpression = HashPartitioning(bucketColumns, spec.numBuckets)
-          .partitionIdExpression
-        WriterBucketSpec(bucketIdExpression, (_: Int) => "")
-      }
-    }
-    val sortColumns = bucketSpec.toSeq.flatMap {
-      spec => spec.sortColumnNames.map(c => dataColumns.find(_.name == c).get)
-    }
+    val writerBucketSpec = V1WritesUtils.getWriterBucketSpec(bucketSpec, dataColumns, options)
+    val sortColumns = V1WritesUtils.getBucketSortColumns(bucketSpec, dataColumns)
 
     val caseInsensitiveOptions = CaseInsensitiveMap(options)
 
     val dataSchema = dataColumns.toStructType
     DataSourceUtils.verifySchema(fileFormat, dataSchema)
+    DataSourceUtils.checkFieldNames(fileFormat, dataSchema)
     // Note: prepareWrite has side effect. It sets "job".
     val outputWriterFactory =
       fileFormat.prepareWrite(sparkSession, job, caseInsensitiveOptions, dataSchema)
@@ -167,12 +120,12 @@ object FileFormatWriter extends Logging {
       uuid = UUID.randomUUID.toString,
       serializableHadoopConf = new SerializableConfiguration(job.getConfiguration),
       outputWriterFactory = outputWriterFactory,
-      allColumns = outputSpec.outputColumns,
+      allColumns = finalOutputSpec.outputColumns,
       dataColumns = dataColumns,
       partitionColumns = partitionColumns,
       bucketSpec = writerBucketSpec,
-      path = outputSpec.outputPath,
-      customPartitionLocations = outputSpec.customPartitionLocations,
+      path = finalOutputSpec.outputPath,
+      customPartitionLocations = finalOutputSpec.customPartitionLocations,
       maxRecordsPerFile = caseInsensitiveOptions.get("maxRecordsPerFile").map(_.toLong)
         .getOrElse(sparkSession.sessionState.conf.maxRecordsPerFile),
       timeZoneId = caseInsensitiveOptions.get(DateTimeUtils.TIMEZONE_OPTION)
@@ -180,19 +133,15 @@ object FileFormatWriter extends Logging {
       statsTrackers = statsTrackers
     )
 
-    // We should first sort by partition columns, then bucket id, and finally sorting columns.
-    val requiredOrdering =
-      partitionColumns ++ writerBucketSpec.map(_.bucketIdExpression) ++ sortColumns
+    // We should first sort by dynamic partition columns, then bucket id, and finally sorting
+    // columns.
+    val requiredOrdering = partitionColumns.drop(numStaticPartitionCols) ++
+        writerBucketSpec.map(_.bucketIdExpression) ++ sortColumns
+    val writeFilesOpt = V1WritesUtils.getWriteFilesOpt(plan)
     // the sort order doesn't matter
-    val actualOrdering = empty2NullPlan.outputOrdering.map(_.child)
-    val orderingMatched = if (requiredOrdering.length > actualOrdering.length) {
-      false
-    } else {
-      requiredOrdering.zip(actualOrdering).forall {
-        case (requiredOrder, childOutputOrder) =>
-          requiredOrder.semanticEquals(childOutputOrder)
-      }
-    }
+    // Use the output ordering from the original plan before adding the empty2null projection.
+    val actualOrdering = writeFilesOpt.map(_.child).getOrElse(plan).outputOrdering.map(_.child)
+    val orderingMatched = V1WritesUtils.isOrderingMatched(requiredOrdering, actualOrdering)
 
     SQLExecution.checkSQLExecutionId(sparkSession)
 
@@ -200,31 +149,65 @@ object FileFormatWriter extends Logging {
     // get an ID guaranteed to be unique.
     job.getConfiguration.set("spark.sql.sources.writeJobUUID", description.uuid)
 
-    // This call shouldn't be put into the `try` block below because it only initializes and
-    // prepares the job, any exception thrown from here shouldn't cause abortJob() to be called.
-    committer.setupJob(job)
+    // When `PLANNED_WRITE_ENABLED` is true, the optimizer rule V1Writes will add logical sort
+    // operator based on the required ordering of the V1 write command. So the output
+    // ordering of the physical plan should always match the required ordering. Here
+    // we set the variable to verify this behavior in tests.
+    // There are two cases where FileFormatWriter still needs to add physical sort:
+    // 1) When the planned write config is disabled.
+    // 2) When the concurrent writers are enabled (in this case the required ordering of a
+    //    V1 write command will be empty).
+    if (Utils.isTesting) outputOrderingMatched = orderingMatched
 
-    try {
+    if (writeFilesOpt.isDefined) {
+      // build `WriteFilesSpec` for `WriteFiles`
+      val concurrentOutputWriterSpecFunc = (plan: SparkPlan) => {
+        val sortPlan = createSortPlan(plan, requiredOrdering, outputSpec)
+        createConcurrentOutputWriterSpec(sparkSession, sortPlan, sortColumns)
+      }
+      val writeSpec = WriteFilesSpec(
+        description = description,
+        committer = committer,
+        concurrentOutputWriterSpecFunc = concurrentOutputWriterSpecFunc
+      )
+      executeWrite(sparkSession, plan, writeSpec, job)
+    } else {
+      executeWrite(sparkSession, plan, job, description, committer, outputSpec,
+        requiredOrdering, partitionColumns, sortColumns, orderingMatched)
+    }
+  }
+  // scalastyle:on argcount
+
+  private def executeWrite(
+      sparkSession: SparkSession,
+      plan: SparkPlan,
+      job: Job,
+      description: WriteJobDescription,
+      committer: FileCommitProtocol,
+      outputSpec: OutputSpec,
+      requiredOrdering: Seq[Expression],
+      partitionColumns: Seq[Attribute],
+      sortColumns: Seq[Attribute],
+      orderingMatched: Boolean): Set[String] = {
+    val hasEmpty2Null = plan.exists(p => V1WritesUtils.hasEmptyToNull(p.expressions))
+    val empty2NullPlan = if (hasEmpty2Null) {
+      plan
+    } else {
+      val projectList = V1WritesUtils.convertEmptyToNull(plan.output, partitionColumns)
+      if (projectList.nonEmpty) ProjectExec(projectList, plan) else plan
+    }
+
+    writeAndCommit(job, description, committer) {
       val (rdd, concurrentOutputWriterSpec) = if (orderingMatched) {
         (empty2NullPlan.execute(), None)
       } else {
-        // SPARK-21165: the `requiredOrdering` is based on the attributes from analyzed plan, and
-        // the physical plan may have different attribute ids due to optimizer removing some
-        // aliases. Here we bind the expression ahead to avoid potential attribute ids mismatch.
-        val orderingExpr = bindReferences(
-          requiredOrdering.map(SortOrder(_, Ascending)), outputSpec.outputColumns)
-        val sortPlan = SortExec(
-          orderingExpr,
-          global = false,
-          child = empty2NullPlan)
-
-        val maxWriters = sparkSession.sessionState.conf.maxConcurrentOutputFileWriters
-        val concurrentWritersEnabled = maxWriters > 0 && sortColumns.isEmpty
-        if (concurrentWritersEnabled) {
-          (empty2NullPlan.execute(),
-            Some(ConcurrentOutputWriterSpec(maxWriters, () => sortPlan.createSorter())))
+        val sortPlan = createSortPlan(empty2NullPlan, requiredOrdering, outputSpec)
+        val concurrentOutputWriterSpec = createConcurrentOutputWriterSpec(
+          sparkSession, sortPlan, sortColumns)
+        if (concurrentOutputWriterSpec.isDefined) {
+          (empty2NullPlan.execute(), concurrentOutputWriterSpec)
         } else {
-          (sortPlan.execute(), None)
+          (sortPlan.execute(), concurrentOutputWriterSpec)
         }
       }
 
@@ -236,14 +219,14 @@ object FileFormatWriter extends Logging {
         rdd
       }
 
-      val jobIdInstant = new Date().getTime
+      val jobTrackerID = SparkHadoopWriterUtils.createJobTrackerID(new Date())
       val ret = new Array[WriteTaskResult](rddWithNonEmptyPartitions.partitions.length)
       sparkSession.sparkContext.runJob(
         rddWithNonEmptyPartitions,
         (taskContext: TaskContext, iter: Iterator[InternalRow]) => {
           executeTask(
             description = description,
-            jobIdInstant = jobIdInstant,
+            jobTrackerID = jobTrackerID,
             sparkStageId = taskContext.stageId(),
             sparkPartitionId = taskContext.partitionId(),
             sparkAttemptNumber = taskContext.taskAttemptId().toInt & Integer.MAX_VALUE,
@@ -256,7 +239,19 @@ object FileFormatWriter extends Logging {
           committer.onTaskCommit(res.commitMsg)
           ret(index) = res
         })
+      ret
+    }
+  }
 
+  private def writeAndCommit(
+      job: Job,
+      description: WriteJobDescription,
+      committer: FileCommitProtocol)(f: => Array[WriteTaskResult]): Set[String] = {
+    // This call shouldn't be put into the `try` block below because it only initializes and
+    // prepares the job, any exception thrown from here shouldn't cause abortJob() to be called.
+    committer.setupJob(job)
+    try {
+      val ret = f
       val commitMsgs = ret.map(_.commitMsg)
 
       logInfo(s"Start to commit write Job ${description.uuid}.")
@@ -271,14 +266,75 @@ object FileFormatWriter extends Logging {
     } catch { case cause: Throwable =>
       logError(s"Aborting job ${description.uuid}.", cause)
       committer.abortJob(job)
-      throw QueryExecutionErrors.jobAbortedError(cause)
+      throw cause
+    }
+  }
+
+  /**
+   * Write files using [[SparkPlan.executeWrite]]
+   */
+  private def executeWrite(
+      session: SparkSession,
+      planForWrites: SparkPlan,
+      writeFilesSpec: WriteFilesSpec,
+      job: Job): Set[String] = {
+    val committer = writeFilesSpec.committer
+    val description = writeFilesSpec.description
+
+    writeAndCommit(job, description, committer) {
+      val rdd = planForWrites.executeWrite(writeFilesSpec)
+      val ret = new Array[WriteTaskResult](rdd.partitions.length)
+      session.sparkContext.runJob(
+        rdd,
+        (context: TaskContext, iter: Iterator[WriterCommitMessage]) => {
+          assert(iter.hasNext)
+          val commitMessage = iter.next()
+          assert(!iter.hasNext)
+          commitMessage
+        },
+        rdd.partitions.indices,
+        (index, res: WriterCommitMessage) => {
+          assert(res.isInstanceOf[WriteTaskResult])
+          val writeTaskResult = res.asInstanceOf[WriteTaskResult]
+          committer.onTaskCommit(writeTaskResult.commitMsg)
+          ret(index) = writeTaskResult
+        })
+      ret
+    }
+  }
+
+  private def createSortPlan(
+      plan: SparkPlan,
+      requiredOrdering: Seq[Expression],
+      outputSpec: OutputSpec): SortExec = {
+    // SPARK-21165: the `requiredOrdering` is based on the attributes from analyzed plan, and
+    // the physical plan may have different attribute ids due to optimizer removing some
+    // aliases. Here we bind the expression ahead to avoid potential attribute ids mismatch.
+    val orderingExpr = bindReferences(
+      requiredOrdering.map(SortOrder(_, Ascending)), outputSpec.outputColumns)
+    SortExec(
+      orderingExpr,
+      global = false,
+      child = plan)
+  }
+
+  private def createConcurrentOutputWriterSpec(
+      sparkSession: SparkSession,
+      sortPlan: SortExec,
+      sortColumns: Seq[Attribute]): Option[ConcurrentOutputWriterSpec] = {
+    val maxWriters = sparkSession.sessionState.conf.maxConcurrentOutputFileWriters
+    val concurrentWritersEnabled = maxWriters > 0 && sortColumns.isEmpty
+    if (concurrentWritersEnabled) {
+      Some(ConcurrentOutputWriterSpec(maxWriters, () => sortPlan.createSorter()))
+    } else {
+      None
     }
   }
 
   /** Writes data out in a single Spark task. */
-  private def executeTask(
+  private[spark] def executeTask(
       description: WriteJobDescription,
-      jobIdInstant: Long,
+      jobTrackerID: String,
       sparkStageId: Int,
       sparkPartitionId: Int,
       sparkAttemptNumber: Int,
@@ -286,7 +342,7 @@ object FileFormatWriter extends Logging {
       iterator: Iterator[InternalRow],
       concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec]): WriteTaskResult = {
 
-    val jobId = SparkHadoopWriterUtils.createJobID(new Date(jobIdInstant), sparkStageId)
+    val jobId = SparkHadoopWriterUtils.createJobID(jobTrackerID, sparkStageId)
     val taskId = new TaskID(jobId, TaskType.MAP, sparkPartitionId)
     val taskAttemptId = new TaskAttemptID(taskId, sparkAttemptNumber)
 
@@ -324,7 +380,6 @@ object FileFormatWriter extends Logging {
     try {
       Utils.tryWithSafeFinallyAndFailureCallbacks(block = {
         // Execute the task to write rows out and commit the task.
-        val taskAttemptID = taskAttemptContext.getTaskAttemptID
         dataWriter.writeWithIterator(iterator)
         dataWriter.commit()
       })(catchBlock = {

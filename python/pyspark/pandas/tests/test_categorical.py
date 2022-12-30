@@ -16,17 +16,16 @@
 #
 
 from distutils.version import LooseVersion
-from typing import no_type_check
 
 import numpy as np
 import pandas as pd
 from pandas.api.types import CategoricalDtype
 
 import pyspark.pandas as ps
-from pyspark.testing.pandasutils import PandasOnSparkTestCase, TestUtils
+from pyspark.testing.pandasutils import ComparisonTestBase, TestUtils
 
 
-class CategoricalTest(PandasOnSparkTestCase, TestUtils):
+class CategoricalTest(ComparisonTestBase, TestUtils):
     @property
     def pdf(self):
         return pd.DataFrame(
@@ -37,10 +36,6 @@ class CategoricalTest(PandasOnSparkTestCase, TestUtils):
                 ),
             },
         )
-
-    @property
-    def psdf(self):
-        return ps.from_pandas(self.pdf)
 
     @property
     def df_pair(self):
@@ -65,6 +60,9 @@ class CategoricalTest(PandasOnSparkTestCase, TestUtils):
         self.assert_eq(psser.cat.categories, pser.cat.categories)
         self.assert_eq(psser.cat.codes, pser.cat.codes)
         self.assert_eq(psser.cat.ordered, pser.cat.ordered)
+
+        with self.assertRaisesRegex(ValueError, "Cannot call CategoricalAccessor on type int64"):
+            ps.Series([1, 2, 3]).cat
 
     def test_categories_setter(self):
         pdf, psdf = self.df_pair
@@ -438,7 +436,6 @@ class CategoricalTest(PandasOnSparkTestCase, TestUtils):
 
         pdf, psdf = self.df_pair
 
-        @no_type_check
         def identity(x) -> ps.Series[psdf.b.dtype]:
             return x
 
@@ -799,7 +796,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.test_categorical import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

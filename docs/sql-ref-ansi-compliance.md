@@ -19,7 +19,7 @@ license: |
   limitations under the License.
 ---
 
-Since Spark 3.0, Spark SQL introduces two experimental options to comply with the SQL standard: `spark.sql.ansi.enabled` and `spark.sql.storeAssignmentPolicy` (See a table below for details).
+In Spark SQL, there are two options to comply with the SQL standard: `spark.sql.ansi.enabled` and `spark.sql.storeAssignmentPolicy` (See a table below for details).
 
 When `spark.sql.ansi.enabled` is set to `true`, Spark SQL uses an ANSI compliant dialect instead of being Hive compliant. For example, Spark will throw an exception at runtime instead of returning null results if the inputs to a SQL operator/function are invalid. Some ANSI dialect features may be not from the ANSI SQL standard directly, but their behaviors align with ANSI SQL's style.
 
@@ -28,10 +28,10 @@ The casting behaviours are defined as store assignment rules in the standard.
 
 When `spark.sql.storeAssignmentPolicy` is set to `ANSI`, Spark SQL complies with the ANSI store assignment rules. This is a separate configuration because its default value is `ANSI`, while the configuration `spark.sql.ansi.enabled` is disabled by default.
 
-|Property Name|Default|Meaning|Since Version|
-|-------------|-------|-------|-------------|
-|`spark.sql.ansi.enabled`|false|(Experimental) When true, Spark tries to conform to the ANSI SQL specification: <br/> 1. Spark will throw a runtime exception if an overflow occurs in any operation on integral/decimal field. <br/> 2. Spark will forbid using the reserved keywords of ANSI SQL as identifiers in the SQL parser.|3.0.0|
-|`spark.sql.storeAssignmentPolicy`|ANSI|(Experimental) When inserting a value into a column with different data type, Spark will perform type conversion.  Currently, we support 3 policies for the type coercion rules: ANSI, legacy and strict. With ANSI policy, Spark performs the type coercion as per ANSI SQL. In practice, the behavior is mostly the same as PostgreSQL.  It disallows certain unreasonable type conversions such as converting string to int or double to boolean.  With legacy policy, Spark allows the type coercion as long as it is a valid Cast, which is very loose.  e.g. converting string to int or double to boolean is allowed.  It is also the only behavior in Spark 2.x and it is compatible with Hive.  With strict policy, Spark doesn't allow any possible precision loss or data truncation in type coercion, e.g. converting double to int or decimal to double is not allowed.|3.0.0|
+|Property Name|Default| Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |Since Version|
+|-------------|-------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
+|`spark.sql.ansi.enabled`|false| When true, Spark tries to conform to the ANSI SQL specification: <br/> 1. Spark SQL will throw runtime exceptions on invalid operations, including integer overflow errors, string parsing errors, etc. <br/> 2. Spark will use different type coercion rules for resolving conflicts among data types. The rules are consistently based on data type precedence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |3.0.0|
+|`spark.sql.storeAssignmentPolicy`|ANSI| When inserting a value into a column with different data type, Spark will perform type conversion.  Currently, we support 3 policies for the type coercion rules: ANSI, legacy and strict.<br/> 1. With ANSI policy, Spark performs the type coercion as per ANSI SQL. In practice, the behavior is mostly the same as PostgreSQL.  It disallows certain unreasonable type conversions such as converting string to int or double to boolean. On inserting a numeric type column, an overflow error will be thrown if the value is out of the target data type's range.<br/>2. With legacy policy, Spark allows the type coercion as long as it is a valid Cast, which is very loose.  e.g. converting string to int or double to boolean is allowed.  It is also the only behavior in Spark 2.x and it is compatible with Hive.<br/>3. With strict policy, Spark doesn't allow any possible precision loss or data truncation in type coercion, e.g. converting double to int or decimal to double is not allowed. |3.0.0|
 
 The following subsections present behaviour changes in arithmetic operations, type conversions, and SQL parsing when the ANSI mode enabled. For type conversions in Spark SQL, there are three kinds of them and this article will introduce them one by one: cast, store assignment and type coercion. 
 
@@ -45,10 +45,13 @@ When `spark.sql.ansi.enabled` is set to `true` and an overflow occurs in numeric
 ```sql
 -- `spark.sql.ansi.enabled=true`
 SELECT 2147483647 + 1;
-java.lang.ArithmeticException: integer overflow
+org.apache.spark.SparkArithmeticException: [ARITHMETIC_OVERFLOW] integer overflow. Use 'try_add' to tolerate overflow and return NULL instead. If necessary set spark.sql.ansi.enabled to "false" to bypass this error.
+== SQL(line 1, position 8) ==
+SELECT 2147483647 + 1
+       ^^^^^^^^^^^^^^
 
 SELECT abs(-2147483648);
-java.lang.ArithmeticException: integer overflow
+org.apache.spark.SparkArithmeticException: [ARITHMETIC_OVERFLOW] integer overflow. If necessary set spark.sql.ansi.enabled to "false" to bypass this error.
 
 -- `spark.sql.ansi.enabled=false`
 SELECT 2147483647 + 1;
@@ -70,48 +73,54 @@ SELECT abs(-2147483648);
 
 When `spark.sql.ansi.enabled` is set to `true`, explicit casting by `CAST` syntax throws a runtime exception for illegal cast patterns defined in the standard, e.g. casts from a string to an integer.
 
-The `CAST` clause of Spark ANSI mode follows the syntax rules of section 6.13 "cast specification" in [ISO/IEC 9075-2:2011 Information technology — Database languages - SQL — Part 2: Foundation (SQL/Foundation)](https://www.iso.org/standard/53682.html), except it specially allows the following
- straightforward type conversions which are disallowed as per the ANSI standard:
-* NumericType <=> BooleanType
-* StringType <=> BinaryType
-* ArrayType => String
-* MapType => String
-* StructType => String
+Besides, the ANSI SQL mode disallows the following type conversions which are allowed when ANSI mode is off:
+* Numeric <=> Binary
+* Date <=> Boolean
+* Timestamp <=> Boolean
+* Date => Numeric
 
  The valid combinations of source and target data type in a `CAST` expression are given by the following table.
 “Y” indicates that the combination is syntactically valid without restriction and “N” indicates that the combination is not valid.
 
 | Source\Target | Numeric | String | Date | Timestamp | Interval | Boolean | Binary | Array | Map | Struct |
-|-----------|---------|--------|------|-----------|----------|---------|--------|-------|-----|--------|
-| Numeric   | <span style="color:red">**Y**</span> | Y      | N    | N         | N        | Y       | N      | N     | N   | N      |
+|-----------|--------|--------|------|-----------|----------|---------|--------|-------|-----|--------|
+| Numeric   | <span style="color:red">**Y**</span> | <span style="color:red">**Y**</span>      | N    | <span style="color:red">**Y**</span>         | <span style="color:red">**Y**</span>      | Y       | N      | N     | N   | N      |
 | String    | <span style="color:red">**Y**</span> | Y | <span style="color:red">**Y**</span> | <span style="color:red">**Y**</span> | <span style="color:red">**Y**</span> | <span style="color:red">**Y**</span> | Y | N     | N   | N      |
-| Date      | N       | Y      | Y    | Y         | N        | N       | N      | N     | N   | N      |
-| Timestamp | N       | Y      | Y    | Y         | N        | N       | N      | N     | N   | N      |
-| Interval  | N       | Y      | N    | N         | Y        | N       | N      | N     | N   | N      |
-| Boolean   | Y       | Y      | N    | N         | N        | Y       | N      | N     | N   | N      |
-| Binary    | N       | Y      | N    | N         | N        | N       | Y      | N     | N   | N      |
-| Array     | N       | Y      | N    | N         | N        | N       | N      | <span style="color:red">**Y**</span> | N   | N      |
-| Map       | N       | Y      | N    | N         | N        | N       | N      | N     | <span style="color:red">**Y**</span> | N      |
-| Struct    | N       | Y      | N    | N         | N        | N       | N      | N     | N   | <span style="color:red">**Y**</span> |
+| Date      | N      | Y      | Y    | Y         | N        | N       | N      | N     | N   | N      |
+| Timestamp | <span style="color:red">**Y**</span> | Y      | Y    | Y         | N        | N       | N      | N     | N   | N      |
+| Interval  | <span style="color:red">**Y**</span> | Y      | N    | N         | Y        | N       | N      | N     | N   | N      |
+| Boolean   | Y      | Y      | N    | N         | N        | Y       | N      | N     | N   | N      |
+| Binary    | N      | Y      | N    | N         | N        | N       | Y      | N     | N   | N      |
+| Array     | N      | Y      | N    | N         | N        | N       | N      | <span style="color:red">**Y**</span> | N   | N      |
+| Map       | N      | Y      | N    | N         | N        | N       | N      | N     | <span style="color:red">**Y**</span> | N      |
+| Struct    | N      | Y      | N    | N         | N        | N       | N      | N     | N   | <span style="color:red">**Y**</span> |
 
-In the table above, all the `CAST`s that can cause runtime exceptions are marked as red <span style="color:red">**Y**</span>:
+In the table above, all the `CAST`s with new syntax are marked as red <span style="color:red">**Y**</span>:
 * CAST(Numeric AS Numeric): raise an overflow exception if the value is out of the target data type's range.
 * CAST(String AS (Numeric/Date/Timestamp/Interval/Boolean)): raise a runtime exception if the value can't be parsed as the target data type.
+* CAST(Timestamp AS Numeric): raise an overflow exception if the number of seconds since epoch is out of the target data type's range.
+* CAST(Numeric AS Timestamp): raise an overflow exception if numeric value times 1000000(microseconds per second) is out of the range of Long type. 
 * CAST(Array AS Array): raise an exception if there is any on the conversion of the elements.
 * CAST(Map AS Map): raise an exception if there is any on the conversion of the keys and the values.
 * CAST(Struct AS Struct): raise an exception if there is any on the conversion of the struct fields.
+* CAST(Numeric AS String): Always use plain string representation on casting decimal values to strings, instead of using scientific notation if an exponent is needed
+* CAST(Interval AS Numeric): raise an overflow exception if the number of microseconds of the day-time interval or months of year-month interval is out of the target data type's range.
+* CAST(Numeric AS Interval): raise an overflow exception if numeric value times by the target interval's end-unit is out of the range of the Int type for year-month intervals or the Long type for day-time intervals.
 
 ```sql
 -- Examples of explicit casting
 
 -- `spark.sql.ansi.enabled=true`
 SELECT CAST('a' AS INT);
-java.lang.NumberFormatException: invalid input syntax for type numeric: a
+org.apache.spark.SparkNumberFormatException: [CAST_INVALID_INPUT] The value 'a' of the type "STRING" cannot be cast to "INT" because it is malformed. Correct the value as per the syntax, or change its target type. Use `try_cast` to tolerate malformed input and return NULL instead. If necessary set "spark.sql.ansi.enabled" to "false" to bypass this error.
+== SQL(line 1, position 8) ==
+SELECT CAST('a' AS INT)
+       ^^^^^^^^^^^^^^^^
 
 SELECT CAST(2147483648L AS INT);
-java.lang.ArithmeticException: Casting 2147483648 to int causes overflow
+org.apache.spark.SparkArithmeticException: [CAST_OVERFLOW] The value 2147483648L of the type "BIGINT" cannot be cast to "INT" due to an overflow. Use `try_cast` to tolerate overflow and return NULL instead. If necessary set "spark.sql.ansi.enabled" to "false" to bypass this error.
 
-SELECT CAST(DATE'2020-01-01' AS INT)
+SELECT CAST(DATE'2020-01-01' AS INT);
 org.apache.spark.sql.AnalysisException: cannot resolve 'CAST(DATE '2020-01-01' AS INT)' due to data type mismatch: cannot cast date to int.
 To convert values from date to int, you can use function UNIX_DATE instead.
 
@@ -155,6 +164,9 @@ SELECT * FROM t;
 +---+
 ```
 
+#### Rounding in cast
+While casting of a decimal with a fraction to an interval type with SECOND as the end-unit like INTERVAL HOUR TO SECOND, Spark rounds the fractional part towards "nearest neighbor" unless both neighbors are equidistant, in which case round up.
+
 ### Store assignment
 As mentioned at the beginning, when `spark.sql.storeAssignmentPolicy` is set to `ANSI`(which is the default value), Spark SQL complies with the ANSI store assignment rules on table insertions. The valid combinations of source and target data type in table insertions are given by the following table.
 
@@ -180,7 +192,7 @@ During table insertion, Spark will throw exception on numeric value overflow.
 CREATE TABLE test(i INT);
 
 INSERT INTO test VALUES (2147483648L);
-java.lang.ArithmeticException: Casting 2147483648 to int causes overflow
+org.apache.spark.SparkArithmeticException: [CAST_OVERFLOW_IN_TABLE_INSERT] Fail to insert a value of "BIGINT" type into the "INT" type column `i` due to an overflow. Use `try_cast` on the input value to tolerate overflow and return NULL instead.
 ```
 
 ### Type coercion
@@ -188,34 +200,35 @@ java.lang.ArithmeticException: Casting 2147483648 to int causes overflow
 When `spark.sql.ansi.enabled` is set to `true`, Spark SQL uses several rules that govern how conflicts between data types are resolved.
 At the heart of this conflict resolution is the Type Precedence List which defines whether values of a given data type can be promoted to another data type implicitly.
 
-| Data type | precedence list(from narrowest to widest)                        |
-|-----------|------------------------------------------------------------------|
-| Byte      | Byte -> Short -> Int -> Long -> Decimal -> Float* -> Double      |
-| Short     | Short -> Int -> Long -> Decimal-> Float* -> Double               |
-| Int       | Int -> Long -> Decimal -> Float* -> Double                       |
-| Long      | Long -> Decimal -> Float* -> Double                              |
-| Decimal   | Decimal -> Float* -> Double                                      |
-| Float     | Float -> Double                                                  |
-| Double    | Double                                                           |
-| Date      | Date -> Timestamp                                                |
-| Timestamp | Timestamp                                                        |
-| String    | String                                                           |
-| Binary    | Binary                                                           |
-| Boolean   | Boolean                                                          |
-| Interval  | Interval                                                         |
-| Map       | Map**                                                            |
-| Array     | Array**                                                          |
-| Struct    | Struct**                                                         |
+| Data type | precedence list(from narrowest to widest)                     |
+|-----------|---------------------------------------------------------------|
+| Byte      | Byte -> Short -> Int -> Long -> Decimal -> Float* -> Double   |
+| Short     | Short -> Int -> Long -> Decimal-> Float* -> Double            |
+| Int       | Int -> Long -> Decimal -> Float* -> Double                    |
+| Long      | Long -> Decimal -> Float* -> Double                           |
+| Decimal   | Decimal -> Float* -> Double                                   |
+| Float     | Float -> Double                                               |
+| Double    | Double                                                        |
+| Date      | Date -> Timestamp                                             |
+| Timestamp | Timestamp                                                     |
+| String    | String, Long -> Double, Date -> Timestamp, Boolean, Binary ** |
+| Binary    | Binary                                                        |
+| Boolean   | Boolean                                                       |
+| Interval  | Interval                                                      |
+| Map       | Map***                                                        |
+| Array     | Array***                                                      |
+| Struct    | Struct***                                                     |
 
 \* For least common type resolution float is skipped to avoid loss of precision.
 
-\*\* For a complex type, the precedence rule applies recursively to its component elements.
+\*\* String can be promoted to multiple kinds of data types. Note that Byte/Short/Int/Decimal/Float is not on this precedent list. The least common type between Byte/Short/Int and String is Long, while the least common type between Decimal/Float is Double.
 
-Special rules apply for string literals and untyped NULL.
-A NULL can be promoted to any other type, while a string literal can be promoted to any simple data type.
+\*\*\* For a complex type, the precedence rule applies recursively to its component elements.
+
+Special rules apply for untyped NULL. A NULL can be promoted to any other type.
 
 This is a graphical depiction of the precedence list as a directed tree:
-<img src="img/type-precedence-list.png" width="80%" title="Type Precedence List" alt="Type Precedence List">
+<img src="img/type-precedence-list.png" width="60%" title="Type Precedence List" alt="Type Precedence List">
 
 #### Least Common Type Resolution
 The least common type from a set of types is the narrowest type reachable from the precedence list by all elements of the set of types.
@@ -245,13 +258,19 @@ DOUBLE
 > SELECT (typeof(coalesce(1BD, 1F)));
 DOUBLE
 
+> SELECT typeof(coalesce(1, '2147483648'))
+BIGINT
+> SELECT typeof(coalesce(1.0, '2147483648'))
+DOUBLE
+> SELECT typeof(coalesce(DATE'2021-01-01', '2022-01-01'))
+DATE
 ```
 
 ### SQL Functions
 #### Function invocation
 Under ANSI mode(spark.sql.ansi.enabled=true), the function invocation of Spark SQL:
 - In general, it follows the `Store assignment` rules as storing the input values as the declared parameter type of the SQL functions
-- Special rules apply for string literals and untyped NULL. A NULL can be promoted to any other type, while a string literal can be promoted to any simple data type.
+- Special rules apply for untyped NULL. A NULL can be promoted to any other type.
 
 ```sql
 > SET spark.sql.ansi.enabled=true;
@@ -262,10 +281,10 @@ total number: 1
 > select datediff(now(), current_date);
 0
 
--- specialrule: implicitly cast String literal to Double type
+-- implicitly cast String to Double type
 > SELECT ceil('0.1');
 1
--- specialrule: implicitly cast NULL to Date type
+-- special rule: implicitly cast NULL to Date type
 > SELECT year(null);
 NULL
 
@@ -283,7 +302,6 @@ The behavior of some SQL functions can be different under ANSI mode (`spark.sql.
   - `size`: This function returns null for null input.
   - `element_at`:
     - This function throws `ArrayIndexOutOfBoundsException` if using invalid indices.
-    - This function throws `NoSuchElementException` if key does not exist in map.
   - `elt`: This function throws `ArrayIndexOutOfBoundsException` if using invalid indices.
   - `parse_url`: This function throws `IllegalArgumentException` if an input string is not a valid url.
   - `to_date`: This function should fail with an exception if the input string can't be parsed, or the pattern string is invalid.
@@ -299,30 +317,33 @@ The behavior of some SQL functions can be different under ANSI mode (`spark.sql.
 
 The behavior of some SQL operators can be different under ANSI mode (`spark.sql.ansi.enabled=true`).
   - `array_col[index]`: This operator throws `ArrayIndexOutOfBoundsException` if using invalid indices.
-  - `map_col[key]`: This operator throws `NoSuchElementException` if key does not exist in map.
 
 ### Useful Functions for ANSI Mode
 
 When ANSI mode is on, it throws exceptions for invalid operations. You can use the following SQL functions to suppress such exceptions.
   - `try_cast`: identical to `CAST`, except that it returns `NULL` result instead of throwing an exception on runtime error.
   - `try_add`: identical to the add operator `+`, except that it returns `NULL` result instead of throwing an exception on integral value overflow.
+  - `try_subtract`: identical to the add operator `-`, except that it returns `NULL` result instead of throwing an exception on integral value overflow.
+  - `try_multiply`: identical to the add operator `*`, except that it returns `NULL` result instead of throwing an exception on integral value overflow.
   - `try_divide`: identical to the division operator `/`, except that it returns `NULL` result instead of throwing an exception on dividing 0.
-  - `try_element_at`: identical to the function `element_at`, except that it returns `NULL` result instead of throwing an exception on array's index out of bound or map's key not found.
+  - `try_sum`: identical to the function `sum`, except that it returns `NULL` result instead of throwing an exception on integral/decimal/interval value overflow.
+  - `try_avg`: identical to the function `avg`, except that it returns `NULL` result instead of throwing an exception on decimal/interval value overflow.
+  - `try_element_at`: identical to the function `element_at`, except that it returns `NULL` result instead of throwing an exception on array's index out of bound.
+  - `try_to_timestamp`: identical to the function `to_timestamp`, except that it returns `NULL` result instead of throwing an exception on string parsing error.
 
-### SQL Keywords
+### SQL Keywords (optional, disabled by default)
 
-When `spark.sql.ansi.enabled` is true, Spark SQL will use the ANSI mode parser.
-In this mode, Spark SQL has two kinds of keywords:
-* Reserved keywords: Keywords that are reserved and can't be used as identifiers for table, view, column, function, alias, etc.
+When both `spark.sql.ansi.enabled` and `spark.sql.ansi.enforceReservedKeywords` are true, Spark SQL will use the ANSI mode parser.
+
+With the ANSI mode parser, Spark SQL has two kinds of keywords:
 * Non-reserved keywords: Keywords that have a special meaning only in particular contexts and can be used as identifiers in other contexts. For example, `EXPLAIN SELECT ...` is a command, but EXPLAIN can be used as identifiers in other places.
+* Reserved keywords: Keywords that are reserved and can't be used as identifiers for table, view, column, function, alias, etc.
 
-When the ANSI mode is disabled, Spark SQL has two kinds of keywords:
+With the default parser, Spark SQL has two kinds of keywords:
 * Non-reserved keywords: Same definition as the one when the ANSI mode enabled.
 * Strict-non-reserved keywords: A strict version of non-reserved keywords, which can not be used as table alias.
 
-If you want to still use reserved keywords as identifiers with ANSI mode, you can set `spark.sql.ansi.enforceReservedKeywords` to false.
-
-By default `spark.sql.ansi.enabled` is false and `spark.sql.ansi.enforceReservedKeywords` is true.
+By default, both `spark.sql.ansi.enabled` and `spark.sql.ansi.enforceReservedKeywords` are false.
 
 Below is a list of all the keywords in Spark SQL.
 
@@ -336,6 +357,7 @@ Below is a list of all the keywords in Spark SQL.
 |AND|reserved|non-reserved|reserved|
 |ANTI|non-reserved|strict-non-reserved|non-reserved|
 |ANY|reserved|non-reserved|reserved|
+|ANY_VALUE|non-reserved|non-reserved|non-reserved|
 |ARCHIVE|non-reserved|non-reserved|non-reserved|
 |ARRAY|non-reserved|non-reserved|reserved|
 |AS|reserved|non-reserved|reserved|
@@ -382,8 +404,13 @@ Below is a list of all the keywords in Spark SQL.
 |DATA|non-reserved|non-reserved|non-reserved|
 |DATABASE|non-reserved|non-reserved|non-reserved|
 |DATABASES|non-reserved|non-reserved|non-reserved|
+|DATEADD|non-reserved|non-reserved|non-reserved|
+|DATEDIFF|non-reserved|non-reserved|non-reserved|
 |DAY|non-reserved|non-reserved|non-reserved|
+|DAYS|non-reserved|non-reserved|non-reserved|
+|DAYOFYEAR|non-reserved|non-reserved|non-reserved|
 |DBPROPERTIES|non-reserved|non-reserved|non-reserved|
+|DEFAULT|non-reserved|non-reserved|non-reserved|
 |DEFINED|non-reserved|non-reserved|non-reserved|
 |DELETE|non-reserved|non-reserved|reserved|
 |DELIMITED|non-reserved|non-reserved|non-reserved|
@@ -402,6 +429,7 @@ Below is a list of all the keywords in Spark SQL.
 |ESCAPED|non-reserved|non-reserved|non-reserved|
 |EXCEPT|reserved|strict-non-reserved|reserved|
 |EXCHANGE|non-reserved|non-reserved|non-reserved|
+|EXCLUDE|non-reserved|non-reserved|non-reserved|
 |EXISTS|non-reserved|non-reserved|reserved|
 |EXPLAIN|non-reserved|non-reserved|non-reserved|
 |EXPORT|non-reserved|non-reserved|non-reserved|
@@ -429,10 +457,12 @@ Below is a list of all the keywords in Spark SQL.
 |GROUPING|non-reserved|non-reserved|reserved|
 |HAVING|reserved|non-reserved|reserved|
 |HOUR|non-reserved|non-reserved|non-reserved|
+|HOURS|non-reserved|non-reserved|non-reserved|
 |IF|non-reserved|non-reserved|not a keyword|
 |IGNORE|non-reserved|non-reserved|non-reserved|
 |IMPORT|non-reserved|non-reserved|non-reserved|
 |IN|reserved|non-reserved|reserved|
+|INCLUDE|non-reserved|non-reserved|non-reserved|
 |INDEX|non-reserved|non-reserved|non-reserved|
 |INDEXES|non-reserved|non-reserved|non-reserved|
 |INNER|reserved|strict-non-reserved|reserved|
@@ -466,18 +496,27 @@ Below is a list of all the keywords in Spark SQL.
 |MAP|non-reserved|non-reserved|non-reserved|
 |MATCHED|non-reserved|non-reserved|non-reserved|
 |MERGE|non-reserved|non-reserved|non-reserved|
+|MICROSECOND|non-reserved|non-reserved|non-reserved|
+|MICROSECONDS|non-reserved|non-reserved|non-reserved|
+|MILLISECOND|non-reserved|non-reserved|non-reserved|
+|MILLISECONDS|non-reserved|non-reserved|non-reserved|
 |MINUTE|non-reserved|non-reserved|non-reserved|
+|MINUTES|non-reserved|non-reserved|non-reserved|
 |MINUS|non-reserved|strict-non-reserved|non-reserved|
 |MONTH|non-reserved|non-reserved|non-reserved|
+|MONTHS|non-reserved|non-reserved|non-reserved|
 |MSCK|non-reserved|non-reserved|non-reserved|
 |NAMESPACE|non-reserved|non-reserved|non-reserved|
 |NAMESPACES|non-reserved|non-reserved|non-reserved|
+|NANOSECOND|non-reserved|non-reserved|non-reserved|
+|NANOSECONDS|non-reserved|non-reserved|non-reserved|
 |NATURAL|reserved|strict-non-reserved|reserved|
 |NO|non-reserved|non-reserved|reserved|
 |NOT|reserved|non-reserved|reserved|
 |NULL|reserved|non-reserved|reserved|
 |NULLS|non-reserved|non-reserved|non-reserved|
 |OF|non-reserved|non-reserved|reserved|
+|OFFSET|reserved|non-reserved|reserved|
 |ON|reserved|strict-non-reserved|reserved|
 |ONLY|reserved|non-reserved|reserved|
 |OPTION|non-reserved|non-reserved|non-reserved|
@@ -495,6 +534,8 @@ Below is a list of all the keywords in Spark SQL.
 |PARTITIONED|non-reserved|non-reserved|non-reserved|
 |PARTITIONS|non-reserved|non-reserved|non-reserved|
 |PERCENT|non-reserved|non-reserved|non-reserved|
+|PERCENTILE_CONT|reserved|non-reserved|non-reserved|
+|PERCENTILE_DISC|reserved|non-reserved|non-reserved|
 |PIVOT|non-reserved|non-reserved|non-reserved|
 |PLACING|non-reserved|non-reserved|non-reserved|
 |POSITION|non-reserved|non-reserved|reserved|
@@ -503,6 +544,7 @@ Below is a list of all the keywords in Spark SQL.
 |PRINCIPALS|non-reserved|non-reserved|non-reserved|
 |PROPERTIES|non-reserved|non-reserved|non-reserved|
 |PURGE|non-reserved|non-reserved|non-reserved|
+|QUARTER|non-reserved|non-reserved|non-reserved|
 |QUERY|non-reserved|non-reserved|non-reserved|
 |RANGE|non-reserved|non-reserved|reserved|
 |RECORDREADER|non-reserved|non-reserved|non-reserved|
@@ -531,6 +573,7 @@ Below is a list of all the keywords in Spark SQL.
 |SCHEMA|non-reserved|non-reserved|non-reserved|
 |SCHEMAS|non-reserved|non-reserved|non-reserved|
 |SECOND|non-reserved|non-reserved|non-reserved|
+|SECONDS|non-reserved|non-reserved|non-reserved|
 |SELECT|reserved|non-reserved|reserved|
 |SEMI|non-reserved|strict-non-reserved|non-reserved|
 |SEPARATED|non-reserved|non-reserved|non-reserved|
@@ -544,6 +587,7 @@ Below is a list of all the keywords in Spark SQL.
 |SOME|reserved|non-reserved|reserved|
 |SORT|non-reserved|non-reserved|non-reserved|
 |SORTED|non-reserved|non-reserved|non-reserved|
+|SOURCE|non-reserved|non-reserved|non-reserved|
 |START|non-reserved|non-reserved|reserved|
 |STATISTICS|non-reserved|non-reserved|non-reserved|
 |STORED|non-reserved|non-reserved|non-reserved|
@@ -557,6 +601,7 @@ Below is a list of all the keywords in Spark SQL.
 |TABLE|reserved|non-reserved|reserved|
 |TABLES|non-reserved|non-reserved|non-reserved|
 |TABLESAMPLE|non-reserved|non-reserved|reserved|
+|TARGET|non-reserved|non-reserved|non-reserved|
 |TBLPROPERTIES|non-reserved|non-reserved|non-reserved|
 |TEMP|non-reserved|non-reserved|not a keyword|
 |TEMPORARY|non-reserved|non-reserved|non-reserved|
@@ -564,6 +609,8 @@ Below is a list of all the keywords in Spark SQL.
 |THEN|reserved|non-reserved|reserved|
 |TIME|reserved|non-reserved|reserved|
 |TIMESTAMP|non-reserved|non-reserved|non-reserved|
+|TIMESTAMPADD|non-reserved|non-reserved|non-reserved|
+|TIMESTAMPDIFF|non-reserved|non-reserved|non-reserved|
 |TO|reserved|non-reserved|reserved|
 |TOUCH|non-reserved|non-reserved|non-reserved|
 |TRAILING|reserved|non-reserved|reserved|
@@ -582,6 +629,7 @@ Below is a list of all the keywords in Spark SQL.
 |UNIQUE|reserved|non-reserved|reserved|
 |UNKNOWN|reserved|non-reserved|reserved|
 |UNLOCK|non-reserved|non-reserved|non-reserved|
+|UNPIVOT|non-reserved|non-reserved|non-reserved|
 |UNSET|non-reserved|non-reserved|non-reserved|
 |UPDATE|non-reserved|non-reserved|reserved|
 |USE|non-reserved|non-reserved|non-reserved|
@@ -591,9 +639,13 @@ Below is a list of all the keywords in Spark SQL.
 |VERSION|non-reserved|non-reserved|non-reserved|
 |VIEW|non-reserved|non-reserved|non-reserved|
 |VIEWS|non-reserved|non-reserved|non-reserved|
+|WEEK|non-reserved|non-reserved|non-reserved|
+|WEEKS|non-reserved|non-reserved|non-reserved|
 |WHEN|reserved|non-reserved|reserved|
 |WHERE|reserved|non-reserved|reserved|
 |WINDOW|non-reserved|non-reserved|reserved|
 |WITH|reserved|non-reserved|reserved|
+|WITHIN|reserved|non-reserved|reserved|
 |YEAR|non-reserved|non-reserved|non-reserved|
+|YEARS|non-reserved|non-reserved|non-reserved|
 |ZONE|non-reserved|non-reserved|non-reserved|

@@ -201,6 +201,7 @@ private class LiveTask(
       info.taskId,
       info.index,
       info.attemptNumber,
+      info.partitionId,
       info.launchTime,
       if (info.gettingResult) info.gettingResultTime else -1L,
       duration,
@@ -392,6 +393,28 @@ private class LiveExecutorStageSummary(
 
 }
 
+private class LiveSpeculationStageSummary(
+    stageId: Int,
+    attemptId: Int) extends LiveEntity {
+
+  var numTasks = 0
+  var numActiveTasks = 0
+  var numCompletedTasks = 0
+  var numFailedTasks = 0
+  var numKilledTasks = 0
+
+  override protected def doUpdate(): Any = {
+    val info = new v1.SpeculationStageSummary(
+      numTasks,
+      numActiveTasks,
+      numCompletedTasks,
+      numFailedTasks,
+      numKilledTasks
+    )
+    new SpeculationStageSummaryWrapper(stageId, attemptId, info)
+  }
+}
+
 private class LiveStage(var info: StageInfo) extends LiveEntity {
 
   import LiveEntityHelpers._
@@ -425,6 +448,9 @@ private class LiveStage(var info: StageInfo) extends LiveEntity {
   var excludedExecutors = new HashSet[String]()
 
   val peakExecutorMetrics = new ExecutorMetrics()
+
+  lazy val speculationStageSummary: LiveSpeculationStageSummary =
+    new LiveSpeculationStageSummary(info.stageId, info.attemptNumber)
 
   // Used for cleanup of tasks after they reach the configured limit. Not written to the store.
   @volatile var cleaning = false
@@ -489,6 +515,7 @@ private class LiveStage(var info: StageInfo) extends LiveEntity {
       accumulatorUpdates = newAccumulatorInfos(info.accumulables.values),
       tasks = None,
       executorSummary = None,
+      speculationSummary = None,
       killedTasksSummary = killedSummary,
       resourceProfileId = info.resourceProfileId,
       peakExecutorMetrics = Some(peakExecutorMetrics).filter(_.isSet),
@@ -516,14 +543,14 @@ private class LiveRDDPartition(val blockName: String, rddLevel: StorageLevel) {
 
   var value: v1.RDDPartitionInfo = null
 
-  def executors: Seq[String] = value.executors
+  def executors: collection.Seq[String] = value.executors
 
   def memoryUsed: Long = value.memoryUsed
 
   def diskUsed: Long = value.diskUsed
 
   def update(
-      executors: Seq[String],
+      executors: collection.Seq[String],
       memoryUsed: Long,
       diskUsed: Long): Unit = {
     val level = StorageLevel(diskUsed > 0, memoryUsed > 0, rddLevel.useOffHeap,

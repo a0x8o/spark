@@ -248,8 +248,11 @@ class SeriesStringTest(PandasOnSparkTestCase, SQLTestUtils):
         self.check_func(lambda x: x.str.replace("a.", "xx", regex=True))
         self.check_func(lambda x: x.str.replace("a.", "xx", regex=False))
         self.check_func(lambda x: x.str.replace("ing", "0", flags=re.IGNORECASE))
+
         # reverse every lowercase word
-        repl = lambda m: m.group(0)[::-1]
+        def repl(m):
+            return m.group(0)[::-1]
+
         self.check_func(lambda x: x.str.replace(r"[a-z]+", repl))
         # compiled regex with flags
         regex_pat = re.compile(r"WHITESPACE", flags=re.IGNORECASE)
@@ -333,7 +336,7 @@ if __name__ == "__main__":
     from pyspark.pandas.tests.test_series_string import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:
