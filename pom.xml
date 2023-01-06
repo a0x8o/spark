@@ -177,6 +177,7 @@
       See: SPARK-36547, SPARK-38394.
        -->
     <scala-maven-plugin.version>4.8.0</scala-maven-plugin.version>
+    <versions-maven-plugin.version>2.14.1</versions-maven-plugin.version>
     <!-- for now, not running scalafmt as part of default verify pipeline -->
     <scalafmt.skip>true</scalafmt.skip>
     <scalafmt.validateOnly>true</scalafmt.validateOnly>
@@ -187,7 +188,7 @@
     <snappy.version>1.1.8.4</snappy.version>
     <netlib.ludovic.dev.version>3.0.3</netlib.ludovic.dev.version>
     <commons-codec.version>1.15</commons-codec.version>
-    <commons-compress.version>1.21</commons-compress.version>
+    <commons-compress.version>1.22</commons-compress.version>
     <commons-io.version>2.11.0</commons-io.version>
     <!-- org.apache.commons/commons-lang/-->
     <commons-lang2.version>2.6</commons-lang2.version>
@@ -3192,6 +3193,11 @@
             </execution>
           </executions>
         </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>versions-maven-plugin</artifactId>
+          <version>${versions-maven-plugin.version}</version>
+        </plugin>
       </plugins>
     </pluginManagement>
 
@@ -3426,6 +3432,19 @@
         <artifactId>maven-bundle-plugin</artifactId>
         <version>4.2.0</version>
         <extensions>true</extensions>
+      </plugin>
+      <plugin>
+        <groupId>org.cyclonedx</groupId>
+        <artifactId>cyclonedx-maven-plugin</artifactId>
+        <version>2.7.3</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>makeBom</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>
