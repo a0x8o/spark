@@ -33,6 +33,7 @@ from typing import (
 import sys
 import random
 import pandas
+import datetime
 import warnings
 from collections.abc import Iterable
 
@@ -90,6 +91,9 @@ class DataFrame:
     isEmpty.__doc__ = PySparkDataFrame.isEmpty.__doc__
 
     def select(self, *cols: "ColumnOrName") -> "DataFrame":
+        if len(cols) == 1 and isinstance(cols[0], list):
+            cols = cols[0]
+
         return DataFrame.withPlan(plan.Project(self._plan, *cols), session=self._session)
 
     select.__doc__ = PySparkDataFrame.select.__doc__
@@ -194,6 +198,9 @@ class DataFrame:
     repartition.__doc__ = PySparkDataFrame.repartition.__doc__
 
     def dropDuplicates(self, subset: Optional[List[str]] = None) -> "DataFrame":
+        if subset is not None and (not isinstance(subset, Iterable) or isinstance(subset, str)):
+            raise TypeError("Parameter 'subset' must be a list of columns")
+
         if subset is None:
             return DataFrame.withPlan(
                 plan.Deduplicate(child=self._plan, all_columns_as_keys=True), session=self._session
@@ -248,6 +255,9 @@ class DataFrame:
     first.__doc__ = PySparkDataFrame.first.__doc__
 
     def groupBy(self, *cols: "ColumnOrName") -> GroupedData:
+        if len(cols) == 1 and isinstance(cols[0], list):
+            cols = cols[0]
+
         _cols: List[Column] = []
         for c in cols:
             if isinstance(c, Column):
@@ -1107,10 +1117,14 @@ class DataFrame:
 
         rows: List[Row] = []
         for row in table.to_pylist():
-            _dict = {}
+            _dict: Dict[Any, Any] = {}
             for k, v in row.items():
                 if isinstance(v, bytes):
                     _dict[k] = bytearray(v)
+                elif isinstance(v, datetime.datetime) and v.tzinfo is not None:
+                    # TODO: Should be controlled by "spark.sql.timestampType"
+                    # always remove the time zone for now
+                    _dict[k] = v.replace(tzinfo=None)
                 else:
                     _dict[k] = v
             rows.append(Row(**_dict))
@@ -1355,6 +1369,9 @@ class DataFrame:
     def sameSemantics(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError("sameSemantics() is not implemented.")
 
+    def writeTo(self, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError("writeTo() is not implemented.")
+
     # SparkConnect specific API
     def offset(self, n: int) -> "DataFrame":
         """Returns a new :class: `DataFrame` by skipping the first `n` rows.
@@ -1511,12 +1528,6 @@ def _test() -> None:
 
         # TODO(SPARK-41625): Support Structured Streaming
         del pyspark.sql.connect.dataframe.DataFrame.isStreaming.__doc__
-
-        # TODO(SPARK-41827): groupBy requires all cols be Column or str
-        del pyspark.sql.connect.dataframe.DataFrame.groupBy.__doc__
-
-        # TODO(SPARK-41831): fix transform to accept ColumnReference
-        del pyspark.sql.connect.dataframe.DataFrame.transform.__doc__
 
         # TODO(SPARK-41832): fix unionByName
         del pyspark.sql.connect.dataframe.DataFrame.unionByName.__doc__
