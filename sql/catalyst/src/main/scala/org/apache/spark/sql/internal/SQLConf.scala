@@ -2912,6 +2912,14 @@ object SQLConf {
     .stringConf
     .createWithDefault("avro,csv,json,kafka,orc,parquet,text")
 
+  val ALLOW_EMPTY_SCHEMAS_FOR_WRITES = buildConf("spark.sql.legacy.allowEmptySchemaWrite")
+    .internal()
+    .doc("When this option is set to true, validation of empty or empty nested schemas that " +
+      "occurs when writing into a FileFormat based data source does not happen.")
+    .version("3.4.0")
+    .booleanConf
+    .createWithDefault(false)
+
   val DISABLED_V2_STREAMING_WRITERS = buildConf("spark.sql.streaming.disabledV2Writers")
     .doc("A comma-separated list of fully qualified data source register class names for which" +
       " StreamWriteSupport is disabled. Writes to these sources will fall back to the V1 Sinks.")
@@ -3301,6 +3309,16 @@ object SQLConf {
         "text representation, e.g., string 'null', when the partition column is string type. " +
         "Otherwise, it is always parsed as a null literal in the partition spec.")
       .version("3.0.2")
+      .booleanConf
+      .createWithDefault(false)
+
+  val LEGACY_KEEP_PARTITION_SPEC_AS_STRING_LITERAL =
+    buildConf("spark.sql.legacy.keepPartitionSpecAsStringLiteral")
+      .internal()
+      .doc("If it is set to true, `PARTITION(col=05)` is parsed as a string literal of its " +
+        "text representation, e.g., string '05', when the partition column is string type. " +
+        "Otherwise, it is always parsed as a numeric literal in the partition spec.")
+      .version("3.4.0")
       .booleanConf
       .createWithDefault(false)
 

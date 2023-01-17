@@ -622,8 +622,10 @@ pyspark_ml = Module(
         "pyspark.ml.tests.test_base",
         "pyspark.ml.tests.test_evaluation",
         "pyspark.ml.tests.test_feature",
+        "pyspark.ml.tests.test_functions",
         "pyspark.ml.tests.test_image",
         "pyspark.ml.tests.test_linalg",
+        "pyspark.ml.tests.test_model_cache",
         "pyspark.ml.tests.test_param",
         "pyspark.ml.tests.test_persistence",
         "pyspark.ml.tests.test_pipeline",
@@ -753,6 +755,16 @@ pyspark_pandas_slow = Module(
     excluded_python_implementations=[
         "PyPy"  # Skip these tests under PyPy since they require numpy, pandas, and pyarrow and
         # they aren't available there
+    ],
+)
+
+pyspark_errors = Module(
+    name="pyspark-errors",
+    dependencies=[],
+    source_file_regexes=["python/pyspark/errors"],
+    python_test_goals=[
+        # unittests
+        "pyspark.errors.tests.test_errors",
     ],
 )
 
