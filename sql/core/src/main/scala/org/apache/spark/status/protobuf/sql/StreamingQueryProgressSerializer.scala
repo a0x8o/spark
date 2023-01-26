@@ -26,6 +26,7 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.sql.streaming.StreamingQueryProgress
 import org.apache.spark.status.protobuf.StoreTypes
+import org.apache.spark.status.protobuf.Utils.{getStringField, setJMapField, setStringField}
 
 private[protobuf] object StreamingQueryProgressSerializer {
 
@@ -35,46 +36,60 @@ private[protobuf] object StreamingQueryProgressSerializer {
 
   def serialize(process: StreamingQueryProgress): StoreTypes.StreamingQueryProgress = {
     val builder = StoreTypes.StreamingQueryProgress.newBuilder()
-    builder.setId(process.id.toString)
-    builder.setRunId(process.runId.toString)
-    builder.setName(process.name)
-    builder.setTimestamp(process.timestamp)
+    if (process.id != null) {
+      builder.setId(process.id.toString)
+    }
+    if (process.runId != null) {
+      builder.setRunId(process.runId.toString)
+    }
+    setStringField(process.name, builder.setName)
+    setStringField(process.timestamp, builder.setTimestamp)
     builder.setBatchId(process.batchId)
     builder.setBatchDuration(process.batchDuration)
-    process.durationMs.forEach {
-      case (k, v) => builder.putDurationMs(k, v)
-    }
-    process.eventTime.forEach {
-      case (k, v) => builder.putEventTime(k, v)
-    }
+    setJMapField(process.durationMs, builder.putAllDurationMs)
+    setJMapField(process.eventTime, builder.putAllEventTime)
     process.stateOperators.foreach(
       s => builder.addStateOperators(StateOperatorProgressSerializer.serialize(s)))
     process.sources.foreach(
       s => builder.addSources(SourceProgressSerializer.serialize(s))
     )
     builder.setSink(SinkProgressSerializer.serialize(process.sink))
-    process.observedMetrics.forEach {
-      case (k, v) => builder.putObservedMetrics(k, mapper.writeValueAsString(v))
-    }
+    setJMapField(process.observedMetrics, putAllObservedMetrics(builder, _))
     builder.build()
   }
 
   def deserialize(process: StoreTypes.StreamingQueryProgress): StreamingQueryProgress = {
+    val id = if (process.hasId) {
+      UUID.fromString(process.getId)
+    } else null
+    val runId = if (process.hasId) {
+      UUID.fromString(process.getRunId)
+    } else null
     new StreamingQueryProgress(
-      id = UUID.fromString(process.getId),
-      runId = UUID.fromString(process.getRunId),
-      name = process.getName,
-      timestamp = process.getTimestamp,
+      id = id,
+      runId = runId,
+      name = getStringField(process.hasName, () => process.getName),
+      timestamp = getStringField(process.hasTimestamp, () => process.getTimestamp),
       batchId = process.getBatchId,
       batchDuration = process.getBatchDuration,
-      durationMs = process.getDurationMsMap,
-      eventTime = process.getEventTimeMap,
+      durationMs = new JHashMap(process.getDurationMsMap),
+      eventTime = new JHashMap(process.getEventTimeMap),
       stateOperators =
         StateOperatorProgressSerializer.deserializeToArray(process.getStateOperatorsList),
       sources = SourceProgressSerializer.deserializeToArray(process.getSourcesList),
       sink = SinkProgressSerializer.deserialize(process.getSink),
       observedMetrics = convertToObservedMetrics(process.getObservedMetricsMap)
     )
+  }
+
+  private def putAllObservedMetrics(
+      builder: StoreTypes.StreamingQueryProgress.Builder,
+      observedMetrics: JMap[String, Row]): Unit = {
+    // Encode Row as Json to handle it as a string type in protobuf and this way
+    // is simpler than defining a message type corresponding to Row in protobuf.
+    observedMetrics.forEach {
+      case (k, v) => builder.putObservedMetrics(k, mapper.writeValueAsString(v))
+    }
   }
 
   private def convertToObservedMetrics(input: JMap[String, String]): JHashMap[String, Row] = {

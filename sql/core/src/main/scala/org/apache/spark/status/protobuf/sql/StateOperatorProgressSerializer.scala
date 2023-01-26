@@ -17,16 +17,18 @@
 
 package org.apache.spark.status.protobuf.sql
 
-import java.util.{List => JList}
+import java.util.{HashMap => JHashMap, List => JList}
 
 import org.apache.spark.sql.streaming.StateOperatorProgress
 import org.apache.spark.status.protobuf.StoreTypes
+import org.apache.spark.status.protobuf.Utils.{getStringField, setStringField}
 
 object StateOperatorProgressSerializer {
 
   def serialize(stateOperator: StateOperatorProgress): StoreTypes.StateOperatorProgress = {
+    import org.apache.spark.status.protobuf.Utils.setJMapField
     val builder = StoreTypes.StateOperatorProgress.newBuilder()
-    builder.setOperatorName(stateOperator.operatorName)
+    setStringField(stateOperator.operatorName, builder.setOperatorName)
     builder.setNumRowsTotal(stateOperator.numRowsTotal)
     builder.setNumRowsUpdated(stateOperator.numRowsUpdated)
     builder.setAllUpdatesTimeMs(stateOperator.allUpdatesTimeMs)
@@ -37,9 +39,7 @@ object StateOperatorProgressSerializer {
     builder.setNumRowsDroppedByWatermark(stateOperator.numRowsDroppedByWatermark)
     builder.setNumShufflePartitions(stateOperator.numShufflePartitions)
     builder.setNumStateStoreInstances(stateOperator.numStateStoreInstances)
-    stateOperator.customMetrics.forEach {
-      case (k, v) => builder.putCustomMetrics(k, v)
-    }
+    setJMapField(stateOperator.customMetrics, builder.putAllCustomMetrics)
     builder.build()
   }
 
@@ -58,7 +58,8 @@ object StateOperatorProgressSerializer {
   private def deserialize(
       stateOperator: StoreTypes.StateOperatorProgress): StateOperatorProgress = {
     new StateOperatorProgress(
-      operatorName = stateOperator.getOperatorName,
+      operatorName =
+        getStringField(stateOperator.hasOperatorName, () => stateOperator.getOperatorName),
       numRowsTotal = stateOperator.getNumRowsTotal,
       numRowsUpdated = stateOperator.getNumRowsUpdated,
       allUpdatesTimeMs = stateOperator.getAllUpdatesTimeMs,
@@ -69,7 +70,7 @@ object StateOperatorProgressSerializer {
       numRowsDroppedByWatermark = stateOperator.getNumRowsDroppedByWatermark,
       numShufflePartitions = stateOperator.getNumShufflePartitions,
       numStateStoreInstances = stateOperator.getNumStateStoreInstances,
-      customMetrics = stateOperator.getCustomMetricsMap
+      customMetrics = new JHashMap(stateOperator.getCustomMetricsMap)
     )
   }
 }
