@@ -355,10 +355,11 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
             }
           case f: Filter if f.condition.dataType != BooleanType =>
             f.failAnalysis(
-              errorClass = "_LEGACY_ERROR_TEMP_2415",
+              errorClass = "DATATYPE_MISMATCH.FILTER_NOT_BOOLEAN",
               messageParameters = Map(
-                "filter" -> f.condition.sql,
-                "type" -> f.condition.dataType.catalogString))
+                "sqlExpr" -> f.expressions.map(toSQLExpr).mkString(","),
+                "filter" -> toSQLExpr(f.condition),
+                "type" -> toSQLType(f.condition.dataType)))
 
           case j @ Join(_, _, _, Some(condition), _) if condition.dataType != BooleanType =>
             j.failAnalysis(
@@ -1056,6 +1057,11 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
       sub: LogicalPlan,
       isScalar: Boolean = false,
       isLateral: Boolean = false): Unit = {
+    // Some query shapes are only supported with the DecorrelateInnerQuery framework.
+    // Currently we only use this new framework for scalar and lateral subqueries.
+    val usingDecorrelateInnerQueryFramework =
+      (isScalar || isLateral) && SQLConf.get.decorrelateInnerQueryEnabled
+
     // Validate that correlated aggregate expression do not contain a mixture
     // of outer and local references.
     def checkMixedReferencesInsideAggregateExpr(expr: Expression): Unit = {
@@ -1086,7 +1092,7 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
     // DecorrelateInnerQuery is enabled. Otherwise, only Filter can only outer references.
     def canHostOuter(plan: LogicalPlan): Boolean = plan match {
       case _: Filter => true
-      case _: Project => (isScalar || isLateral) && SQLConf.get.decorrelateInnerQueryEnabled
+      case _: Project => usingDecorrelateInnerQueryFramework
       case _ => false
     }
 
@@ -1164,8 +1170,7 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
       // Correlated non-equality predicates are only supported with the decorrelate
       // inner query framework. Currently we only use this new framework for scalar
       // and lateral subqueries.
-      val allowNonEqualityPredicates =
-        SQLConf.get.decorrelateInnerQueryEnabled && (isScalar || isLateral)
+      val allowNonEqualityPredicates = usingDecorrelateInnerQueryFramework
       if (!allowNonEqualityPredicates && predicates.nonEmpty) {
         // Report a non-supported case as an exception
         p.failAnalysis(
@@ -1208,6 +1213,14 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
         // ResolvedHint, LeafNode, Repartition, and SubqueryAlias
         case p @ (_: ResolvedHint | _: LeafNode | _: Repartition | _: SubqueryAlias) =>
           p.children.foreach(child => checkPlan(child, aggregated, canContainOuter))
+
+        case p @ (_ : Union) =>
+          // Set operations (e.g. UNION) containing correlated values are only supported
+          // with DecorrelateInnerQuery framework.
+          val childCanContainOuter = (canContainOuter
+            && usingDecorrelateInnerQueryFramework
+            && SQLConf.get.getConf(SQLConf.DECORRELATE_SET_OPS_ENABLED))
+          p.children.foreach(child => checkPlan(child, aggregated, childCanContainOuter))
 
         // Category 2:
         // These operators can be anywhere in a correlated subquery.

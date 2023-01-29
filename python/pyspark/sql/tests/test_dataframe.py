@@ -43,7 +43,12 @@ from pyspark.sql.types import (
     FloatType,
     DayTimeIntervalType,
 )
-from pyspark.errors import AnalysisException, IllegalArgumentException
+from pyspark.errors import (
+    AnalysisException,
+    IllegalArgumentException,
+    SparkConnectException,
+    SparkConnectAnalysisException,
+)
 from pyspark.testing.sqlutils import (
     ReusedSQLTestCase,
     SQLTestUtils,
@@ -884,7 +889,10 @@ class DataFrameTestsMixin:
 
         self.assertRaises(TypeError, lambda: self.spark.range(1).sample(seed="abc"))
 
-        self.assertRaises(IllegalArgumentException, lambda: self.spark.range(1).sample(-1.0))
+        self.assertRaises(
+            (IllegalArgumentException, SparkConnectException),
+            lambda: self.spark.range(1).sample(-1.0).count(),
+        )
 
     def test_toDF_with_schema_string(self):
         data = [Row(key=i, value=str(i)) for i in range(100)]
@@ -1503,13 +1511,17 @@ class DataFrameTestsMixin:
         # incompatible field nullability
         schema4 = StructType([StructField("j", LongType(), False)])
         self.assertRaisesRegex(
-            AnalysisException, "NULLABLE_COLUMN_OR_FIELD", lambda: df.to(schema4)
+            (AnalysisException, SparkConnectAnalysisException),
+            "NULLABLE_COLUMN_OR_FIELD",
+            lambda: df.to(schema4).count(),
         )
 
         # field cannot upcast
         schema5 = StructType([StructField("i", LongType())])
         self.assertRaisesRegex(
-            AnalysisException, "INVALID_COLUMN_OR_FIELD_DATA_TYPE", lambda: df.to(schema5)
+            (AnalysisException, SparkConnectAnalysisException),
+            "INVALID_COLUMN_OR_FIELD_DATA_TYPE",
+            lambda: df.to(schema5).count(),
         )
 
 

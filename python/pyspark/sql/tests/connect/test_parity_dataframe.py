@@ -95,16 +95,6 @@ class DataFrameParityTests(DataFrameTestsMixin, ReusedConnectTestCase):
     def test_same_semantics_error(self):
         super().test_same_semantics_error()
 
-    # TODO(SPARK-41830): Fix DataFrame.sample parameters
-    @unittest.skip("Fails in Spark Connect, should enable.")
-    def test_sample(self):
-        super().test_sample()
-
-    # TODO(SPARK-41875): throw proper errors in Dataset.to()
-    @unittest.skip("Fails in Spark Connect, should enable.")
-    def test_to(self):
-        super().test_to()
-
     @unittest.skip("Spark Connect does not support RDD but the tests depend on them.")
     def test_toDF_with_schema_string(self):
         super().test_toDF_with_schema_string()
