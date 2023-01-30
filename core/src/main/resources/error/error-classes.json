@@ -438,17 +438,6 @@
           "The <exprName> must be between <valueRange> (current value = <currentValue>)."
         ]
       },
-      "WRONG_NUM_ARGS" : {
-        "message" : [
-          "The <functionName> requires <expectedNum> parameters but the actual number is <actualNum>."
-        ]
-      },
-      "WRONG_NUM_ARGS_WITH_SUGGESTION" : {
-        "message" : [
-          "The <functionName> requires <expectedNum> parameters but the actual number is <actualNum>.",
-          "If you have to call this function with <legacyNum> parameters, set the legacy configuration <legacyConfKey> to <legacyConfValue>."
-        ]
-      },
       "WRONG_NUM_ENDPOINTS" : {
         "message" : [
           "The number of endpoints must be >= 2 to construct intervals but the actual number is <actualNumber>."
@@ -1470,6 +1459,12 @@
     },
     "sqlState" : "0A000"
   },
+  "UNSUPPORTED_EXPR_FOR_OPERATOR" : {
+    "message" : [
+      "A query operator contains one or more unsupported expressions. Consider to rewrite it to avoid window functions, aggregate functions, and generator functions in the WHERE clause.",
+      "Invalid expressions: [<invalidExprSqls>]"
+    ]
+  },
   "UNSUPPORTED_FEATURE" : {
     "message" : [
       "The feature is not supported:"
@@ -1562,7 +1557,7 @@
       },
       "PIVOT_AFTER_GROUP_BY" : {
         "message" : [
-          "PIVOT clause following a GROUP BY clause."
+          "PIVOT clause following a GROUP BY clause. Consider pushing the GROUP BY into a subquery."
         ]
       },
       "PIVOT_TYPE" : {
@@ -1782,7 +1777,7 @@
   },
   "WRONG_NUM_ARGS" : {
     "message" : [
-      "Invalid number of arguments for the function <functionName>."
+      "The <functionName> requires <expectedNum> parameters but the actual number is <actualNum>."
     ],
     "subClass" : {
       "WITHOUT_SUGGESTION" : {
@@ -1792,7 +1787,7 @@
       },
       "WITH_SUGGESTION" : {
         "message" : [
-          "Consider to change the number of arguments because the function requires <expectedNum> parameters but the actual number is <actualNum>."
+          "If you have to call this function with <legacyNum> parameters, set the legacy configuration <legacyConfKey> to <legacyConfValue>."
         ]
       }
     },
@@ -5289,12 +5284,6 @@
       "nondeterministic expressions are only allowed in Project, Filter, Aggregate or Window, found:",
       "<sqlExprs>",
       "in operator <operator>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_2441" : {
-    "message" : [
-      "The query operator `<operator>` contains one or more unsupported expression types Aggregate, Window or Generate.",
-      "Invalid expressions: [<invalidExprSqls>]."
     ]
   },
   "_LEGACY_ERROR_TEMP_2443" : {
