@@ -20,7 +20,6 @@ import java.nio.file.{Files, Path}
 
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
-import scala.util.Properties.versionNumberString
 
 import com.google.protobuf.util.JsonFormat
 import io.grpc.inprocess.InProcessChannelBuilder
@@ -31,7 +30,7 @@ import org.apache.spark.connect.proto
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{functions => fn}
 import org.apache.spark.sql.connect.client.SparkConnectClient
-import org.apache.spark.sql.types.{MetadataBuilder, StructType}
+import org.apache.spark.sql.types._
 
 // scalastyle:off
 /**
@@ -58,8 +57,6 @@ class PlanGenerationTestSuite extends ConnectFunSuite with BeforeAndAfterAll wit
   // Borrowed from SparkFunSuite
   private val regenerateGoldenFiles: Boolean = System.getenv("SPARK_GENERATE_GOLDEN_FILES") == "1"
 
-  private val scala = versionNumberString.substring(0, versionNumberString.indexOf(".", 2))
-
   // Borrowed from SparkFunSuite
   private def getWorkspaceFilePath(first: String, more: String*): Path = {
     if (!(sys.props.contains("spark.test.home") || sys.env.contains("SPARK_HOME"))) {
@@ -81,6 +78,17 @@ class PlanGenerationTestSuite extends ConnectFunSuite with BeforeAndAfterAll wit
   }
 
   protected val queryFilePath: Path = baseResourcePath.resolve("queries")
+
+  // A relative path to /connector/connect/server, used by `ProtoToParsedPlanTestSuite` to run
+  // with the datasource.
+  protected val testDataPath: Path = java.nio.file.Paths.get(
+    "../",
+    "common",
+    "src",
+    "test",
+    "resources",
+    "query-tests",
+    "test-data")
 
   private val printer = JsonFormat.printer()
 
@@ -153,25 +161,38 @@ class PlanGenerationTestSuite extends ConnectFunSuite with BeforeAndAfterAll wit
     }
   }
 
-  private def createLocalRelation(schema: StructType): DataFrame = session.newDataset { builder =>
-    // TODO API is not consistent. Now we have two different ways of working with schemas!
-    builder.getLocalRelationBuilder.setSchema(schema.catalogString)
-  }
-
   private val simpleSchema = new StructType()
     .add("id", "long")
     .add("a", "int")
     .add("b", "double")
+
+  private val simpleSchemaString = simpleSchema.catalogString
 
   private val otherSchema = new StructType()
     .add("a", "int")
     .add("id", "long")
     .add("payload", "binary")
 
+  private val otherSchemaString = otherSchema.catalogString
+
+  private val complexSchema = simpleSchema
+    .add("d", simpleSchema)
+    .add("e", "array<int>")
+    .add("f", MapType(StringType, simpleSchema))
+    .add("g", "string")
+
+  private val complexSchemaString = complexSchema.catalogString
+
+  private def createLocalRelation(schema: String): DataFrame = session.newDataset { builder =>
+    // TODO API is not consistent. Now we have two different ways of working with schemas!
+    builder.getLocalRelationBuilder.setSchema(schema)
+  }
+
   // A few helper dataframes.
-  private def simple: DataFrame = createLocalRelation(simpleSchema)
+  private def simple: DataFrame = createLocalRelation(simpleSchemaString)
   private def left: DataFrame = simple
-  private def right: DataFrame = createLocalRelation(otherSchema)
+  private def right: DataFrame = createLocalRelation(otherSchemaString)
+  private def complex = createLocalRelation(complexSchemaString)
 
   private def select(cs: Column*): DataFrame = simple.select(cs: _*)
 
@@ -182,6 +203,47 @@ class PlanGenerationTestSuite extends ConnectFunSuite with BeforeAndAfterAll wit
 
   test("range") {
     session.range(1, 10, 1, 2)
+  }
+
+  test("read") {
+    session.read
+      .format("csv")
+      .schema(
+        StructType(
+          StructField("name", StringType) ::
+            StructField("age", IntegerType) ::
+            StructField("job", StringType) :: Nil))
+      .option("header", "true")
+      .options(Map("delimiter" -> ";"))
+      .load(testDataPath.resolve("people.csv").toString)
+  }
+
+  test("read json") {
+    session.read.json(testDataPath.resolve("people.json").toString)
+  }
+
+  test("read csv") {
+    session.read.csv(testDataPath.resolve("people.csv").toString)
+  }
+
+  test("read parquet") {
+    session.read.parquet(testDataPath.resolve("users.parquet").toString)
+  }
+
+  test("read orc") {
+    session.read.orc(testDataPath.resolve("users.orc").toString)
+  }
+
+  test("read table") {
+    session.read.table("myTable")
+  }
+
+  test("table") {
+    session.table("myTable")
+  }
+
+  test("read text") {
+    session.read.text(testDataPath.resolve("people.txt").toString)
   }
 
   /* Dataset API */
@@ -502,20 +564,215 @@ class PlanGenerationTestSuite extends ConnectFunSuite with BeforeAndAfterAll wit
   }
 
   /* Column API */
-  test("column by name") {
-    select(fn.col("b"))
+  private def columnTest(name: String)(f: => Column): Unit = {
+    test("column " + name) {
+      complex.select(f)
+    }
   }
 
-  test("column add") {
-    select(fn.col("a") + fn.col("b"))
+  private def orderColumnTest(name: String)(f: => Column): Unit = {
+    test("column " + name) {
+      complex.orderBy(f)
+    }
   }
 
-  test("column alias") {
-    select(fn.col("a").name("b"))
+  columnTest("apply") {
+    fn.col("f").apply("super_duper_key")
   }
 
-  test("column equals") {
-    select(fn.col("a") === fn.col("b"))
+  columnTest("unary minus") {
+    -fn.lit(1)
+  }
+
+  columnTest("not") {
+    !fn.lit(true)
+  }
+
+  columnTest("equals") {
+    fn.col("a") === fn.col("b")
+  }
+
+  columnTest("not equals") {
+    fn.col("a") =!= fn.col("b")
+  }
+
+  columnTest("gt") {
+    fn.col("a") > fn.col("b")
+  }
+
+  columnTest("lt") {
+    fn.col("a") < fn.col("b")
+  }
+
+  columnTest("geq") {
+    fn.col("a") >= fn.col("b")
+  }
+
+  columnTest("leq") {
+    fn.col("a") <= fn.col("b")
+  }
+
+  columnTest("eqNullSafe") {
+    fn.col("a") <=> fn.col("b")
+  }
+
+  columnTest("when otherwise") {
+    val a = fn.col("a")
+    fn.when(a < 10, "low").when(a < 20, "medium").otherwise("high")
+  }
+
+  columnTest("between") {
+    fn.col("a").between(10, 20)
+  }
+
+  columnTest("isNaN") {
+    fn.col("b").isNaN
+  }
+
+  columnTest("isNull") {
+    fn.col("g").isNull
+  }
+
+  columnTest("isNotNull") {
+    fn.col("g").isNotNull
+  }
+
+  columnTest("and") {
+    fn.col("a") > 10 && fn.col("b") < 0.5d
+  }
+
+  columnTest("or") {
+    fn.col("a") > 10 || fn.col("b") < 0.5d
+  }
+
+  columnTest("add") {
+    fn.col("a") + fn.col("b")
+  }
+
+  columnTest("subtract") {
+    fn.col("a") - fn.col("b")
+  }
+
+  columnTest("multiply") {
+    fn.col("a") * fn.col("b")
+  }
+
+  columnTest("divide") {
+    fn.col("a") / fn.col("b")
+  }
+
+  columnTest("modulo") {
+    fn.col("a") % 10
+  }
+
+  columnTest("isin") {
+    fn.col("g").isin("hello", "world", "foo")
+  }
+
+  columnTest("like") {
+    fn.col("g").like("%bob%")
+  }
+
+  columnTest("rlike") {
+    fn.col("g").like("^[0-9]*$")
+  }
+
+  columnTest("ilike") {
+    fn.col("g").like("%fOb%")
+  }
+
+  columnTest("getItem") {
+    fn.col("e").getItem(3)
+  }
+
+  columnTest("withField") {
+    fn.col("d").withField("x", fn.lit("xq"))
+  }
+
+  columnTest("dropFields") {
+    fn.col("d").dropFields("a", "c")
+  }
+
+  columnTest("getField") {
+    fn.col("d").getItem("b")
+  }
+
+  columnTest("substr") {
+    fn.col("g").substr(8, 3)
+  }
+
+  columnTest("contains") {
+    fn.col("g").contains("baz")
+  }
+
+  columnTest("startsWith") {
+    fn.col("g").startsWith("prefix_")
+  }
+
+  columnTest("endsWith") {
+    fn.col("g").endsWith("suffix_")
+  }
+
+  columnTest("alias") {
+    fn.col("a").name("b")
+  }
+
+  columnTest("as multi") {
+    fn.col("d").as(Array("v1", "v2", "v3"))
+  }
+
+  columnTest("as with metadata") {
+    val builder = new MetadataBuilder
+    builder.putString("comment", "modified C field")
+    fn.col("c").as("c_mod", builder.build())
+  }
+
+  columnTest("cast") {
+    fn.col("a").cast("long")
+  }
+
+  orderColumnTest("desc") {
+    fn.col("b").desc
+  }
+
+  orderColumnTest("desc_nulls_first") {
+    fn.col("b").desc_nulls_first
+  }
+
+  orderColumnTest("desc_nulls_last") {
+    fn.col("b").desc_nulls_last
+  }
+
+  orderColumnTest("asc") {
+    fn.col("a").asc
+  }
+
+  orderColumnTest("asc_nulls_first") {
+    fn.col("a").asc_nulls_first
+  }
+
+  orderColumnTest("asc_nulls_last") {
+    fn.col("a").asc_nulls_last
+  }
+
+  columnTest("bitwiseOR") {
+    fn.col("a").bitwiseOR(7)
+  }
+
+  columnTest("bitwiseAND") {
+    fn.col("a").bitwiseAND(255)
+  }
+
+  columnTest("bitwiseXOR") {
+    fn.col("a").bitwiseXOR(78)
+  }
+
+  columnTest("star") {
+    fn.col("*")
+  }
+
+  columnTest("star with target") {
+    fn.col("str.*")
   }
 
   /* Function API */
@@ -523,22 +780,8 @@ class PlanGenerationTestSuite extends ConnectFunSuite with BeforeAndAfterAll wit
     select(fn.col("id"))
   }
 
-  test("function udf " + scala) {
-    // This test might be a bit tricky if different JVM
-    // versions are used to generate the golden files.
-    val functions = Seq(
-      fn.udf(TestUDFs.udf0)
-        .asNonNullable()
-        .asNondeterministic(),
-      fn.udf(TestUDFs.udf1).withName("foo"),
-      fn.udf(TestUDFs.udf2).withName("f3"),
-      fn.udf(TestUDFs.udf3).withName("bar"),
-      fn.udf(TestUDFs.udf4).withName("f_four"))
-    val id = fn.col("id")
-    val columns = functions.zipWithIndex.map { case (udf, i) =>
-      udf(Seq.fill(i)(id): _*)
-    }
-    select(columns: _*)
+  test("function max") {
+    select(fn.max(Column("id")))
   }
 
   test("function lit") {

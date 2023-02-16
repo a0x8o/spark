@@ -752,7 +752,7 @@ class Dataset[T] private[sql] (val session: SparkSession, private[sql] val plan:
     session.newDataset { builder =>
       builder.getSortBuilder
         .setInput(plan.getRoot)
-        .setIsGlobal(false)
+        .setIsGlobal(global)
         .addAllOrder(sortExprs.map(_.sortOrder).asJava)
     }
   }
@@ -2220,7 +2220,7 @@ class Dataset[T] private[sql] (val session: SparkSession, private[sql] val plan:
 
   def collectResult(): SparkResult = session.execute(plan)
 
-  private def withResult[E](f: SparkResult => E): E = {
+  private[sql] def withResult[E](f: SparkResult => E): E = {
     val result = collectResult()
     try f(result)
     finally {
