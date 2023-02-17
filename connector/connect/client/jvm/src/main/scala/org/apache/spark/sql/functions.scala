@@ -44,6 +44,14 @@ object functions {
    */
   def col(colName: String): Column = Column(colName)
 
+  /**
+   * Aggregate function: returns the maximum value of the expression in a group.
+   *
+   * @group agg_funcs
+   * @since 3.4.0
+   */
+  def max(e: Column): Column = Column.fn("max", e)
+
   private def createLiteral(f: proto.Expression.Literal.Builder => Unit): Column = Column {
     builder =>
       val literalBuilder = proto.Expression.Literal.newBuilder()
@@ -90,6 +98,34 @@ object functions {
       case null => unsupported("Null literals not supported yet.")
       case _ => unsupported(s"literal $literal not supported (yet).")
     }
+  }
+
+  /**
+   * Evaluates a list of conditions and returns one of multiple possible result expressions. If
+   * otherwise is not defined at the end, null is returned for unmatched conditions.
+   *
+   * {{{
+   *   // Example: encoding gender string column into integer.
+   *
+   *   // Scala:
+   *   people.select(when(people("gender") === "male", 0)
+   *     .when(people("gender") === "female", 1)
+   *     .otherwise(2))
+   *
+   *   // Java:
+   *   people.select(when(col("gender").equalTo("male"), 0)
+   *     .when(col("gender").equalTo("female"), 1)
+   *     .otherwise(2))
+   * }}}
+   *
+   * @group normal_funcs
+   * @since 3.4.0
+   */
+  def when(condition: Column, value: Any): Column = Column { builder =>
+    builder.getUnresolvedFunctionBuilder
+      .setFunctionName("when")
+      .addArguments(condition.expr)
+      .addArguments(lit(value).expr)
   }
 
   /**
