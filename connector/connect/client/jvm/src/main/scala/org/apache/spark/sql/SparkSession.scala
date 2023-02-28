@@ -53,7 +53,7 @@ import org.apache.spark.sql.connect.client.util.Cleaner
  *     .getOrCreate()
  * }}}
  */
-class SparkSession(
+class SparkSession private[sql] (
     private val client: SparkConnectClient,
     private val cleaner: Cleaner,
     private val planIdGenerator: AtomicLong)
@@ -254,8 +254,11 @@ class SparkSession(
 
   private[sql] def analyze(
       plan: proto.Plan,
-      mode: proto.Explain.ExplainMode): proto.AnalyzePlanResponse =
-    client.analyze(plan, mode)
+      method: proto.AnalyzePlanRequest.AnalyzeCase,
+      explainMode: Option[proto.AnalyzePlanRequest.Explain.ExplainMode] = None)
+      : proto.AnalyzePlanResponse = {
+    client.analyze(plan, method, explainMode)
+  }
 
   private[sql] def execute[T](plan: proto.Plan, encoder: AgnosticEncoder[T]): SparkResult[T] = {
     val value = client.execute(plan)
