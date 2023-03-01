@@ -24,7 +24,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.arrow.memory.RootAllocator
 
-import org.apache.spark.SPARK_VERSION
 import org.apache.spark.annotation.Experimental
 import org.apache.spark.connect.proto
 import org.apache.spark.internal.Logging
@@ -63,7 +62,9 @@ class SparkSession private[sql] (
 
   private[this] val allocator = new RootAllocator()
 
-  def version: String = SPARK_VERSION
+  lazy val version: String = {
+    client.analyze(proto.AnalyzePlanRequest.AnalyzeCase.SPARK_VERSION).getSparkVersion.getVersion
+  }
 
   /**
    * Runtime configuration interface for Spark.
@@ -122,8 +123,18 @@ class SparkSession private[sql] (
   @Experimental
   def sql(sqlText: String, args: java.util.Map[String, String]): DataFrame = newDataFrame {
     builder =>
-      builder
-        .setSql(proto.SQL.newBuilder().setQuery(sqlText).putAllArgs(args))
+      // Send the SQL once to the server and then check the output.
+      val cmd = newCommand(b =>
+        b.setSqlCommand(proto.SqlCommand.newBuilder().setSql(sqlText).putAllArgs(args)))
+      val plan = proto.Plan.newBuilder().setCommand(cmd)
+      val responseIter = client.execute(plan.build())
+
+      val response = responseIter.asScala
+        .find(_.hasSqlCommandResult)
+        .getOrElse(throw new RuntimeException("SQLCommandResult must be present"))
+
+      // Update the builder with the values from the result.
+      builder.mergeFrom(response.getSqlCommandResult.getRelation)
   }
 
   /**
@@ -219,6 +230,10 @@ class SparkSession private[sql] (
   object implicits extends SQLImplicits
   // scalastyle:on
 
+  def newSession(): SparkSession = {
+    throw new UnsupportedOperationException("newSession is not supported")
+  }
+
   private def range(
       start: Long,
       end: Long,
@@ -257,7 +272,7 @@ class SparkSession private[sql] (
       method: proto.AnalyzePlanRequest.AnalyzeCase,
       explainMode: Option[proto.AnalyzePlanRequest.Explain.ExplainMode] = None)
       : proto.AnalyzePlanResponse = {
-    client.analyze(plan, method, explainMode)
+    client.analyze(method, Some(plan), explainMode)
   }
 
   private[sql] def execute[T](plan: proto.Plan, encoder: AgnosticEncoder[T]): SparkResult[T] = {
@@ -319,5 +334,25 @@ object SparkSession extends Logging {
       }
       new SparkSession(_client, cleaner, planIdGenerator)
     }
+  }
+
+  def getActiveSession: Option[SparkSession] = {
+    throw new UnsupportedOperationException("getActiveSession is not supported")
+  }
+
+  def getDefaultSession: Option[SparkSession] = {
+    throw new UnsupportedOperationException("getDefaultSession is not supported")
+  }
+
+  def setActiveSession(session: SparkSession): Unit = {
+    throw new UnsupportedOperationException("setActiveSession is not supported")
+  }
+
+  def clearActiveSession(): Unit = {
+    throw new UnsupportedOperationException("clearActiveSession is not supported")
+  }
+
+  def active: SparkSession = {
+    throw new UnsupportedOperationException("active is not supported")
   }
 }
