@@ -46,13 +46,13 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{CatalystSqlParser, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.plans.{Cross, FullOuter, Inner, JoinType, LeftAnti, LeftOuter, LeftSemi, RightOuter, UsingJoin}
 import org.apache.spark.sql.catalyst.plans.logical
-import org.apache.spark.sql.catalyst.plans.logical.{CollectMetrics, CommandResult, Deduplicate, DeserializeToObject, Except, Intersect, LocalRelation, LogicalPlan, MapPartitions, Project, Sample, SerializeFromObject, Sort, SubqueryAlias, TypedFilter, Union, Unpivot, UnresolvedHint}
+import org.apache.spark.sql.catalyst.plans.logical.{CollectMetrics, CommandResult, Deduplicate, DeduplicateWithinWatermark, DeserializeToObject, Except, Intersect, LocalRelation, LogicalPlan, MapPartitions, Project, Sample, SerializeFromObject, Sort, SubqueryAlias, TypedFilter, Union, Unpivot, UnresolvedHint}
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
 import org.apache.spark.sql.connect.artifact.SparkConnectArtifactManager
 import org.apache.spark.sql.connect.common.{DataTypeProtoConverter, InvalidPlanInput, LiteralValueProtoConverter, StorageLevelProtoConverter, UdfPacket}
 import org.apache.spark.sql.connect.config.Connect.CONNECT_GRPC_ARROW_MAX_BATCH_SIZE
 import org.apache.spark.sql.connect.plugin.SparkConnectPluginRegistry
-import org.apache.spark.sql.connect.service.SparkConnectStreamHandler
+import org.apache.spark.sql.connect.service.{SparkConnectService, SparkConnectStreamHandler}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.arrow.ArrowConverters
@@ -323,34 +323,9 @@ class SparkConnectPlanner(val session: SparkSession) {
     val cols = rel.getColsList.asScala.toArray
     val values = rel.getValuesList.asScala.toArray
     if (values.length == 1) {
-      val value = values.head
-      value.getLiteralTypeCase match {
-        case proto.Expression.Literal.LiteralTypeCase.BOOLEAN =>
-          if (cols.nonEmpty) {
-            dataset.na.fill(value = value.getBoolean, cols = cols).logicalPlan
-          } else {
-            dataset.na.fill(value = value.getBoolean).logicalPlan
-          }
-        case proto.Expression.Literal.LiteralTypeCase.LONG =>
-          if (cols.nonEmpty) {
-            dataset.na.fill(value = value.getLong, cols = cols).logicalPlan
-          } else {
-            dataset.na.fill(value = value.getLong).logicalPlan
-          }
-        case proto.Expression.Literal.LiteralTypeCase.DOUBLE =>
-          if (cols.nonEmpty) {
-            dataset.na.fill(value = value.getDouble, cols = cols).logicalPlan
-          } else {
-            dataset.na.fill(value = value.getDouble).logicalPlan
-          }
-        case proto.Expression.Literal.LiteralTypeCase.STRING =>
-          if (cols.nonEmpty) {
-            dataset.na.fill(value = value.getString, cols = cols).logicalPlan
-          } else {
-            dataset.na.fill(value = value.getString).logicalPlan
-          }
-        case other => throw InvalidPlanInput(s"Unsupported value type: $other")
-      }
+      val value = LiteralValueProtoConverter.toCatalystValue(values.head)
+      val columns = if (cols.nonEmpty) Some(cols.toSeq) else None
+      dataset.na.fillValue(value, columns).logicalPlan
     } else {
       val valueMap = mutable.Map.empty[String, Any]
       cols.zip(values).foreach { case (col, value) =>
@@ -738,7 +713,8 @@ class SparkConnectPlanner(val session: SparkSession) {
     val resolver = session.sessionState.analyzer.resolver
     val allColumns = queryExecution.analyzed.output
     if (rel.getAllColumnsAsKeys) {
-      Deduplicate(allColumns, queryExecution.analyzed)
+      if (rel.getWithinWatermark) DeduplicateWithinWatermark(allColumns, queryExecution.analyzed)
+      else Deduplicate(allColumns, queryExecution.analyzed)
     } else {
       val toGroupColumnNames = rel.getColumnNamesList.asScala.toSeq
       val groupCols = toGroupColumnNames.flatMap { (colName: String) =>
@@ -750,7 +726,8 @@ class SparkConnectPlanner(val session: SparkSession) {
         }
         cols
       }
-      Deduplicate(groupCols, queryExecution.analyzed)
+      if (rel.getWithinWatermark) DeduplicateWithinWatermark(groupCols, queryExecution.analyzed)
+      else Deduplicate(groupCols, queryExecution.analyzed)
     }
   }
 
@@ -1852,7 +1829,7 @@ class SparkConnectPlanner(val session: SparkSession) {
         .build())
 
     // Send Metrics
-    SparkConnectStreamHandler.sendMetricsToResponse(sessionId, df)
+    responseObserver.onNext(SparkConnectStreamHandler.createMetricsResponse(sessionId, df))
   }
 
   private def handleRegisterUserDefinedFunction(
@@ -2205,6 +2182,23 @@ class SparkConnectPlanner(val session: SparkSession) {
           .setResult(result)
           .build()
         respBuilder.setExplain(explain)
+
+      case StreamingQueryCommand.CommandCase.EXCEPTION =>
+        val result = query.exception
+        result.foreach(e =>
+          respBuilder.getExceptionBuilder
+            .setExceptionMessage(SparkConnectService.extractErrorMessage(e)))
+
+      case StreamingQueryCommand.CommandCase.AWAIT_TERMINATION =>
+        if (command.getAwaitTermination.hasTimeoutMs) {
+          val terminated = query.awaitTermination(command.getAwaitTermination.getTimeoutMs)
+          respBuilder.getAwaitTerminationBuilder
+            .setTerminated(terminated)
+        } else {
+          query.awaitTermination()
+          respBuilder.getAwaitTerminationBuilder
+            .setTerminated(true)
+        }
 
       case StreamingQueryCommand.CommandCase.COMMAND_NOT_SET =>
         throw new IllegalArgumentException("Missing command in StreamingQueryCommand")
