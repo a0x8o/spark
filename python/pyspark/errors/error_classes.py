@@ -34,6 +34,11 @@ ERROR_CLASSES_JSON = """
       "Attribute `<attr_name>` in provided object `<obj_name>` is not callable."
     ]
   },
+  "ATTRIBUTE_NOT_SUPPORTED" : {
+    "message" : [
+      "Attribute `<attr_name>` is not supported."
+    ]
+  },
   "BROADCAST_VARIABLE_NOT_LOADED": {
     "message": [
       "Broadcast variable `<variable>` not loaded."
@@ -142,6 +147,11 @@ ERROR_CLASSES_JSON = """
   "DISALLOWED_TYPE_FOR_CONTAINER" : {
     "message" : [
       "Argument `<arg_name>`(type: <arg_type>) should only contain a type in [<allowed_types>], got <return_type>"
+    ]
+  },
+  "DUPLICATED_FIELD_NAME_IN_ARROW_STRUCT" : {
+    "message" : [
+      "Duplicated field names in Arrow Struct are not allowed, got <field_names>"
     ]
   },
   "EXCEED_RETRY" : {
@@ -559,6 +569,11 @@ ERROR_CLASSES_JSON = """
   "UNKNOWN_EXPLAIN_MODE" : {
     "message" : [
       "Unknown explain mode: '<explain_mode>'. Accepted explain modes are 'simple', 'extended', 'codegen', 'cost', 'formatted'."
+    ]
+  },
+  "UNKNOWN_INTERRUPT_TYPE" : {
+    "message" : [
+      "Unknown interrupt type: '<interrupt_type>'. Accepted interrupt types are 'all'."
     ]
   },
   "UNKNOWN_RESPONSE" : {

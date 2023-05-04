@@ -121,7 +121,8 @@ class SparkSession private[sql] (
     newDataset(encoder) { builder =>
       if (data.nonEmpty) {
         val timeZoneId = conf.get("spark.sql.session.timeZone")
-        val (arrowData, arrowDataSize) = ConvertToArrow(encoder, data, timeZoneId, allocator)
+        val (arrowData, arrowDataSize) =
+          ConvertToArrow(encoder, data, timeZoneId, errorOnDuplicatedFieldNames = true, allocator)
         if (arrowDataSize <= conf.get("spark.sql.session.localRelationCacheThreshold").toInt) {
           builder.getLocalRelationBuilder
             .setSchema(encoder.schema.json)
@@ -534,6 +535,19 @@ class SparkSession private[sql] (
    */
   private[sql] def resetPlanIdGenerator(): Unit = {
     planIdGenerator.set(0)
+  }
+
+  /**
+   * Interrupt all operations of this session currently running on the connected server.
+   *
+   * TODO/WIP: Currently it will interrupt the Spark Jobs running on the server, triggered from
+   * ExecutePlan requests. If an operation is not running a Spark Job, it becomes an noop and the
+   * operation will continue afterwards, possibly with more Spark Jobs.
+   *
+   * @since 3.5.0
+   */
+  def interruptAll(): Unit = {
+    client.interruptAll()
   }
 
   /**
