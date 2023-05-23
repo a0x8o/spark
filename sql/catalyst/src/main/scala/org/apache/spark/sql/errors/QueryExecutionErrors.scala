@@ -1409,6 +1409,13 @@ private[sql] object QueryExecutionErrors extends QueryErrorsBase {
       messageParameters = Map.empty[String, String])
   }
 
+  def concurrentStreamLogUpdate(batchId: Long): Throwable = {
+    new SparkException(
+      errorClass = "CONCURRENT_STREAM_LOG_UPDATE",
+      messageParameters = Map("batchId" -> batchId.toString),
+      cause = null)
+  }
+
   def cannotParseJsonArraysAsStructsError(): SparkRuntimeException = {
     new SparkRuntimeException(
       errorClass = "_LEGACY_ERROR_TEMP_2132",
@@ -2648,11 +2655,37 @@ private[sql] object QueryExecutionErrors extends QueryErrorsBase {
 
   def aesCryptoError(detailMessage: String): RuntimeException = {
     new SparkRuntimeException(
-      errorClass = "INVALID_PARAMETER_VALUE.AES_KEY",
+      errorClass = "INVALID_PARAMETER_VALUE.AES_CRYPTO_ERROR",
       messageParameters = Map(
         "parameter" -> (toSQLId("expr") + ", " + toSQLId("key")),
         "functionName" -> aesFuncName,
         "detailMessage" -> detailMessage))
+  }
+
+  def invalidAesIvLengthError(mode: String, actualLength: Int): RuntimeException = {
+    new SparkRuntimeException(
+      errorClass = "INVALID_PARAMETER_VALUE.AES_IV_LENGTH",
+      messageParameters = Map(
+        "mode" -> mode,
+        "parameter" -> toSQLId("iv"),
+        "functionName" -> aesFuncName,
+        "actualLength" -> actualLength.toString()))
+  }
+
+  def aesUnsupportedIv(mode: String): RuntimeException = {
+    new SparkRuntimeException(
+      errorClass = "UNSUPPORTED_FEATURE.AES_MODE_IV",
+      messageParameters = Map(
+        "mode" -> mode,
+        "functionName" -> toSQLId("aes_encrypt")))
+  }
+
+  def aesUnsupportedAad(mode: String): RuntimeException = {
+    new SparkRuntimeException(
+      errorClass = "UNSUPPORTED_FEATURE.AES_MODE_AAD",
+      messageParameters = Map(
+        "mode" -> mode,
+        "functionName" -> toSQLId("aes_encrypt")))
   }
 
   def hiveTableWithAnsiIntervalsError(tableName: String): SparkUnsupportedOperationException = {
