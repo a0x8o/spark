@@ -74,8 +74,8 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     )
 
     val excludedSqlFunctions = Set(
-      "random", "first_value", "last_value",
-      "approx_percentile", "array_agg", "char_length", "character_length",
+      "random",
+      "array_agg", "char_length", "character_length",
       "lcase", "position", "printf", "substr", "ucase", "day", "cardinality", "sha",
       "getbit",
       // aliases for existing functions
@@ -4193,7 +4193,19 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
           Row(31),
           Row(0),
           Row(null)))
+      checkAnswer(df.select(reduce(col("i"), lit(0), (acc, x) => acc + x)),
+        Seq(
+          Row(25),
+          Row(31),
+          Row(0),
+          Row(null)))
       checkAnswer(df.select(aggregate(col("i"), lit(0), (acc, x) => acc + x, _ * 10)),
+        Seq(
+          Row(250),
+          Row(310),
+          Row(0),
+          Row(null)))
+      checkAnswer(df.select(reduce(col("i"), lit(0), (acc, x) => acc + x, _ * 10)),
         Seq(
           Row(250),
           Row(310),
@@ -4239,9 +4251,23 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
           Row(null),
           Row(0),
           Row(null)))
+      checkAnswer(df.select(reduce(col("i"), lit(0), (acc, x) => acc + x)),
+        Seq(
+          Row(25),
+          Row(null),
+          Row(0),
+          Row(null)))
       checkAnswer(
         df.select(
           aggregate(col("i"), lit(0), (acc, x) => acc + x, acc => coalesce(acc, lit(0)) * 10)),
+        Seq(
+          Row(250),
+          Row(0),
+          Row(0),
+          Row(null)))
+      checkAnswer(
+        df.select(
+          reduce(col("i"), lit(0), (acc, x) => acc + x, acc => coalesce(acc, lit(0)) * 10)),
         Seq(
           Row(250),
           Row(0),
@@ -5569,6 +5595,21 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
       sql("select array_append(array('b', 'a', 'c'), cast(null as string))"),
       Seq(Row(Seq("b", "a", "c", null)))
     )
+  }
+
+  test("function current_catalog, current_database, current_schema") {
+    val df = Seq((1, 2), (3, 1)).toDF("a", "b")
+
+    checkAnswer(df.selectExpr("CURRENT_CATALOG()"), df.select(current_catalog()))
+    checkAnswer(df.selectExpr("CURRENT_DATABASE()"), df.select(current_database()))
+    checkAnswer(df.selectExpr("CURRENT_SCHEMA()"), df.select(current_schema()))
+  }
+
+  test("function current_user, user") {
+    val df = Seq((1, 2), (3, 1)).toDF("a", "b")
+
+    checkAnswer(df.selectExpr("CURRENT_USER()"), df.select(current_user()))
+    checkAnswer(df.selectExpr("USER()"), df.select(user()))
   }
 }
 
