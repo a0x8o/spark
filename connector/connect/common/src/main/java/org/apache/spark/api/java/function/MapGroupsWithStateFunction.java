@@ -15,28 +15,24 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.connect.service
+package org.apache.spark.api.java.function;
 
-import org.apache.spark.connect.proto
+import java.io.Serializable;
+import java.util.Iterator;
+
+import org.apache.spark.annotation.Evolving;
+import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.streaming.GroupState;
 
 /**
- * Object used to hold the Spark Connect execution state.
+ * ::Experimental::
+ * Base interface for a map function used in
+ * {@code org.apache.spark.sql.KeyValueGroupedDataset.mapGroupsWithState(
+ * MapGroupsWithStateFunction, org.apache.spark.sql.Encoder, org.apache.spark.sql.Encoder)}
+ * @since 3.5.0
  */
-case class ExecutePlanHolder(
-    operationId: String,
-    sessionHolder: SessionHolder,
-    request: proto.ExecutePlanRequest) {
-
-  val jobTag =
-    "SparkConnect_" +
-      s"User_${sessionHolder.userId}_Session_${sessionHolder.sessionId}_Request_${operationId}"
-
-  def interrupt(): Unit = {
-    // TODO/WIP: This only interrupts active Spark jobs that are actively running.
-    // This would then throw the error from ExecutePlan and terminate it.
-    // But if the query is not running a Spark job, but executing code on Spark driver, this
-    // would be a noop and the execution will keep running.
-    sessionHolder.session.sparkContext.cancelJobsWithTag(jobTag)
-  }
-
+@Experimental
+@Evolving
+public interface MapGroupsWithStateFunction<K, V, S, R> extends Serializable {
+    R call(K key, Iterator<V> values, GroupState<S> state) throws Exception;
 }
