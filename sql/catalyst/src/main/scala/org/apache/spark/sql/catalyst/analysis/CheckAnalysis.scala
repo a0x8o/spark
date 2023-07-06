@@ -209,9 +209,10 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
           u.origin)
 
       case u: UnresolvedHint =>
-        u.failAnalysis(
-          errorClass = "_LEGACY_ERROR_TEMP_2313",
-          messageParameters = Map("name" -> u.name))
+        throw SparkException.internalError(
+          msg = s"Hint not found: ${toSQLId(u.name)}",
+          context = u.origin.getQueryContext,
+          summary = u.origin.context.summary)
 
       case command: V2PartitionCommand =>
         command.table match {
@@ -245,10 +246,6 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
             hof.checkArgumentDataTypes() match {
               case checkRes: TypeCheckResult.DataTypeMismatch =>
                 hof.dataTypeMismatch(hof, checkRes)
-              case TypeCheckResult.TypeCheckFailure(message) =>
-                hof.failAnalysis(
-                  errorClass = "_LEGACY_ERROR_TEMP_2314",
-                  messageParameters = Map("sqlExpr" -> hof.sql, "msg" -> message))
               case checkRes: TypeCheckResult.InvalidFormat =>
                 hof.setTagValue(INVALID_FORMAT_ERROR, true)
                 hof.invalidFormat(checkRes)
@@ -280,13 +277,13 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
                 e.dataTypeMismatch(e, checkRes)
               case TypeCheckResult.TypeCheckFailure(message) =>
                 e.setTagValue(DATA_TYPE_MISMATCH_ERROR, true)
-                extraHintForAnsiTypeCoercionExpression(operator)
+                val extraHint = extraHintForAnsiTypeCoercionExpression(operator)
                 e.failAnalysis(
-                  errorClass = "_LEGACY_ERROR_TEMP_2315",
+                  errorClass = "TYPE_CHECK_FAILURE_WITH_HINT",
                   messageParameters = Map(
-                    "sqlExpr" -> e.sql,
+                    "expr" -> toSQLExpr(e),
                     "msg" -> message,
-                    "hint" -> extraHintForAnsiTypeCoercionExpression(operator)))
+                    "hint" -> extraHint))
               case checkRes: TypeCheckResult.InvalidFormat =>
                 e.setTagValue(INVALID_FORMAT_ERROR, true)
                 e.invalidFormat(checkRes)
@@ -489,8 +486,8 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
           case CollectMetrics(name, metrics, _) =>
             if (name == null || name.isEmpty) {
               operator.failAnalysis(
-                errorClass = "_LEGACY_ERROR_TEMP_2316",
-                messageParameters = Map("operator" -> operator.toString))
+                errorClass = "INVALID_OBSERVED_METRICS.MISSING_NAME",
+                messageParameters = Map("operator" -> planToString(operator)))
             }
             // Check if an expression is a valid metric. A metric must meet the following criteria:
             // - Is not a window function;
@@ -501,17 +498,29 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
             def checkMetric(s: Expression, e: Expression, seenAggregate: Boolean = false): Unit = {
               e match {
                 case _: WindowExpression =>
-                  e.failAnalysis("_LEGACY_ERROR_TEMP_2317", Map("sqlExpr" -> s.sql))
+                  e.failAnalysis(
+                    "INVALID_OBSERVED_METRICS.WINDOW_EXPRESSIONS_UNSUPPORTED",
+                    Map("expr" -> toSQLExpr(s)))
                 case _ if !e.deterministic && !seenAggregate =>
-                  e.failAnalysis("_LEGACY_ERROR_TEMP_2318", Map("sqlExpr" -> s.sql))
+                  e.failAnalysis(
+                    "INVALID_OBSERVED_METRICS.NON_AGGREGATE_FUNC_ARG_IS_NON_DETERMINISTIC",
+                    Map("expr" -> toSQLExpr(s)))
                 case a: AggregateExpression if seenAggregate =>
-                  e.failAnalysis("_LEGACY_ERROR_TEMP_2319", Map("sqlExpr" -> s.sql))
+                  e.failAnalysis(
+                    "INVALID_OBSERVED_METRICS.NESTED_AGGREGATES_UNSUPPORTED",
+                    Map("expr" -> toSQLExpr(s)))
                 case a: AggregateExpression if a.isDistinct =>
-                  e.failAnalysis("_LEGACY_ERROR_TEMP_2320", Map("sqlExpr" -> s.sql))
+                  e.failAnalysis(
+                    "INVALID_OBSERVED_METRICS.AGGREGATE_EXPRESSION_WITH_DISTINCT_UNSUPPORTED",
+                    Map("expr" -> toSQLExpr(s)))
                 case a: AggregateExpression if a.filter.isDefined =>
-                  e.failAnalysis("_LEGACY_ERROR_TEMP_2321", Map("sqlExpr" -> s.sql))
+                  e.failAnalysis(
+                    "INVALID_OBSERVED_METRICS.AGGREGATE_EXPRESSION_WITH_FILTER_UNSUPPORTED",
+                    Map("expr" -> toSQLExpr(s)))
                 case _: Attribute if !seenAggregate =>
-                  e.failAnalysis("_LEGACY_ERROR_TEMP_2322", Map("sqlExpr" -> s.sql))
+                  e.failAnalysis(
+                    "INVALID_OBSERVED_METRICS.NON_AGGREGATE_FUNC_ARG_IS_ATTRIBUTE",
+                    Map("expr" -> toSQLExpr(s)))
                 case _: AggregateExpression =>
                   e.children.foreach(checkMetric (s, _, seenAggregate = true))
                 case _ =>
@@ -674,9 +683,8 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
             }
 
           case p @ Project(exprs, _) if containsMultipleGenerators(exprs) =>
-            p.failAnalysis(
-              errorClass = "_LEGACY_ERROR_TEMP_2433",
-              messageParameters = Map("sqlExprs" -> exprs.map(_.sql).mkString(",")))
+            val generators = exprs.filter(expr => expr.exists(_.isInstanceOf[Generator]))
+            throw QueryCompilationErrors.moreThanOneGeneratorError(generators, "SELECT")
 
           case p @ Project(projectList, _) =>
             projectList.foreach(_.transformDownWithPruning(
@@ -686,36 +694,48 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
             })
 
           case j: Join if !j.duplicateResolved =>
-            val conflictingAttributes = j.left.outputSet.intersect(j.right.outputSet)
-            j.failAnalysis(
-              errorClass = "_LEGACY_ERROR_TEMP_2434",
-              messageParameters = Map(
-                "plan" -> plan.toString,
-                "conflictingAttributes" -> conflictingAttributes.mkString(",")))
+            val conflictingAttributes =
+              j.left.outputSet.intersect(j.right.outputSet).map(toSQLExpr(_)).mkString(", ")
+            throw SparkException.internalError(
+              msg = s"""
+                       |Failure when resolving conflicting references in ${j.nodeName}:
+                       |${planToString(plan)}
+                       |Conflicting attributes: $conflictingAttributes.""".stripMargin,
+              context = j.origin.getQueryContext,
+              summary = j.origin.context.summary)
 
           case i: Intersect if !i.duplicateResolved =>
-            val conflictingAttributes = i.left.outputSet.intersect(i.right.outputSet)
-            i.failAnalysis(
-              errorClass = "_LEGACY_ERROR_TEMP_2435",
-              messageParameters = Map(
-                "plan" -> plan.toString,
-                "conflictingAttributes" -> conflictingAttributes.mkString(",")))
+            val conflictingAttributes =
+              i.left.outputSet.intersect(i.right.outputSet).map(toSQLExpr(_)).mkString(", ")
+            throw SparkException.internalError(
+              msg = s"""
+                       |Failure when resolving conflicting references in ${i.nodeName}:
+                       |${planToString(plan)}
+                       |Conflicting attributes: $conflictingAttributes.""".stripMargin,
+              context = i.origin.getQueryContext,
+              summary = i.origin.context.summary)
 
           case e: Except if !e.duplicateResolved =>
-            val conflictingAttributes = e.left.outputSet.intersect(e.right.outputSet)
-            e.failAnalysis(
-              errorClass = "_LEGACY_ERROR_TEMP_2436",
-              messageParameters = Map(
-                "plan" -> plan.toString,
-                "conflictingAttributes" -> conflictingAttributes.mkString(",")))
+            val conflictingAttributes =
+              e.left.outputSet.intersect(e.right.outputSet).map(toSQLExpr(_)).mkString(", ")
+            throw SparkException.internalError(
+              msg = s"""
+                       |Failure when resolving conflicting references in ${e.nodeName}:
+                       |${planToString(plan)}
+                       |Conflicting attributes: $conflictingAttributes.""".stripMargin,
+              context = e.origin.getQueryContext,
+              summary = e.origin.context.summary)
 
           case j: AsOfJoin if !j.duplicateResolved =>
-            val conflictingAttributes = j.left.outputSet.intersect(j.right.outputSet)
-            j.failAnalysis(
-              errorClass = "_LEGACY_ERROR_TEMP_2437",
-              messageParameters = Map(
-                "plan" -> plan.toString,
-                "conflictingAttributes" -> conflictingAttributes.mkString(",")))
+            val conflictingAttributes =
+              j.left.outputSet.intersect(j.right.outputSet).map(toSQLExpr(_)).mkString(", ")
+            throw SparkException.internalError(
+              msg = s"""
+                       |Failure when resolving conflicting references in ${j.nodeName}:
+                       |${planToString(plan)}
+                       |Conflicting attributes: $conflictingAttributes.""".stripMargin,
+              context = j.origin.getQueryContext,
+              summary = j.origin.context.summary)
 
           // TODO: although map type is not orderable, technically map type should be able to be
           // used in equality comparison, remove this type check once we support it.
@@ -1080,7 +1100,7 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
    * duplicates metric definition.
    */
   private def simplifyPlanForCollectedMetrics(plan: LogicalPlan): LogicalPlan = {
-    plan.resolveOperatorsUpWithNewOutput {
+    plan.transformUpWithNewOutput {
       case p: Project if p.projectList.size == p.child.output.size =>
         val assignExprIdOnly = p.projectList.zip(p.child.output).forall {
           case (left: Alias, right: Attribute) =>
@@ -1380,11 +1400,11 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
       if (struct.findNestedField(
           fieldNames, includeCollections = true, alter.conf.resolver).isDefined) {
         alter.failAnalysis(
-          errorClass = "_LEGACY_ERROR_TEMP_2323",
+          errorClass = "FIELDS_ALREADY_EXISTS",
           messageParameters = Map(
             "op" -> op,
-            "fieldNames" -> fieldNames.quoted,
-            "struct" -> struct.treeString))
+            "fieldNames" -> toSQLId(fieldNames),
+            "struct" -> toSQLType(struct)))
       }
     }
 
@@ -1416,7 +1436,8 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
           val newDataType = a.dataType.get
           newDataType match {
             case _: StructType => alter.failAnalysis(
-              "_LEGACY_ERROR_TEMP_2324", Map("table" -> table.name, "fieldName" -> fieldName))
+              "UPDATE_FIELD_WITH_STRUCT_UNSUPPORTED",
+              Map("table" -> toSQLId(table.name), "fieldName" -> toSQLId(fieldName)))
             case _: MapType => alter.failAnalysis(
               "_LEGACY_ERROR_TEMP_2325", Map("table" -> table.name, "fieldName" -> fieldName))
             case _: ArrayType => alter.failAnalysis(
@@ -1439,12 +1460,13 @@ trait CheckAnalysis extends PredicateHelper with LookupCatalog with QueryErrorsB
 
           if (!canAlterColumnType(field.dataType, newDataType)) {
             alter.failAnalysis(
-              errorClass = "_LEGACY_ERROR_TEMP_2329",
+              errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
               messageParameters = Map(
-                "table" -> table.name,
-                "fieldName" -> fieldName,
-                "oldType" -> field.dataType.simpleString,
-                "newType" -> newDataType.simpleString))
+                "table" -> toSQLId(table.name),
+                "originName" -> toSQLId(fieldName),
+                "originType" -> toSQLType(field.dataType),
+                "newName" -> toSQLId(fieldName),
+                "newType" -> toSQLType(newDataType)))
           }
         }
         if (a.nullable.isDefined) {
