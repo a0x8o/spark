@@ -269,12 +269,6 @@ ERROR_CLASSES_JSON = """
       "NumPy array input should be of <dimensions> dimensions."
     ]
   },
-  "INVALID_PANDAS_ON_SPARK_COMPARISON" : {
-    "message" : [
-      "Expected two pandas-on-Spark DataFrames",
-      "but got actual: <actual_type> and expected: <expected_type>"
-    ]
-  },
   "INVALID_PANDAS_UDF" : {
     "message" : [
       "Invalid function: <detail>"
@@ -724,6 +718,11 @@ ERROR_CLASSES_JSON = """
   "UDF_RETURN_TYPE" : {
     "message" : [
       "Return type of the user-defined function should be <expected>, but is <actual>."
+    ]
+  },
+  "UDTF_ARROW_TYPE_CAST_ERROR" : {
+    "message" : [
+      "Cannot convert the output value of the column '<col_name>' with type '<col_type>' to the specified return type of the column: '<arrow_type>'. Please check if the data types match and try again."
     ]
   },
   "UDTF_EXEC_ERROR" : {
