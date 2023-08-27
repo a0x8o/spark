@@ -149,7 +149,7 @@ class SparkThrowableSuite extends SparkFunSuite {
     checkIfUnique(messageFormats)
   }
 
-  ignore("Error classes match with document") {
+  test("Error classes match with document") {
     val errors = errorReader.errorInfoMap
 
     // the black list of error class name which should not add quote
@@ -383,7 +383,7 @@ class SparkThrowableSuite extends SparkFunSuite {
         "UNRESOLVED_COLUMN.WITH_SUGGESTION",
         Map("objectName" -> "`foo`", "proposal" -> "`bar`, `baz`")
       ) ==
-      "[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with " +
+      "[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable, or function parameter with " +
         "name `foo` cannot be resolved. Did you mean one of the following? [`bar`, `baz`]."
     )
 
@@ -395,7 +395,7 @@ class SparkThrowableSuite extends SparkFunSuite {
           "proposal" -> "`bar`, `baz`"),
         ""
       ) ==
-      "[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with " +
+      "[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable, or function parameter with " +
         "name `foo` cannot be resolved. Did you mean one of the following? [`bar`, `baz`]."
     )
   }
@@ -406,7 +406,7 @@ class SparkThrowableSuite extends SparkFunSuite {
         "UNRESOLVED_COLUMN.WITH_SUGGESTION",
         Map("objectName" -> "`foo`", "proposal" -> "`${bar}`, `baz`")
       ) ==
-        "[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with " +
+        "[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable, or function parameter with " +
           "name `foo` cannot be resolved. Did you mean one of the following? [`${bar}`, `baz`]."
     )
   }

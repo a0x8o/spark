@@ -2554,9 +2554,7 @@ class ReleaseExecuteRequest(google.protobuf.message.Message):
 
     class ReleaseAll(google.protobuf.message.Message):
         """Release and close operation completely.
-        Note: This should be called when the server side operation is finished, and ExecutePlan or
-        ReattachExecute are finished processing the result stream, or inside onComplete / onError.
-        This will not interrupt a running execution, but block until it's finished.
+        This will also interrupt the query if it is running execution, and wait for it to be torn down.
         """
 
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
@@ -2686,18 +2684,35 @@ class ReleaseExecuteResponse(google.protobuf.message.Message):
     session_id: builtins.str
     """Session id in which the release was running."""
     operation_id: builtins.str
-    """Operation id of the operation which the release concerns."""
+    """Operation id of the operation on which the release executed.
+    If the operation couldn't be found (because e.g. it was concurrently released), will be unset.
+    Otherwise, it will be equal to the operation_id from request.
+    """
     def __init__(
         self,
         *,
         session_id: builtins.str = ...,
-        operation_id: builtins.str = ...,
+        operation_id: builtins.str | None = ...,
     ) -> None: ...
+    def HasField(
+        self,
+        field_name: typing_extensions.Literal[
+            "_operation_id", b"_operation_id", "operation_id", b"operation_id"
+        ],
+    ) -> builtins.bool: ...
     def ClearField(
         self,
         field_name: typing_extensions.Literal[
-            "operation_id", b"operation_id", "session_id", b"session_id"
+            "_operation_id",
+            b"_operation_id",
+            "operation_id",
+            b"operation_id",
+            "session_id",
+            b"session_id",
         ],
     ) -> None: ...
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["_operation_id", b"_operation_id"]
+    ) -> typing_extensions.Literal["operation_id"] | None: ...
 
 global___ReleaseExecuteResponse = ReleaseExecuteResponse

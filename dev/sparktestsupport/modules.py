@@ -271,19 +271,6 @@ sql_kafka = Module(
     ],
 )
 
-connect = Module(
-    name="connect",
-    dependencies=[hive, avro],
-    source_file_regexes=[
-        "connector/connect",
-    ],
-    build_profile_flags=["-Pconnect"],
-    sbt_test_goals=[
-        "connect/test",
-        "connect-client-jvm/test",
-    ],
-)
-
 protobuf = Module(
     name="protobuf",
     dependencies=[sql],
@@ -292,6 +279,19 @@ protobuf = Module(
     ],
     sbt_test_goals=[
         "protobuf/test",
+    ],
+)
+
+connect = Module(
+    name="connect",
+    dependencies=[hive, avro, protobuf],
+    source_file_regexes=[
+        "connector/connect",
+    ],
+    build_profile_flags=["-Pconnect"],
+    sbt_test_goals=[
+        "connect/test",
+        "connect-client-jvm/test",
     ],
 )
 
@@ -497,7 +497,7 @@ pyspark_sql = Module(
         "pyspark.sql.tests.test_session",
         "pyspark.sql.tests.streaming.test_streaming",
         "pyspark.sql.tests.streaming.test_streaming_foreach",
-        "pyspark.sql.tests.streaming.test_streaming_foreachBatch",
+        "pyspark.sql.tests.streaming.test_streaming_foreach_batch",
         "pyspark.sql.tests.streaming.test_streaming_listener",
         "pyspark.sql.tests.test_types",
         "pyspark.sql.tests.test_udf",
@@ -668,7 +668,6 @@ pyspark_pandas = Module(
         "pyspark.pandas.indexes.datetimes",
         "pyspark.pandas.indexes.timedelta",
         "pyspark.pandas.indexes.multi",
-        "pyspark.pandas.indexes.numeric",
         "pyspark.pandas.spark.accessors",
         "pyspark.pandas.spark.utils",
         "pyspark.pandas.typedef.typehints",
@@ -703,6 +702,7 @@ pyspark_pandas = Module(
         "pyspark.pandas.tests.test_default_index",
         "pyspark.pandas.tests.test_expanding",
         "pyspark.pandas.tests.test_extension",
+        "pyspark.pandas.tests.test_ewm",
         "pyspark.pandas.tests.test_frame_spark",
         "pyspark.pandas.tests.test_generic_functions",
         "pyspark.pandas.tests.test_indexops_spark",
@@ -816,10 +816,9 @@ pyspark_pandas_slow = Module(
 
 pyspark_connect = Module(
     name="pyspark-connect",
-    dependencies=[pyspark_sql, pyspark_ml, connect],
+    dependencies=[pyspark_sql, connect],
     source_file_regexes=[
         "python/pyspark/sql/connect",
-        "python/pyspark/ml/connect",
     ],
     python_test_goals=[
         # sql doctests
@@ -833,6 +832,7 @@ pyspark_connect = Module(
         "pyspark.sql.connect.dataframe",
         "pyspark.sql.connect.functions",
         "pyspark.sql.connect.avro.functions",
+        "pyspark.sql.connect.protobuf.functions",
         "pyspark.sql.connect.streaming.readwriter",
         "pyspark.sql.connect.streaming.query",
         # sql unittests
@@ -841,6 +841,7 @@ pyspark_connect = Module(
         "pyspark.sql.tests.connect.test_connect_function",
         "pyspark.sql.tests.connect.test_connect_column",
         "pyspark.sql.tests.connect.test_parity_arrow",
+        "pyspark.sql.tests.connect.test_parity_arrow_python_udf",
         "pyspark.sql.tests.connect.test_parity_datasources",
         "pyspark.sql.tests.connect.test_parity_errors",
         "pyspark.sql.tests.connect.test_parity_catalog",
@@ -865,13 +866,26 @@ pyspark_connect = Module(
         "pyspark.sql.tests.connect.streaming.test_parity_streaming",
         "pyspark.sql.tests.connect.streaming.test_parity_listener",
         "pyspark.sql.tests.connect.streaming.test_parity_foreach",
-        "pyspark.sql.tests.connect.streaming.test_parity_foreachBatch",
+        "pyspark.sql.tests.connect.streaming.test_parity_foreach_batch",
         "pyspark.sql.tests.connect.test_parity_pandas_grouped_map_with_state",
         "pyspark.sql.tests.connect.test_parity_pandas_udf_scalar",
         "pyspark.sql.tests.connect.test_parity_pandas_udf_grouped_agg",
         "pyspark.sql.tests.connect.test_parity_pandas_udf_window",
-        # ml doctests
-        "pyspark.ml.connect.functions",
+    ],
+    excluded_python_implementations=[
+        "PyPy"  # Skip these tests under PyPy since they require numpy, pandas, and pyarrow and
+        # they aren't available there
+    ],
+)
+
+
+pyspark_ml_connect = Module(
+    name="pyspark-ml-connect",
+    dependencies=[pyspark_connect, pyspark_ml],
+    source_file_regexes=[
+        "python/pyspark/ml/connect",
+    ],
+    python_test_goals=[
         # ml unittests
         "pyspark.ml.tests.connect.test_connect_function",
         "pyspark.ml.tests.connect.test_parity_torch_distributor",
@@ -928,6 +942,7 @@ pyspark_pandas_connect = Module(
         "pyspark.pandas.tests.connect.test_parity_default_index",
         "pyspark.pandas.tests.connect.test_parity_expanding",
         "pyspark.pandas.tests.connect.test_parity_extension",
+        "pyspark.pandas.tests.connect.test_parity_ewm",
         "pyspark.pandas.tests.connect.test_parity_frame_spark",
         "pyspark.pandas.tests.connect.test_parity_generic_functions",
         "pyspark.pandas.tests.connect.test_parity_indexops_spark",

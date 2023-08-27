@@ -513,10 +513,10 @@ object SQLConf {
   val COLUMN_VECTOR_OFFHEAP_ENABLED =
     buildConf("spark.sql.columnVector.offheap.enabled")
       .internal()
-      .doc("When true, use OffHeapColumnVector in ColumnarBatch.")
+      .doc("When true, use OffHeapColumnVector in ColumnarBatch. " +
+        s"Defaults to $MEMORY_OFFHEAP_ENABLED.")
       .version("2.3.0")
-      .booleanConf
-      .createWithDefault(false)
+      .fallbackConf(MEMORY_OFFHEAP_ENABLED)
 
   val PREFER_SORTMERGEJOIN = buildConf("spark.sql.join.preferSortMergeJoin")
     .internal()
@@ -556,7 +556,7 @@ object SQLConf {
       "will introduce shuffle to improve parallelism.")
     .version("3.4.0")
     .bytesConf(ByteUnit.BYTE)
-    .createWithDefault(Long.MaxValue)
+    .createWithDefaultString("128m")
 
   val RADIX_SORT_ENABLED = buildConf("spark.sql.sort.enableRadixSort")
     .internal()
@@ -1500,6 +1500,16 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+ val V2_BUCKETING_SHUFFLE_ENABLED =
+    buildConf("spark.sql.sources.v2.bucketing.shuffle.enabled")
+      .doc("During a storage-partitioned join, whether to allow to shuffle only one side." +
+        "When only one side is KeyGroupedPartitioning, if the conditions are met, spark will " +
+        "only shuffle the other side. This optimization will reduce the amount of data that " +
+        s"needs to be shuffle. This config requires ${V2_BUCKETING_ENABLED.key} to be enabled")
+      .version("4.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val BUCKETING_MAX_BUCKETS = buildConf("spark.sql.sources.bucketing.maxBuckets")
     .doc("The maximum number of buckets allowed.")
     .version("2.4.0")
@@ -1528,7 +1538,7 @@ object SQLConf {
         s"are ${ADAPTIVE_EXECUTION_ENABLED.key} and ${AUTO_BUCKETED_SCAN_ENABLED.key}.")
       .version("3.2.0")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val CROSS_JOINS_ENABLED = buildConf("spark.sql.crossJoin.enabled")
     .internal()
@@ -1855,6 +1865,17 @@ object SQLConf {
       .stringConf
       .createWithDefault(
         "org.apache.spark.sql.execution.streaming.state.HDFSBackedStateStoreProvider")
+
+  val NUM_STATE_STORE_MAINTENANCE_THREADS =
+    buildConf("spark.sql.streaming.stateStore.numStateStoreMaintenanceThreads")
+      .internal()
+      .doc("Number of threads in the thread pool that perform clean up and snapshotting tasks " +
+        "for stateful streaming queries. The default value is the number of cores * 0.25 " +
+        "so that this thread pool doesn't take too many resources " +
+        "away from the query and affect performance.")
+      .intConf
+      .checkValue(_ > 0, "Must be greater than 0")
+      .createWithDefault(Math.max(Runtime.getRuntime.availableProcessors() / 4, 1))
 
   val STATE_SCHEMA_CHECK_ENABLED =
     buildConf("spark.sql.streaming.stateStore.stateSchemaCheck")
@@ -2931,7 +2952,19 @@ object SQLConf {
       .doc("Enable Arrow optimization for Python UDTFs.")
       .version("3.5.0")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
+
+  val PYTHON_TABLE_UDF_ANALYZER_MEMORY =
+    buildConf("spark.sql.analyzer.pythonUDTF.analyzeInPython.memory")
+      .doc("The amount of memory to be allocated to PySpark for Python UDTF analyzer, in MiB " +
+        "unless otherwise specified. If set, PySpark memory for Python UDTF analyzer will be " +
+        "limited to this amount. If not set, Spark will not limit Python's " +
+        "memory use and it is up to the application to avoid exceeding the overhead memory space " +
+        "shared with other non-JVM processes.\nNote: Windows does not support resource limiting " +
+        "and actual resource is not limited on MacOS.")
+      .version("4.0.0")
+      .bytesConf(ByteUnit.MiB)
+      .createOptional
 
   val PANDAS_GROUPED_MAP_ASSIGN_COLUMNS_BY_NAME =
     buildConf("spark.sql.legacy.execution.pandas.groupedMap.assignColumnsByName")
@@ -4265,18 +4298,6 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
-  val LEGACY_AVRO_ALLOW_INCOMPATIBLE_SCHEMA =
-    buildConf("spark.sql.legacy.avro.allowIncompatibleSchema")
-      .internal()
-      .doc("When set to false, if types in Avro are encoded in the same format, but " +
-        "the type in the Avro schema explicitly says that the data types are different, " +
-        "reject reading the data type in the format to avoid returning incorrect results. " +
-        "When set to true, it restores the legacy behavior of allow reading the data in the" +
-        " format, which may return incorrect results.")
-      .version("3.5.0")
-      .booleanConf
-      .createWithDefault(false)
-
   val LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME =
     buildConf("spark.sql.legacy.v1IdentifierNoCatalog")
       .internal()
@@ -4346,6 +4367,38 @@ object SQLConf {
       .intConf
       .checkValue(_ >= 0, "The threshold of cached local relations must not be negative")
       .createWithDefault(64 * 1024 * 1024)
+
+  val DECORRELATE_JOIN_PREDICATE_ENABLED =
+    buildConf("spark.sql.optimizer.decorrelateJoinPredicate.enabled")
+      .internal()
+      .doc("Decorrelate scalar and lateral subqueries with correlated references in join " +
+        "predicates. This configuration is only effective when " +
+        s"'${DECORRELATE_INNER_QUERY_ENABLED.key}' is true.")
+      .version("4.0.0")
+      .booleanConf
+      .createWithDefault(true)
+
+  val LEGACY_PERCENTILE_DISC_CALCULATION = buildConf("spark.sql.legacy.percentileDiscCalculation")
+    .internal()
+    .doc("If true, the old bogus percentile_disc calculation is used. The old calculation " +
+      "incorrectly mapped the requested percentile to the sorted range of values in some cases " +
+      "and so returned incorrect results. Also, the new implementation is faster as it doesn't " +
+      "contain the interpolation logic that the old percentile_cont based one did.")
+    .version("3.3.4")
+    .booleanConf
+    .createWithDefault(false)
+
+  val LEGACY_NEGATIVE_INDEX_IN_ARRAY_INSERT =
+    buildConf("spark.sql.legacy.negativeIndexInArrayInsert")
+      .internal()
+      .doc("When set to true, restores the legacy behavior of `array_insert` for " +
+        "negative indexes - 0-based: the function inserts new element before the last one " +
+        "for the index -1. For example, `array_insert(['a', 'b'], -1, 'x')` returns " +
+        "`['a', 'x', 'b']`. When set to false, the -1 index points out to the last element, " +
+        "and the given example produces `['a', 'b', 'x']`.")
+      .version("3.4.2")
+      .booleanConf
+      .createWithDefault(false)
 
   /**
    * Holds information about keys that have been deprecated.
@@ -4523,6 +4576,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def isStateSchemaCheckEnabled: Boolean = getConf(STATE_SCHEMA_CHECK_ENABLED)
 
+  def numStateStoreMaintenanceThreads: Int = getConf(NUM_STATE_STORE_MAINTENANCE_THREADS)
+
   def stateStoreMinDeltasForSnapshot: Int = getConf(STATE_STORE_MIN_DELTAS_FOR_SNAPSHOT)
 
   def stateStoreFormatValidationEnabled: Boolean = getConf(STATE_STORE_FORMAT_VALIDATION_ENABLED)
@@ -4696,6 +4751,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def codegenFallback: Boolean = getConf(CODEGEN_FALLBACK)
 
+  def codegenFactoryMode: String = getConf(CODEGEN_FACTORY_MODE)
+
   def codegenComments: Boolean = getConf(StaticSQLConf.CODEGEN_COMMENTS)
 
   def loggingMaxLinesForCodegen: Int = getConf(CODEGEN_LOGGING_MAX_LINES)
@@ -4852,6 +4909,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def v2BucketingPartiallyClusteredDistributionEnabled: Boolean =
     getConf(SQLConf.V2_BUCKETING_PARTIALLY_CLUSTERED_DISTRIBUTION_ENABLED)
 
+  def v2BucketingShuffleEnabled: Boolean =
+    getConf(SQLConf.V2_BUCKETING_SHUFFLE_ENABLED)
+
   def dataFrameSelfJoinAutoResolveAmbiguity: Boolean =
     getConf(DATAFRAME_SELF_JOIN_AUTO_RESOLVE_AMBIGUITY)
 
@@ -4998,6 +5058,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def pysparkWorkerPythonExecutable: Option[String] =
     getConf(SQLConf.PYSPARK_WORKER_PYTHON_EXECUTABLE)
+
+  def pythonUDTFAnalyzerMemory: Option[Long] = getConf(PYTHON_TABLE_UDF_ANALYZER_MEMORY)
 
   def replaceExceptWithFilter: Boolean = getConf(REPLACE_EXCEPT_WITH_FILTER)
 
@@ -5193,6 +5255,10 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
     getConf(SQLConf.ALLOW_TEMP_VIEW_CREATION_WITH_MULTIPLE_NAME_PARTS)
 
   def usePartitionEvaluator: Boolean = getConf(SQLConf.USE_PARTITION_EVALUATOR)
+
+  def legacyNegativeIndexInArrayInsert: Boolean = {
+    getConf(SQLConf.LEGACY_NEGATIVE_INDEX_IN_ARRAY_INSERT)
+  }
 
   /** ********************** SQLConf functionality methods ************ */
 
