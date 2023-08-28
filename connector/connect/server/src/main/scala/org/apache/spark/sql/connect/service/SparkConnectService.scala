@@ -270,7 +270,7 @@ object SparkConnectService extends Logging {
   // For testing purpose, it's package level private.
   private[connect] def localPort: Int = {
     assert(server != null)
-    // Return the actual local port being used. This can be different from the csonfigured port
+    // Return the actual local port being used. This can be different from the configured port
     // when the server binds to the port 0 as an example.
     server.getPort
   }
@@ -278,11 +278,10 @@ object SparkConnectService extends Logging {
   private val userSessionMapping =
     cacheBuilder(CACHE_SIZE, CACHE_TIMEOUT_SECONDS).build[SessionCacheKey, SessionHolder]()
 
+  private[connect] lazy val executionManager = new SparkConnectExecutionManager()
+
   private[connect] val streamingSessionManager =
-    new SparkConnectStreamingQueryCache(sessionKeepAliveFn = { case (userId, sessionId) =>
-      // Use getIfPresent() rather than get() to prevent accidental loading.
-      userSessionMapping.getIfPresent((userId, sessionId))
-    })
+    new SparkConnectStreamingQueryCache()
 
   private class RemoveSessionListener extends RemovalListener[SessionCacheKey, SessionHolder] {
     override def onRemoval(
@@ -350,10 +349,23 @@ object SparkConnectService extends Logging {
   }
 
   /**
+   * If there are no executions, return Left with System.currentTimeMillis of last active
+   * execution. Otherwise return Right with list of ExecuteInfo of all executions.
+   */
+  def listActiveExecutions: Either[Long, Seq[ExecuteInfo]] = executionManager.listActiveExecutions
+
+  /**
    * Used for testing
    */
   private[connect] def invalidateAllSessions(): Unit = {
     userSessionMapping.invalidateAll()
+  }
+
+  /**
+   * Used for testing.
+   */
+  private[connect] def putSessionForTesting(sessionHolder: SessionHolder): Unit = {
+    userSessionMapping.put((sessionHolder.userId, sessionHolder.sessionId), sessionHolder)
   }
 
   private def newIsolatedSession(): SparkSession = {
@@ -375,7 +387,7 @@ object SparkConnectService extends Logging {
   }
 
   /**
-   * Starts the GRPC Serivce.
+   * Starts the GRPC Service.
    */
   private def startGRPCService(): Unit = {
     val debugMode = SparkEnv.get.conf.getBoolean("spark.connect.grpc.debug.enabled", true)
@@ -417,6 +429,8 @@ object SparkConnectService extends Logging {
         server.shutdownNow()
       }
     }
+    streamingSessionManager.shutdown()
+    executionManager.shutdown()
     userSessionMapping.invalidateAll()
     uiTab.foreach(_.detach())
   }

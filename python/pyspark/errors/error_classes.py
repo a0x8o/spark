@@ -167,36 +167,44 @@ ERROR_CLASSES_JSON = """
   "DIFFERENT_PANDAS_DATAFRAME" : {
     "message" : [
       "DataFrames are not almost equal:",
-      "Left: <left>",
+      "Left:",
+      "<left>",
       "<left_dtype>",
-      "Right: <right>",
+      "Right:",
+      "<right>",
       "<right_dtype>"
     ]
   },
   "DIFFERENT_PANDAS_INDEX" : {
     "message" : [
       "Indices are not almost equal:",
-      "Left: <left>",
+      "Left:",
+      "<left>",
       "<left_dtype>",
-      "Right: <right>",
+      "Right:",
+      "<right>",
       "<right_dtype>"
     ]
   },
   "DIFFERENT_PANDAS_MULTIINDEX" : {
     "message" : [
       "MultiIndices are not almost equal:",
-      "Left: <left>",
+      "Left:",
+      "<left>",
       "<left_dtype>",
-      "Right: <right>",
+      "Right:",
+      "<right>",
       "<right_dtype>"
     ]
   },
   "DIFFERENT_PANDAS_SERIES" : {
     "message" : [
       "Series are not almost equal:",
-      "Left: <left>",
+      "Left:",
+      "<left>",
       "<left_dtype>",
-      "Right: <right>",
+      "Right:",
+      "<right>",
       "<right_dtype>"
     ]
   },
@@ -221,11 +229,6 @@ ERROR_CLASSES_JSON = """
   "DUPLICATED_FIELD_NAME_IN_ARROW_STRUCT" : {
     "message" : [
       "Duplicated field names in Arrow Struct are not allowed, got <field_names>"
-    ]
-  },
-  "EXCEED_RETRY" : {
-    "message" : [
-      "Retries exceeded but no exception caught."
     ]
   },
   "HIGHER_ORDER_FUNCTION_SHOULD_RETURN_COLUMN" : {
@@ -609,6 +612,11 @@ ERROR_CLASSES_JSON = """
       "Argument `<arg_name>` should be a WindowSpec, got <arg_type>."
     ]
   },
+  "NO_ACTIVE_OR_DEFAULT_SESSION" : {
+    "message" : [
+      "No active or default Spark session found. Please create a new Spark session before running the code."
+    ]
+  },
   "NO_ACTIVE_SESSION" : {
     "message" : [
       "No active Spark session found. Please create a new Spark session before running the code."
@@ -710,6 +718,11 @@ ERROR_CLASSES_JSON = """
       "pandas iterator UDF should exhaust the input iterator."
     ]
   },
+  "STREAMING_CONNECT_SERIALIZATION_ERROR" : {
+    "message" : [
+      "Cannot serialize the function `<name>`. If you accessed the Spark session, or a DataFrame defined outside of the function, or any object that contains a Spark session, please be aware that they are not allowed in Spark Connect. For `foreachBatch`, please access the Spark session using `df.sparkSession`, where `df` is the first parameter in your `foreachBatch` function. For `StreamingQueryListener`, please access the Spark session using `self.spark`. For details please check out the PySpark doc for `foreachBatch` and `StreamingQueryListener`."
+    ]
+  },
   "TOO_MANY_VALUES" : {
     "message" : [
       "Expected <expected> values for `<item>`, got <actual>."
@@ -730,6 +743,16 @@ ERROR_CLASSES_JSON = """
       "User defined table function encountered an error in the '<method_name>' method: <error>"
     ]
   },
+  "UDTF_INVALID_OUTPUT_ROW_TYPE" : {
+    "message" : [
+        "The type of an individual output row in the UDTF is invalid. Each row should be a tuple, list, or dict, but got '<type>'. Please make sure that the output rows are of the correct type."
+    ]
+  },
+  "UDTF_RETURN_NOT_ITERABLE" : {
+    "message" : [
+      "The return value of the UDTF is invalid. It should be an iterable (e.g., generator or list), but got '<type>'. Please make sure that the UDTF returns one of these types."
+    ]
+  },
   "UDTF_RETURN_SCHEMA_MISMATCH" : {
     "message" : [
       "The number of columns in the result does not match the specified schema. Expected column count: <expected>, Actual column count: <actual>. Please make sure the values returned by the function have the same number of columns as specified in the output schema."
@@ -738,6 +761,11 @@ ERROR_CLASSES_JSON = """
   "UDTF_RETURN_TYPE_MISMATCH" : {
     "message" : [
       "Mismatch in return type for the UDTF '<name>'. Expected a 'StructType', but got '<return_type>'. Please ensure the return type is a correctly formatted StructType."
+    ]
+  },
+  "UDTF_SERIALIZATION_ERROR" : {
+    "message" : [
+      "Cannot serialize the UDTF '<name>': <message>"
     ]
   },
   "UNEXPECTED_RESPONSE_FROM_SERVER" : {
@@ -823,6 +851,11 @@ ERROR_CLASSES_JSON = """
   "VALUE_NOT_ACCESSIBLE": {
     "message": [
       "Value `<value>` cannot be accessed inside tasks."
+    ]
+  },
+  "VALUE_NOT_ALLOWED" : {
+    "message" : [
+      "Value for `<arg_name>` has to be amongst the following values: <allowed_values>."
     ]
   },
   "VALUE_NOT_ANY_OR_ALL" : {
