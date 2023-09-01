@@ -875,11 +875,11 @@ class StringFunctionsSuite extends QueryTest with SharedSparkSession {
         exception = intercept[AnalysisException] {
           df2.select(func(col("input"), col("format"))).collect()
         },
-        errorClass = "_LEGACY_ERROR_TEMP_1100",
+        errorClass = "NON_FOLDABLE_ARGUMENT",
         parameters = Map(
-          "argName" -> "format",
-          "funcName" -> "to_char",
-          "requiredType" -> "string"))
+          "funcName" -> s"`$funcName`",
+          "paramName" -> "`format`",
+          "paramType" -> "\"STRING\""))
       checkError(
         exception = intercept[AnalysisException] {
           df2.select(func(col("input"), lit("invalid_format"))).collect()
@@ -887,7 +887,7 @@ class StringFunctionsSuite extends QueryTest with SharedSparkSession {
         errorClass = "INVALID_PARAMETER_VALUE.BINARY_FORMAT",
         parameters = Map(
           "parameter" -> "`format`",
-          "functionName" -> "`to_char`",
+          "functionName" -> s"`$funcName`",
           "invalidFormat" -> "'invalid_format'"))
       checkError(
         exception = intercept[AnalysisException] {
