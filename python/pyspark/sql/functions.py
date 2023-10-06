@@ -3671,39 +3671,39 @@ def collect_list(col: "ColumnOrName") -> Column:
 
     Examples
     --------
-    Example 1: Collect values from a single column DataFrame
-
-    >>> from pyspark.sql import functions as sf
-    >>> df = spark.createDataFrame([(2,), (5,), (5,)], ('age',))
-    >>> df.select(sf.collect_list('age')).show()
-    +-----------------+
-    |collect_list(age)|
-    +-----------------+
-    |        [2, 5, 5]|
-    +-----------------+
-
-    Example 2: Collect values from a DataFrame with multiple columns
-
-    >>> from pyspark.sql import functions as sf
-    >>> df = spark.createDataFrame([(1, "John"), (2, "John"), (3, "Ana")], ("id", "name"))
-    >>> df.groupBy("name").agg(sf.collect_list('id')).show()
-    +----+----------------+
-    |name|collect_list(id)|
-    +----+----------------+
-    |John|          [1, 2]|
-    | Ana|             [3]|
-    +----+----------------+
-
-    Example 3: Collect values from a DataFrame and sort the result
+    Example 1: Collect values from a DataFrame and sort the result in ascending order
 
     >>> from pyspark.sql import functions as sf
     >>> df = spark.createDataFrame([(1,), (2,), (2,)], ('value',))
-    >>> df.select(sf.array_sort(sf.collect_list('value')).alias('sorted_list')).show()
+    >>> df.select(sf.sort_array(sf.collect_list('value')).alias('sorted_list')).show()
     +-----------+
     |sorted_list|
     +-----------+
     |  [1, 2, 2]|
     +-----------+
+
+    Example 2: Collect values from a DataFrame and sort the result in descending order
+
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.createDataFrame([(2,), (5,), (5,)], ('age',))
+    >>> df.select(sf.sort_array(sf.collect_list('age'), asc=False).alias('sorted_list')).show()
+    +-----------+
+    |sorted_list|
+    +-----------+
+    |  [5, 5, 2]|
+    +-----------+
+
+    Example 3: Collect values from a DataFrame with multiple columns and sort the result
+
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.createDataFrame([(1, "John"), (2, "John"), (3, "Ana")], ("id", "name"))
+    >>> df.groupBy("name").agg(sf.sort_array(sf.collect_list('id')).alias('sorted_list')).show()
+    +----+-----------+
+    |name|sorted_list|
+    +----+-----------+
+    |John|     [1, 2]|
+    | Ana|        [3]|
+    +----+-----------+
     """
     return _invoke_function_over_columns("collect_list", col)
 
@@ -3762,39 +3762,39 @@ def collect_set(col: "ColumnOrName") -> Column:
 
     Examples
     --------
-    Example 1: Collect values from a single column DataFrame
-
-    >>> from pyspark.sql import functions as sf
-    >>> df = spark.createDataFrame([(2,), (5,), (5,)], ('age',))
-    >>> df.select(sf.collect_set('age')).show()
-    +----------------+
-    |collect_set(age)|
-    +----------------+
-    |          [5, 2]|
-    +----------------+
-
-    Example 2: Collect values from a DataFrame with multiple columns
-
-    >>> from pyspark.sql import functions as sf
-    >>> df = spark.createDataFrame([(1, "John"), (2, "John"), (3, "Ana")], ("id", "name"))
-    >>> df.groupBy("name").agg(sf.collect_set('id')).show()
-    +----+---------------+
-    |name|collect_set(id)|
-    +----+---------------+
-    |John|         [1, 2]|
-    | Ana|            [3]|
-    +----+---------------+
-
-    Example 3: Collect values from a DataFrame and sort the result
+    Example 1: Collect values from a DataFrame and sort the result in ascending order
 
     >>> from pyspark.sql import functions as sf
     >>> df = spark.createDataFrame([(1,), (2,), (2,)], ('value',))
-    >>> df.select(sf.array_sort(sf.collect_set('value')).alias('sorted_set')).show()
+    >>> df.select(sf.sort_array(sf.collect_set('value')).alias('sorted_set')).show()
     +----------+
     |sorted_set|
     +----------+
     |    [1, 2]|
     +----------+
+
+    Example 2: Collect values from a DataFrame and sort the result in descending order
+
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.createDataFrame([(2,), (5,), (5,)], ('age',))
+    >>> df.select(sf.sort_array(sf.collect_set('age'), asc=False).alias('sorted_set')).show()
+    +----------+
+    |sorted_set|
+    +----------+
+    |    [5, 2]|
+    +----------+
+
+    Example 3: Collect values from a DataFrame with multiple columns and sort the result
+
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.createDataFrame([(1, "John"), (2, "John"), (3, "Ana")], ("id", "name"))
+    >>> df.groupBy("name").agg(sf.sort_array(sf.collect_set('id')).alias('sorted_set')).show()
+    +----+----------+
+    |name|sorted_set|
+    +----+----------+
+    |John|    [1, 2]|
+    | Ana|       [3]|
+    +----+----------+
     """
     return _invoke_function_over_columns("collect_set", col)
 
@@ -5243,16 +5243,28 @@ def rand(seed: Optional[int] = None) -> Column:
     Parameters
     ----------
     seed : int (default: None)
-        seed value for random generator.
+        Seed value for the random generator.
 
     Returns
     -------
     :class:`~pyspark.sql.Column`
-        random values.
+        A column of random values.
 
     Examples
     --------
+    Example 1: Generate a random column without a seed
+
     >>> from pyspark.sql import functions as sf
+    >>> spark.range(0, 2, 1, 1).withColumn('rand', sf.rand()).show() # doctest: +SKIP
+    +---+-------------------+
+    | id|               rand|
+    +---+-------------------+
+    |  0|0.14879325244215424|
+    |  1| 0.4640631044275454|
+    +---+-------------------+
+
+    Example 2: Generate a random column with a specific seed
+
     >>> spark.range(0, 2, 1, 1).withColumn('rand', sf.rand(seed=42) * 3).show()
     +---+------------------+
     | id|              rand|
@@ -5269,8 +5281,8 @@ def rand(seed: Optional[int] = None) -> Column:
 
 @_try_remote_functions
 def randn(seed: Optional[int] = None) -> Column:
-    """Generates a column with independent and identically distributed (i.i.d.) samples from
-    the standard normal distribution.
+    """Generates a random column with independent and identically distributed (i.i.d.) samples
+    from the standard normal distribution.
 
     .. versionadded:: 1.4.0
 
@@ -5284,16 +5296,28 @@ def randn(seed: Optional[int] = None) -> Column:
     Parameters
     ----------
     seed : int (default: None)
-        seed value for random generator.
+        Seed value for the random generator.
 
     Returns
     -------
     :class:`~pyspark.sql.Column`
-        random values.
+        A column of random values.
 
     Examples
     --------
+    Example 1: Generate a random column without a seed
+
     >>> from pyspark.sql import functions as sf
+    >>> spark.range(0, 2, 1, 1).withColumn('randn', sf.randn()).show() # doctest: +SKIP
+    +---+--------------------+
+    | id|               randn|
+    +---+--------------------+
+    |  0|-0.45011372342934214|
+    |  1|  0.6567304165329736|
+    +---+--------------------+
+
+    Example 2: Generate a random column with a specific seed
+
     >>> spark.range(0, 2, 1, 1).withColumn('randn', sf.randn(seed=42)).show()
     +---+------------------+
     | id|             randn|
