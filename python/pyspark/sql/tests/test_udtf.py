@@ -18,6 +18,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from dataclasses import dataclass
 from typing import Iterator
 
 from py4j.protocol import Py4JJavaError
@@ -405,6 +406,62 @@ class BaseUDTFTestsMixin:
                 Row(id=9, key="avg", value=7.0),
             ],
         )
+
+    def test_udtf_cleanup_with_exception_in_eval(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "file.txt")
+
+            @udtf(returnType="x: int")
+            class TestUDTF:
+                def __init__(self):
+                    self.path = path
+
+                def eval(self, x: int):
+                    raise Exception("eval error")
+
+                def terminate(self):
+                    with open(self.path, "a") as f:
+                        f.write("terminate")
+
+                def cleanup(self):
+                    with open(self.path, "a") as f:
+                        f.write("cleanup")
+
+            with self.assertRaisesRegex(PythonException, "eval error"):
+                TestUDTF(lit(1)).show()
+
+            with open(path, "r") as f:
+                data = f.read()
+
+            # Only cleanup method should be called.
+            self.assertEqual(data, "cleanup")
+
+    def test_udtf_cleanup_with_exception_in_terminate(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "file.txt")
+
+            @udtf(returnType="x: int")
+            class TestUDTF:
+                def __init__(self):
+                    self.path = path
+
+                def eval(self, x: int):
+                    yield (x,)
+
+                def terminate(self):
+                    raise Exception("terminate error")
+
+                def cleanup(self):
+                    with open(self.path, "a") as f:
+                        f.write("cleanup")
+
+            with self.assertRaisesRegex(PythonException, "terminate error"):
+                TestUDTF(lit(1)).show()
+
+            with open(path, "r") as f:
+                data = f.read()
+
+            self.assertEqual(data, "cleanup")
 
     def test_init_with_exception(self):
         @udtf(returnType="x: int")
@@ -2009,6 +2066,10 @@ class BaseUDTFTestsMixin:
                 self._partition_col = None
 
             def eval(self, row: Row):
+                # Make sure that the PARTITION BY expressions were projected out.
+                assert len(row.asDict().items()) == 2
+                assert "partition_col" in row
+                assert "input" in row
                 self._sum += row["input"]
                 if self._partition_col is not None and self._partition_col != row["partition_col"]:
                     # Make sure that all values of the partitioning column are the same
@@ -2092,6 +2153,10 @@ class BaseUDTFTestsMixin:
                 self._partition_col = None
 
             def eval(self, row: Row, partition_col: str):
+                # Make sure that the PARTITION BY and ORDER BY expressions were projected out.
+                assert len(row.asDict().items()) == 2
+                assert "partition_col" in row
+                assert "input" in row
                 # Make sure that all values of the partitioning column are the same
                 # for each row consumed by this method for this instance of the class.
                 if self._partition_col is not None and self._partition_col != row[partition_col]:
@@ -2247,6 +2312,10 @@ class BaseUDTFTestsMixin:
                 )
 
             def eval(self, row: Row):
+                # Make sure that the PARTITION BY and ORDER BY expressions were projected out.
+                assert len(row.asDict().items()) == 2
+                assert "partition_col" in row
+                assert "input" in row
                 # Make sure that all values of the partitioning column are the same
                 # for each row consumed by this method for this instance of the class.
                 if self._partition_col is not None and self._partition_col != row["partition_col"]:
@@ -2295,6 +2364,58 @@ class BaseUDTFTestsMixin:
             ).collect(),
             [Row(partition_col=x, count=2, total=3, last=2) for x in range(1, 21)]
             + [Row(partition_col=42, count=3, total=3, last=None)],
+        )
+
+    def test_udtf_with_prepare_string_from_analyze(self):
+        @dataclass
+        class AnalyzeResultWithBuffer(AnalyzeResult):
+            buffer: str = ""
+
+        @udtf
+        class TestUDTF:
+            def __init__(self, analyze_result=None):
+                self._total = 0
+                if analyze_result is not None:
+                    self._buffer = analyze_result.buffer
+                else:
+                    self._buffer = ""
+
+            @staticmethod
+            def analyze(argument, _):
+                if (
+                    argument.value is None
+                    or argument.is_table
+                    or not isinstance(argument.value, str)
+                    or len(argument.value) == 0
+                ):
+                    raise Exception("The first argument must be non-empty string")
+                assert argument.data_type == StringType()
+                assert not argument.is_table
+                return AnalyzeResultWithBuffer(
+                    schema=StructType().add("total", IntegerType()).add("buffer", StringType()),
+                    with_single_partition=True,
+                    buffer=argument.value,
+                )
+
+            def eval(self, argument, row: Row):
+                self._total += 1
+
+            def terminate(self):
+                yield self._total, self._buffer
+
+        self.spark.udtf.register("test_udtf", TestUDTF)
+
+        assertDataFrameEqual(
+            self.spark.sql(
+                """
+                WITH t AS (
+                  SELECT id FROM range(1, 21)
+                )
+                SELECT total, buffer
+                FROM test_udtf("abc", TABLE(t))
+                """
+            ).collect(),
+            [Row(count=20, buffer="abc")],
         )
 
 

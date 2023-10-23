@@ -374,8 +374,13 @@ message ExecutePlanResponse {
 
   // Batch results of metrics.
   message ArrowBatch {
+    // Count rows in `data`. Must match the number of rows inside `data`.
     int64 row_count = 1;
+    // Serialized Arrow data.
     bytes data = 2;
+
+    // If set, row offset of the start of this ArrowBatch in execution results.
+    optional int64 start_offset = 3;
   }
 
   message Metrics {
@@ -791,6 +796,11 @@ message FetchErrorDetailsRequest {
   // (Required)
   // The id of the error.
   string error_id = 3;
+
+  // Provides optional information about the client sending the request. This field
+  // can be used for language or version specific information and is only intended for
+  // logging purposes and will not be interpreted by the server.
+  optional string client_type = 4;
 }
 
 message FetchErrorDetailsResponse {
@@ -803,10 +813,19 @@ message FetchErrorDetailsResponse {
     string method_name = 2;
 
     // The name of the file containing the execution point.
-    string file_name = 3;
+    optional string file_name = 3;
 
     // The line number of the source line containing the execution point.
     int32 line_number = 4;
+  }
+
+  // SparkThrowable defines the schema for SparkThrowable exceptions.
+  message SparkThrowable {
+    // Succinct, human-readable, unique, and consistent representation of the error category.
+    optional string error_class = 1;
+
+    // message parameters for the error framework.
+    map<string, string> message_parameters = 2;
   }
 
   // Error defines the schema for the representing exception.
@@ -823,6 +842,9 @@ message FetchErrorDetailsResponse {
 
     // The index of the cause error in errors.
     optional int32 cause_idx = 4;
+
+    // The structured data of a SparkThrowable exception.
+    optional SparkThrowable spark_throwable = 5;
   }
 
   // The index of the root error in errors. The field will not be set if the error is not found.

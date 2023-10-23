@@ -23,8 +23,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.Deflater
 
-import scala.collection.JavaConverters._
 import scala.collection.immutable
+import scala.jdk.CollectionConverters._
 import scala.util.Try
 import scala.util.control.NonFatal
 import scala.util.matching.Regex
@@ -34,7 +34,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.{ErrorMessageFormat, SparkConf, SparkContext, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
-import org.apache.spark.internal.config.{IGNORE_MISSING_FILES => SPARK_IGNORE_MISSING_FILES}
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.analysis.{HintErrorLogger, Resolver}
@@ -45,6 +44,7 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.types.{AtomicType, TimestampNTZType, TimestampType}
+import org.apache.spark.storage.{StorageLevel, StorageLevelMapper}
 import org.apache.spark.unsafe.array.ByteArrayMethods
 import org.apache.spark.util.Utils
 
@@ -1261,14 +1261,6 @@ object SQLConf {
     .booleanConf
     .createWithDefault(false)
 
-  val HIVE_VERIFY_PARTITION_PATH = buildConf("spark.sql.hive.verifyPartitionPath")
-    .doc("When true, check all the partition paths under the table\'s root directory " +
-         "when reading data stored in HDFS. This configuration will be deprecated in the future " +
-         s"releases and replaced by ${SPARK_IGNORE_MISSING_FILES.key}.")
-    .version("1.4.0")
-    .booleanConf
-    .createWithDefault(false)
-
   val HIVE_METASTORE_DROP_PARTITION_BY_NAME =
     buildConf("spark.sql.hive.dropPartitionByName.enabled")
       .doc("When true, Spark will get partition name rather than partition object " +
@@ -1572,6 +1564,15 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DEFAULT_CACHE_STORAGE_LEVEL = buildConf("spark.sql.defaultCacheStorageLevel")
+    .doc("The default storage level of `dataset.cache()`, `catalog.cacheTable()` and " +
+      "sql query `CACHE TABLE t`.")
+    .version("4.0.0")
+    .stringConf
+    .transform(_.toUpperCase(Locale.ROOT))
+    .checkValues(StorageLevelMapper.values.map(_.name()).toSet)
+    .createWithDefault(StorageLevelMapper.MEMORY_AND_DISK.name())
+
   val CROSS_JOINS_ENABLED = buildConf("spark.sql.crossJoin.enabled")
     .internal()
     .doc("When false, we will throw an error if a query contains a cartesian product without " +
@@ -1649,6 +1650,16 @@ object SQLConf {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val USE_LISTFILES_FILESYSTEM_LIST =
+    buildConf("spark.sql.sources.useListFilesFileSystemList")
+      .doc("A comma-separated list of file system schemes to use FileSystem.listFiles API " +
+        "for a single root path listing")
+      .version("4.0.0")
+      .internal()
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .createWithDefault("s3a")
 
   // Whether to automatically resolve ambiguity in join conditions for self-joins.
   // See SPARK-6231.
@@ -3416,6 +3427,15 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DECORRELATE_EXISTS_IN_SUBQUERY_LEGACY_INCORRECT_COUNT_HANDLING_ENABLED =
+    buildConf("spark.sql.optimizer.decorrelateExistsSubqueryLegacyIncorrectCountHandling.enabled")
+      .internal()
+      .doc("If enabled, revert to legacy incorrect behavior for certain EXISTS/IN subqueries " +
+           "with COUNT or similar aggregates.")
+      .version("4.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val DECORRELATE_SUBQUERY_LEGACY_INCORRECT_COUNT_HANDLING_ENABLED =
     buildConf("spark.sql.optimizer.decorrelateSubqueryLegacyIncorrectCountHandling.enabled")
       .internal()
@@ -4341,6 +4361,18 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val LEGACY_AVRO_ALLOW_INCOMPATIBLE_SCHEMA =
+    buildConf("spark.sql.legacy.avro.allowIncompatibleSchema")
+      .internal()
+      .doc("When set to false, if types in Avro are encoded in the same format, but " +
+        "the type in the Avro schema explicitly says that the data types are different, " +
+        "reject reading the data type in the format to avoid returning incorrect results. " +
+        "When set to true, it restores the legacy behavior of allow reading the data in the" +
+        " format, which may return incorrect results.")
+      .version("3.5.1")
+      .booleanConf
+      .createWithDefault(false)
+
   val LEGACY_NON_IDENTIFIER_OUTPUT_CATALOG_NAME =
     buildConf("spark.sql.legacy.v1IdentifierNoCatalog")
       .internal()
@@ -4361,6 +4393,8 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  // Default is false (new, correct behavior) when ANSI is on, true (legacy, incorrect behavior)
+  // when ANSI is off. See legacyNullInEmptyBehavior.
   val LEGACY_NULL_IN_EMPTY_LIST_BEHAVIOR =
     buildConf("spark.sql.legacy.nullInEmptyListBehavior")
       .internal()
@@ -4370,7 +4404,7 @@ object SQLConf {
         "incorrectly evaluates to null in the legacy behavior.")
       .version("3.5.0")
       .booleanConf
-      .createWithDefault(true)
+      .createOptional
 
   val ERROR_MESSAGE_FORMAT = buildConf("spark.sql.error.messageFormat")
     .doc("When PRETTY, the error message consists of textual representation of error class, " +
@@ -4443,6 +4477,17 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val LEGACY_RAISE_ERROR_WITHOUT_ERROR_CLASS =
+    buildConf("spark.sql.legacy.raiseErrorWithoutErrorClass")
+      .internal()
+      .doc("When set to true, restores the legacy behavior of `raise_error` and `assert_true` to " +
+        "not return the `[USER_RAISED_EXCEPTION]` prefix." +
+        "For example, `raise_error('error!')` returns `error!` instead of " +
+        "`[USER_RAISED_EXCEPTION] Error!`.")
+      .version("4.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -4470,8 +4515,6 @@ object SQLConf {
         PANDAS_GROUPED_MAP_ASSIGN_COLUMNS_BY_NAME.key, "2.4",
         "The config allows to switch to the behaviour before Spark 2.4 " +
           "and will be removed in the future releases."),
-      DeprecatedConfig(HIVE_VERIFY_PARTITION_PATH.key, "3.0",
-        s"This config is replaced by '${SPARK_IGNORE_MISSING_FILES.key}'."),
       DeprecatedConfig(ARROW_EXECUTION_ENABLED.key, "3.0",
         s"Use '${ARROW_PYSPARK_EXECUTION_ENABLED.key}' instead of it."),
       DeprecatedConfig(ARROW_FALLBACK_ENABLED.key, "3.0",
@@ -4500,7 +4543,9 @@ object SQLConf {
       DeprecatedConfig(LEGACY_REPLACE_DATABRICKS_SPARK_AVRO_ENABLED.key, "3.2",
         """Use `.format("avro")` in `DataFrameWriter` or `DataFrameReader` instead."""),
       DeprecatedConfig(COALESCE_PARTITIONS_MIN_PARTITION_NUM.key, "3.2",
-        s"Use '${COALESCE_PARTITIONS_MIN_PARTITION_SIZE.key}' instead.")
+        s"Use '${COALESCE_PARTITIONS_MIN_PARTITION_SIZE.key}' instead."),
+      DeprecatedConfig(ESCAPED_STRING_LITERALS.key, "4.0",
+        "Use raw string literals with the `r` prefix instead. ")
     )
 
     Map(configs.map { cfg => cfg.key -> cfg } : _*)
@@ -4550,7 +4595,9 @@ object SQLConf {
       RemovedConfig("spark.sql.ansi.strictIndexOperator", "3.4.0", "true",
         "This was an internal configuration. It is not needed anymore since Spark SQL always " +
           "returns null when getting a map value with a non-existing key. See SPARK-40066 " +
-          "for more details.")
+          "for more details."),
+      RemovedConfig("spark.sql.hive.verifyPartitionPath", "4.0.0", "false",
+        s"This config was replaced by '${IGNORE_MISSING_FILES.key}'.")
     )
 
     Map(configs.map { cfg => cfg.key -> cfg } : _*)
@@ -4763,8 +4810,6 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def orcAggregatePushDown: Boolean = getConf(ORC_AGGREGATE_PUSHDOWN_ENABLED)
 
   def isOrcSchemaMergingEnabled: Boolean = getConf(ORC_SCHEMA_MERGING_ENABLED)
-
-  def verifyPartitionPath: Boolean = getConf(HIVE_VERIFY_PARTITION_PATH)
 
   def metastoreDropPartitionsByName: Boolean = getConf(HIVE_METASTORE_DROP_PARTITION_BY_NAME)
 
@@ -4992,6 +5037,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def groupByAliases: Boolean = getConf(GROUP_BY_ALIASES)
 
+  def defaultCacheStorageLevel: StorageLevel =
+    StorageLevel.fromString(getConf(DEFAULT_CACHE_STORAGE_LEVEL))
+
   def crossJoinEnabled: Boolean = getConf(SQLConf.CROSS_JOINS_ENABLED)
 
   override def sessionLocalTimeZone: String = getConf(SQLConf.SESSION_LOCAL_TIMEZONE)
@@ -5185,6 +5233,10 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
     getConf(SQLConf.LEGACY_SIZE_OF_NULL) && !getConf(ANSI_ENABLED)
   }
 
+  def legacyNullInEmptyBehavior: Boolean = {
+    getConf(SQLConf.LEGACY_NULL_IN_EMPTY_LIST_BEHAVIOR).getOrElse(!ansiEnabled)
+  }
+
   def isReplEagerEvalEnabled: Boolean = getConf(SQLConf.REPL_EAGER_EVAL_ENABLED)
 
   def replEagerEvalMaxNumRows: Int = getConf(SQLConf.REPL_EAGER_EVAL_MAX_NUM_ROWS)
@@ -5227,6 +5279,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def castDatetimeToString: Boolean = getConf(SQLConf.LEGACY_CAST_DATETIME_TO_STRING)
 
   def ignoreDataLocality: Boolean = getConf(SQLConf.IGNORE_DATA_LOCALITY)
+
+  def useListFilesFileSystemList: String = getConf(SQLConf.USE_LISTFILES_FILESYSTEM_LIST)
 
   def csvFilterPushDown: Boolean = getConf(CSV_FILTER_PUSHDOWN_ENABLED)
 
@@ -5272,6 +5326,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def decorrelateInnerQueryEnabled: Boolean = getConf(SQLConf.DECORRELATE_INNER_QUERY_ENABLED)
 
+  def decorrelateInnerQueryEnabledForExistsIn: Boolean =
+    !getConf(SQLConf.DECORRELATE_EXISTS_IN_SUBQUERY_LEGACY_INCORRECT_COUNT_HANDLING_ENABLED)
+
   def maxConcurrentOutputFileWriters: Int = getConf(SQLConf.MAX_CONCURRENT_OUTPUT_FILE_WRITERS)
 
   def plannedWriteEnabled: Boolean = getConf(SQLConf.PLANNED_WRITE_ENABLED)
@@ -5309,6 +5366,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def legacyNegativeIndexInArrayInsert: Boolean = {
     getConf(SQLConf.LEGACY_NEGATIVE_INDEX_IN_ARRAY_INSERT)
   }
+
+  def legacyRaiseErrorWithoutErrorClass: Boolean =
+      getConf(SQLConf.LEGACY_RAISE_ERROR_WITHOUT_ERROR_CLASS)
 
   /** ********************** SQLConf functionality methods ************ */
 
