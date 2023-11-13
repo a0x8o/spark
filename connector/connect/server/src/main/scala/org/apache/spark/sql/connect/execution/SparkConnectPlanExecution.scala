@@ -65,8 +65,7 @@ private[execution] class SparkConnectPlanExecution(executeHolder: ExecuteHolder)
         tracker)
     responseObserver.onNext(createSchemaResponse(request.getSessionId, dataframe.schema))
     processAsArrowBatches(dataframe, responseObserver, executeHolder)
-    responseObserver.onNext(
-      MetricGenerator.createMetricsResponse(request.getSessionId, dataframe))
+    responseObserver.onNext(MetricGenerator.createMetricsResponse(sessionHolder, dataframe))
     if (dataframe.queryExecution.observedMetrics.nonEmpty) {
       responseObserver.onNext(createObservedMetricsResponse(request.getSessionId, dataframe))
     }
@@ -111,7 +110,11 @@ private[execution] class SparkConnectPlanExecution(executeHolder: ExecuteHolder)
 
     var numSent = 0
     def sendBatch(bytes: Array[Byte], count: Long, startOffset: Long): Unit = {
-      val response = proto.ExecutePlanResponse.newBuilder().setSessionId(sessionId)
+      val response = proto.ExecutePlanResponse
+        .newBuilder()
+        .setSessionId(sessionId)
+        .setServerSideSessionId(sessionHolder.serverSessionId)
+
       val batch = proto.ExecutePlanResponse.ArrowBatch
         .newBuilder()
         .setRowCount(count)
@@ -235,6 +238,7 @@ private[execution] class SparkConnectPlanExecution(executeHolder: ExecuteHolder)
     ExecutePlanResponse
       .newBuilder()
       .setSessionId(sessionId)
+      .setServerSideSessionId(sessionHolder.serverSessionId)
       .setSchema(DataTypeProtoConverter.toConnectProtoType(schema))
       .build()
   }
@@ -244,16 +248,20 @@ private[execution] class SparkConnectPlanExecution(executeHolder: ExecuteHolder)
       dataframe: DataFrame): ExecutePlanResponse = {
     val observedMetrics = dataframe.queryExecution.observedMetrics.map { case (name, row) =>
       val cols = (0 until row.length).map(i => toLiteralProto(row(i)))
-      ExecutePlanResponse.ObservedMetrics
+      val metrics = ExecutePlanResponse.ObservedMetrics
         .newBuilder()
         .setName(name)
         .addAllValues(cols.asJava)
-        .build()
+      if (row.schema != null) {
+        metrics.addAllKeys(row.schema.fieldNames.toList.asJava)
+      }
+      metrics.build()
     }
     // Prepare a response with the observed metrics.
     ExecutePlanResponse
       .newBuilder()
       .setSessionId(sessionId)
+      .setServerSideSessionId(sessionHolder.serverSessionId)
       .addAllObservedMetrics(observedMetrics.asJava)
       .build()
   }
