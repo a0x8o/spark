@@ -66,7 +66,6 @@ class FunctionsTestsMixin:
             "random",  # namespace conflict with python built-in module
             "uuid",  # namespace conflict with python built-in module
             "chr",  # namespace conflict with python built-in function
-            "session_user",  # Scala only for now, needs implementation
             "partitioning$",  # partitioning expressions for DSv2
         ]
 
@@ -347,7 +346,7 @@ class FunctionsTestsMixin:
 
         df = self.spark.createDataFrame([["nick"]], schema=["name"])
         with self.assertRaises(PySparkTypeError) as pe:
-            df.select(F.col("name").substr(0, F.lit(1)))
+            F.col("name").substr(0, F.lit(1))
 
         self.check_error(
             exception=pe.exception,
@@ -357,6 +356,18 @@ class FunctionsTestsMixin:
                 "arg_name2": "length",
                 "arg_type1": "int",
                 "arg_type2": "Column",
+            },
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            F.col("name").substr("", "")
+
+        self.check_error(
+            exception=pe.exception,
+            error_class="NOT_COLUMN_OR_INT",
+            message_parameters={
+                "arg_name": "startPos",
+                "arg_type": "str",
             },
         )
 
