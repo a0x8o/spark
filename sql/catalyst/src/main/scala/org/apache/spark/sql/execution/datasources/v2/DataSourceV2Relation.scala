@@ -66,13 +66,7 @@ case class DataSourceV2Relation(
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
     (catalog, identifier) match {
       case (Some(cat), Some(ident)) => s"${quoteIfNeeded(cat.name())}.${ident.quoted}"
-      case (None, None) => table.name()
-      case _ =>
-        throw SparkException.internalError(
-          "Invalid catalog and identifier pair. Both 'catalog' and 'identifier' must be " +
-            s"specified or leave as None. Current input - " +
-            s"catalog: '${catalog.map(_.name()).getOrElse(None)}', " +
-            s"identifier: ${identifier.map(_.quoted).getOrElse(None)}.")
+      case _ => table.name()
     }
   }
 
@@ -91,7 +85,7 @@ case class DataSourceV2Relation(
       // when testing, throw an exception if this computeStats method is called because stats should
       // not be accessed before pushing the projection and filters to create a scan. otherwise, the
       // stats are not accurate because they are based on a full table scan of all columns.
-      throw new IllegalStateException(
+      throw SparkException.internalError(
         s"BUG: computeStats called before pushdown on DSv2 relation: $name")
     } else {
       // when not testing, return stats because bad stats are better than failing a query

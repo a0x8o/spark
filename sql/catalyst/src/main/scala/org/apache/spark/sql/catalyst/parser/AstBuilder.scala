@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.{ArrayBuffer, Set}
 import scala.jdk.CollectionConverters._
+import scala.util.{Left, Right}
 
 import org.antlr.v4.runtime.{ParserRuleContext, Token}
 import org.antlr.v4.runtime.misc.Interval
@@ -558,6 +559,64 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
   }
 
   /**
+   * Returns the parameters for [[ExecuteImmediateQuery]] logical plan.
+   * Expected format:
+   * {{{
+   *   EXECUTE IMMEDIATE {query_string|string_literal}
+   *   [INTO target1, target2] [USING param1, param2, ...]
+   * }}}
+   */
+  override def visitExecuteImmediate(ctx: ExecuteImmediateContext): LogicalPlan = withOrigin(ctx) {
+    // Because of how parsing rules are written, we know that either
+    // queryParam or targetVariable is non null - hence use Either to represent this.
+    val queryString = Option(ctx.queryParam.stringLit()).map(sl => Left(string(visitStringLit(sl))))
+    val queryVariable = Option(ctx.queryParam.multipartIdentifier)
+      .map(mpi => Right(UnresolvedAttribute(visitMultipartIdentifier(mpi))))
+
+    val targetVars = Option(ctx.targetVariable).toSeq
+      .flatMap(v => visitMultipartIdentifierList(v))
+    val exprs = Option(ctx.executeImmediateUsing).map {
+      visitExecuteImmediateUsing(_)
+    }.getOrElse{ Seq.empty }
+
+
+    ExecuteImmediateQuery(exprs, queryString.getOrElse(queryVariable.get), targetVars)
+  }
+
+  override def visitExecuteImmediateUsing(
+      ctx: ExecuteImmediateUsingContext): Seq[Expression] = withOrigin(ctx) {
+    val expressions = Option(ctx).toSeq
+      .flatMap(ctx => visitNamedExpressionSeq(ctx.params))
+    val resultExpr = expressions.map(e => e._1)
+
+    validateExecImmediateArguments(resultExpr, ctx)
+    resultExpr
+  }
+
+  /**
+   * Performs validation on the arguments to EXECUTE IMMEDIATE.
+   */
+  private def validateExecImmediateArguments(
+    expressions: Seq[Expression],
+    ctx : ExecuteImmediateUsingContext) : Unit = {
+    val duplicateAliases = expressions
+      .filter(_.isInstanceOf[Alias])
+      .groupBy {
+        case Alias(arg, name) => name
+      }.filter(group => group._2.size > 1)
+
+    if (duplicateAliases.nonEmpty) {
+      throw QueryParsingErrors.duplicateArgumentNamesError(duplicateAliases.keys.toSeq, ctx)
+    }
+  }
+
+  override def visitMultipartIdentifierList(
+      ctx: MultipartIdentifierListContext): Seq[UnresolvedAttribute] = withOrigin(ctx) {
+    ctx.multipartIdentifier.asScala.map(typedVisit[Seq[String]]).map(new UnresolvedAttribute(_))
+      .toSeq
+  }
+
+/**
    * Create a partition specification map.
    */
   override def visitPartitionSpec(
@@ -1394,7 +1453,7 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
         case Some(c) if c.booleanExpression != null =>
           (baseJoinType, Option(expression(c.booleanExpression)))
         case Some(c) =>
-          throw new IllegalStateException(s"Unimplemented joinCriteria: $c")
+          throw SparkException.internalError(s"Unimplemented joinCriteria: $c")
         case None if ctx.NATURAL != null =>
           if (ctx.LATERAL != null) {
             throw QueryParsingErrors.incompatibleJoinTypesError(
@@ -1975,10 +2034,8 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
     // Create the predicate.
     ctx.kind.getType match {
       case SqlBaseParser.BETWEEN =>
-        // BETWEEN is translated to lower <= e && e <= upper
-        invertIfNotDefined(And(
-          GreaterThanOrEqual(e, expression(ctx.lower)),
-          LessThanOrEqual(e, expression(ctx.upper))))
+        invertIfNotDefined(UnresolvedFunction(
+          "between", Seq(e, expression(ctx.lower), expression(ctx.upper)), isDistinct = false))
       case SqlBaseParser.IN if ctx.query != null =>
         invertIfNotDefined(InSubquery(getValueExpressions(e), ListQuery(plan(ctx.query))))
       case SqlBaseParser.IN =>
@@ -3409,7 +3466,7 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
       if (arguments.size > 1) {
         throw QueryParsingErrors.wrongNumberArgumentsForTransformError(name, arguments.size, ctx)
       } else if (arguments.isEmpty) {
-        throw new IllegalStateException(s"Not enough arguments for transform $name")
+        throw SparkException.internalError(s"Not enough arguments for transform $name")
       } else {
         getFieldReference(ctx, arguments.head)
       }
@@ -3470,7 +3527,7 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
           .map(typedVisit[Literal])
           .map(lit => LiteralValue(lit.value, lit.dataType))
       reference.orElse(literal)
-          .getOrElse(throw new IllegalStateException("Invalid transform argument"))
+          .getOrElse(throw SparkException.internalError("Invalid transform argument"))
     }
   }
 

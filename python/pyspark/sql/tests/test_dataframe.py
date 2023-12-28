@@ -47,6 +47,7 @@ from pyspark.storagelevel import StorageLevel
 from pyspark.errors import (
     AnalysisException,
     IllegalArgumentException,
+    PySparkAssertionError,
     PySparkTypeError,
     PySparkValueError,
 )
@@ -977,6 +978,16 @@ class DataFrameTestsMixin:
 
         unnamed_observation = Observation()
         named_observation = Observation("metric")
+
+        with self.assertRaises(PySparkAssertionError) as pe:
+            unnamed_observation.get()
+
+        self.check_error(
+            exception=pe.exception,
+            error_class="NO_OBSERVE_BEFORE_GET",
+            message_parameters={},
+        )
+
         observed = (
             df.orderBy("id")
             .observe(
@@ -1002,6 +1013,15 @@ class DataFrameTestsMixin:
         # test that we retrieve the metrics
         self.assertEqual(named_observation.get, dict(cnt=3, sum=6, mean=2.0))
         self.assertEqual(unnamed_observation.get, dict(rows=3))
+
+        with self.assertRaises(PySparkAssertionError) as pe:
+            df.observe(named_observation, count(lit(1)).alias("count"))
+
+        self.check_error(
+            exception=pe.exception,
+            error_class="REUSE_OBSERVATION",
+            message_parameters={},
+        )
 
         # observation requires name (if given) to be non empty string
         with self.assertRaisesRegex(TypeError, "`name` should be a str, got int"):
@@ -1912,6 +1932,35 @@ class DataFrameTestsMixin:
 
         self.assertEqual(df.schema, schema)
         self.assertEqual(df.collect(), data)
+
+    def test_partial_inference_failure(self):
+        with self.assertRaises(PySparkValueError) as pe:
+            self.spark.createDataFrame([(None, 1)])
+
+        self.check_error(
+            exception=pe.exception,
+            error_class="CANNOT_DETERMINE_TYPE",
+            message_parameters={},
+        )
+
+    def test_invalid_argument_create_dataframe(self):
+        with self.assertRaises(PySparkTypeError) as pe:
+            self.spark.createDataFrame([(1, 2)], schema=123)
+
+        self.check_error(
+            exception=pe.exception,
+            error_class="NOT_LIST_OR_NONE_OR_STRUCT",
+            message_parameters={"arg_name": "schema", "arg_type": "int"},
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            self.spark.createDataFrame(self.spark.range(1))
+
+        self.check_error(
+            exception=pe.exception,
+            error_class="INVALID_TYPE",
+            message_parameters={"arg_name": "data", "data_type": "DataFrame"},
+        )
 
 
 class QueryExecutionListenerTests(unittest.TestCase, SQLTestUtils):

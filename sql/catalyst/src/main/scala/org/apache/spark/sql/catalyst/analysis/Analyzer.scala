@@ -25,6 +25,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.{Failure, Random, Success, Try}
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst._
 import org.apache.spark.sql.catalyst.catalog._
@@ -255,6 +256,7 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
 
   override def batches: Seq[Batch] = Seq(
     Batch("Substitution", fixedPoint,
+      new SubstituteExecuteImmediate(catalogManager),
       // This rule optimizes `UpdateFields` expression chains so looks more like optimization rule.
       // However, when manipulating deeply nested schema, `UpdateFields` expression tree could be
       // very complex and make analysis impossible. Thus we need to optimize `UpdateFields` early
@@ -2332,9 +2334,14 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
         case owg: SupportsOrderingWithinGroup if u.isDistinct =>
           throw QueryCompilationErrors.distinctInverseDistributionFunctionUnsupportedError(
             owg.prettyName)
-        case owg: SupportsOrderingWithinGroup if u.orderingWithinGroup.isEmpty =>
+        case owg: SupportsOrderingWithinGroup
+          if !owg.orderingFilled && u.orderingWithinGroup.isEmpty =>
           throw QueryCompilationErrors.inverseDistributionFunctionMissingWithinGroupError(
             owg.prettyName)
+        case owg: SupportsOrderingWithinGroup
+          if owg.orderingFilled && u.orderingWithinGroup.nonEmpty =>
+          throw QueryCompilationErrors.wrongNumOrderingsForInverseDistributionFunctionError(
+            owg.prettyName, 0, u.orderingWithinGroup.length)
         case f
           if !f.isInstanceOf[SupportsOrderingWithinGroup] && u.orderingWithinGroup.nonEmpty =>
           throw QueryCompilationErrors.functionWithUnsupportedSyntaxError(
@@ -2383,7 +2390,8 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
           if (agg.isInstanceOf[PythonUDAF]) checkUnsupportedAggregateClause(agg, u)
           // After parse, the inverse distribution functions not set the ordering within group yet.
           val newAgg = agg match {
-            case owg: SupportsOrderingWithinGroup if u.orderingWithinGroup.nonEmpty =>
+            case owg: SupportsOrderingWithinGroup
+              if !owg.orderingFilled && u.orderingWithinGroup.nonEmpty =>
               owg.withOrderingWithinGroup(u.orderingWithinGroup)
             case _ =>
               agg
@@ -2681,6 +2689,15 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
             case (sortOrder, expr) => sortOrder.copy(child = expr)
           }
           s.copy(order = newSortOrder, child = newChild)
+        })
+
+      case s @ Sort(_, _, f @ Filter(cond, agg: Aggregate))
+          if agg.resolved && cond.resolved && s.order.forall(_.resolved) =>
+        resolveOperatorWithAggregate(s.order.map(_.child), agg, (newExprs, newChild) => {
+          val newSortOrder = s.order.zip(newExprs).map {
+            case (sortOrder, expr) => sortOrder.copy(child = expr)
+          }
+          s.copy(order = newSortOrder, child = f.copy(child = newChild))
         })
     }
 
@@ -3706,7 +3723,7 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
         case u @ UpCast(child, _, _) if !child.resolved => u
 
         case UpCast(_, target, _) if target != DecimalType && !target.isInstanceOf[DataType] =>
-          throw new IllegalStateException(
+          throw SparkException.internalError(
             s"UpCast only supports DecimalType as AbstractDataType yet, but got: $target")
 
         case UpCast(child, target, walkedTypePath) if target == DecimalType
