@@ -36,7 +36,7 @@ private[spark] object PythonUtils extends Logging {
   val PY4J_ZIP_NAME = "py4j-0.10.9.7-src.zip"
 
   /** Get the PYTHONPATH for PySpark, either from SPARK_HOME, if it is set, or from our JAR */
-  def sparkPythonPath: String = {
+  def sparkPythonPaths: Seq[String] = {
     val pythonPath = new ArrayBuffer[String]
     for (sparkHome <- sys.env.get("SPARK_HOME")) {
       pythonPath += Seq(sparkHome, "python", "lib", "pyspark.zip").mkString(File.separator)
@@ -44,8 +44,10 @@ private[spark] object PythonUtils extends Logging {
         Seq(sparkHome, "python", "lib", PY4J_ZIP_NAME).mkString(File.separator)
     }
     pythonPath ++= SparkContext.jarOfObject(this)
-    pythonPath.mkString(File.pathSeparator)
+    pythonPath.toSeq
   }
+
+  def sparkPythonPath: String = sparkPythonPaths.mkString(File.pathSeparator)
 
   /** Merge PYTHONPATHS with the appropriate separator. Ignores blank strings. */
   def mergePythonPaths(paths: String*): String = {
@@ -153,10 +155,10 @@ private[spark] object PythonUtils extends Logging {
   // Only for testing.
   private[spark] var additionalTestingPath: Option[String] = None
 
-  private[spark] def createPythonFunction(command: Array[Byte]): SimplePythonFunction = {
-    val pythonExec: String = sys.env.getOrElse(
-      "PYSPARK_DRIVER_PYTHON", sys.env.getOrElse("PYSPARK_PYTHON", "python3"))
+  private[spark] val defaultPythonExec: String = sys.env.getOrElse(
+    "PYSPARK_DRIVER_PYTHON", sys.env.getOrElse("PYSPARK_PYTHON", "python3"))
 
+  private[spark] def createPythonFunction(command: Array[Byte]): SimplePythonFunction = {
     val sourcePython = if (Utils.isTesting) {
       // Put PySpark source code instead of the build zip archive so we don't need
       // to build PySpark every time during development.
@@ -180,7 +182,7 @@ private[spark] object PythonUtils extends Logging {
 
     val pythonVer: String =
       Process(
-        Seq(pythonExec, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"),
+        Seq(defaultPythonExec, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"),
         None,
         "PYTHONPATH" -> pythonPath).!!.trim()
 
@@ -188,7 +190,7 @@ private[spark] object PythonUtils extends Logging {
       command = command.toImmutableArraySeq,
       envVars = mutable.Map("PYTHONPATH" -> pythonPath).asJava,
       pythonIncludes = List.empty.asJava,
-      pythonExec = pythonExec,
+      pythonExec = defaultPythonExec,
       pythonVer = pythonVer,
       broadcastVars = List.empty.asJava,
       accumulator = null)
