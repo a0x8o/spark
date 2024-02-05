@@ -14,15 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import unittest
 
-FROM ubuntu:20.04
+from pyspark.pandas.tests.io.test_stata import StataMixin
+from pyspark.testing.connectutils import ReusedConnectTestCase
+from pyspark.testing.pandasutils import PandasOnSparkTestUtils, TestUtils
 
-# Upgrade package index
-# install a few other useful packages plus Open Java 17
-# Remove unneeded /var/lib/apt/lists/* after install to reduce the
-# docker image size (by ~30MB)
-RUN apt-get update && \
-    apt-get install -y less openjdk-17-jre-headless iproute2 vim-tiny sudo openssh-server && \
-    rm -rf /var/lib/apt/lists/*
 
-ENV SPARK_HOME /opt/spark
+class StataParityTests(
+    StataMixin,
+    PandasOnSparkTestUtils,
+    ReusedConnectTestCase,
+    TestUtils,
+):
+    pass
+
+
+if __name__ == "__main__":
+    from pyspark.pandas.tests.connect.io.test_parity_stata import *  # noqa: F401
+
+    try:
+        import xmlrunner
+
+        testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
+    except ImportError:
+        testRunner = None
+    unittest.main(testRunner=testRunner, verbosity=2)
