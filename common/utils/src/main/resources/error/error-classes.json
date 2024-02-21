@@ -1380,6 +1380,24 @@
     ],
     "sqlState" : "42601"
   },
+  "ILLEGAL_STATE_STORE_VALUE" : {
+    "message" : [
+      "Illegal value provided to the State Store"
+    ],
+    "subClass" : {
+      "EMPTY_LIST_VALUE" : {
+        "message" : [
+          "Cannot write empty list values to State Store for StateName <stateName>."
+        ]
+      },
+      "NULL_VALUE" : {
+        "message" : [
+          "Cannot write null values to State Store for StateName <stateName>."
+        ]
+      }
+    },
+    "sqlState" : "42601"
+  },
   "INCOMPARABLE_PIVOT_COLUMN" : {
     "message" : [
       "Invalid pivot column <columnName>. Pivot columns must be comparable."
@@ -1757,6 +1775,19 @@
       "Column or field <name> is of type <type> while it's required to be <expectedType>."
     ],
     "sqlState" : "42000"
+  },
+  "INVALID_CONF_VALUE" : {
+    "message" : [
+      "The value '<confValue>' in the config \"<confName>\" is invalid."
+    ],
+    "subClass" : {
+      "TIME_ZONE" : {
+        "message" : [
+          "Cannot resolve the given timezone."
+        ]
+      }
+    },
+    "sqlState" : "22022"
   },
   "INVALID_CURSOR" : {
     "message" : [
@@ -3363,6 +3394,13 @@
       "'<optionName>' must be specified."
     ],
     "sqlState" : "42601"
+  },
+  "STREAMING_STATEFUL_OPERATOR_NOT_MATCH_IN_STATE_METADATA" : {
+    "message" : [
+      "Streaming stateful operator name does not match with the operator in state metadata. This likely to happen when user adds/removes/changes stateful operator of existing streaming query.",
+      "Stateful operators in the metadata: [<OpsInMetadataSeq>]; Stateful operators in current batch: [<OpsInCurBatchSeq>]."
+    ],
+    "sqlState" : "42K03"
   },
   "STREAM_FAILED" : {
     "message" : [
