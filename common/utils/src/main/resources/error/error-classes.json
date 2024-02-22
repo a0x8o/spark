@@ -870,7 +870,7 @@
       },
       "UNEXPECTED_INPUT_TYPE" : {
         "message" : [
-          "Parameter <paramIndex> requires the <requiredType> type, however <inputSql> has the type <inputType>."
+          "The <paramIndex> parameter requires the <requiredType> type, however <inputSql> has the type <inputType>."
         ]
       },
       "UNEXPECTED_NULL" : {
@@ -2007,12 +2007,6 @@
       }
     },
     "sqlState" : "HY000"
-  },
-  "INVALID_HIVE_COLUMN_NAME" : {
-    "message" : [
-      "Cannot create the table <tableName> having the column <columnName> whose name contains invalid characters <invalidChars> in Hive metastore."
-    ],
-    "sqlState" : "42K05"
   },
   "INVALID_IDENTIFIER" : {
     "message" : [
@@ -5122,11 +5116,6 @@
   "_LEGACY_ERROR_TEMP_1174" : {
     "message" : [
       "Unrecognized Parquet type: <field>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1175" : {
-    "message" : [
-      "Unsupported data type <dataType>."
     ]
   },
   "_LEGACY_ERROR_TEMP_1181" : {
