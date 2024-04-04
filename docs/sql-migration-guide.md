@@ -24,6 +24,7 @@ license: |
 
 ## Upgrading from Spark SQL 3.5 to 4.0
 
+- Since Spark 4.0, the default behaviour when inserting elements in a map is changed to first normalize keys -0.0 to 0.0. The affected SQL functions are `create_map`, `map_from_arrays`, `map_from_entries`, and `map_concat`. To restore the previous behaviour, set `spark.sql.legacy.disableMapKeyNormalization` to `true`.
 - Since Spark 4.0, the default value of `spark.sql.maxSinglePartitionBytes` is changed from `Long.MaxValue` to `128m`. To restore the previous behavior, set `spark.sql.maxSinglePartitionBytes` to `9223372036854775807`(`Long.MaxValue`).
 - Since Spark 4.0, any read of SQL tables takes into consideration the SQL configs `spark.sql.files.ignoreCorruptFiles`/`spark.sql.files.ignoreMissingFiles` instead of the core config `spark.files.ignoreCorruptFiles`/`spark.files.ignoreMissingFiles`.
 - Since Spark 4.0, `spark.sql.hive.metastore` drops the support of Hive prior to 2.0.0 as they require JDK 8 that Spark does not support anymore. Users should migrate to higher versions.
@@ -39,9 +40,20 @@ license: |
 - Since Spark 4.0, the default value of `spark.sql.orc.compression.codec` is changed from `snappy` to `zstd`. To restore the previous behavior, set `spark.sql.orc.compression.codec` to `snappy`.
 - Since Spark 4.0, `SELECT (*)` is equivalent to `SELECT struct(*)` instead of `SELECT *`. To restore the previous behavior, set `spark.sql.legacy.ignoreParenthesesAroundStar` to `true`.
 - Since Spark 4.0, the SQL config `spark.sql.legacy.allowZeroIndexInFormatString` is deprecated. Consider to change `strfmt` of the `format_string` function to use 1-based indexes. The first argument must be referenced by "1$", the second by "2$", etc.
-- Since Spark 4.0, the function `to_csv` no longer supports input with the data type `STRUCT`, `ARRAY`, `MAP`, `VARIANT` and `BINARY` (because the `CSV specification` does not have standards for these data types and cannot be read back using `from_csv`), Spark will throw `DATATYPE_MISMATCH.UNSUPPORTED_INPUT_TYPE` exception.
 - Since Spark 4.0, JDBC read option `preferTimestampNTZ=true` will not convert Postgres TIMESTAMP WITH TIME ZONE and TIME WITH TIME ZONE data types to TimestampNTZType, which is available in Spark 3.5. 
 - Since Spark 4.0, JDBC read option `preferTimestampNTZ=true` will not convert MySQL TIMESTAMP to TimestampNTZType, which is available in Spark 3.5. MySQL DATETIME is not affected.
+- Since Spark 4.0, MySQL JDBC datasource will read SMALLINT as ShortType, while in Spark 3.5 and previous, it was read as IntegerType. MEDIUMINT UNSIGNED is read as IntegerType, while in Spark 3.5 and previous, it was read as LongType. To restore the previous behavior, you can cast the column to the old type.
+- Since Spark 4.0, MySQL JDBC datasource will read FLOAT as FloatType, while in Spark 3.5 and previous, it was read as DoubleType. To restore the previous behavior, you can cast the column to the old type.
+- Since Spark 4.0, MySQL JDBC datasource will read BIT(n > 1) as BinaryType, while in Spark 3.5 and previous, read as LongType. To restore the previous behavior, set `spark.sql.legacy.mysql.bitArrayMapping.enabled` to `true`.
+- Since Spark 4.0, MySQL JDBC datasource will write ShortType as SMALLINT, while in Spark 3.5 and previous, write as INTEGER. To restore the previous behavior, you can replace the column with IntegerType whenever before writing.
+
+## Upgrading from Spark SQL 3.5.1 to 3.5.2
+
+- Since 3.5.2, MySQL JDBC datasource will read TINYINT UNSIGNED as ShortType, while in 3.5.1, it was wrongly read as ByteType.
+
+## Upgrading from Spark SQL 3.5.0 to 3.5.1
+
+- Since Spark 3.5.1, MySQL JDBC datasource will read TINYINT(n > 1) and TINYINT UNSIGNED as ByteType, while in Spark 3.5.0 and below, they were read as IntegerType. To restore the previous behavior, you can cast the column to the old type.
 
 ## Upgrading from Spark SQL 3.4 to 3.5
 
