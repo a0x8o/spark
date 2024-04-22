@@ -42,6 +42,7 @@ import sys
 import numpy as np
 
 from pyspark.errors import PySparkTypeError, PySparkValueError
+from pyspark.sql.dataframe import DataFrame as ParentDataFrame
 from pyspark.sql.connect.column import Column
 from pyspark.sql.connect.expressions import (
     CaseWhen,
@@ -80,7 +81,6 @@ if TYPE_CHECKING:
         DataTypeOrString,
         UserDefinedFunctionLike,
     )
-    from pyspark.sql.connect.dataframe import DataFrame
     from pyspark.sql.connect.udtf import UserDefinedTableFunction
 
 
@@ -314,7 +314,7 @@ def getbit(col: "ColumnOrName", pos: "ColumnOrName") -> Column:
 getbit.__doc__ = pysparkfuncs.getbit.__doc__
 
 
-def broadcast(df: "DataFrame") -> "DataFrame":
+def broadcast(df: "ParentDataFrame") -> "ParentDataFrame":
     from pyspark.sql.connect.dataframe import DataFrame
 
     if not isinstance(df, DataFrame):
@@ -3467,6 +3467,7 @@ to_timestamp_ntz.__doc__ = pysparkfuncs.to_timestamp_ntz.__doc__
 
 
 def bucket(numBuckets: Union[Column, int], col: "ColumnOrName") -> Column:
+    warnings.warn("Deprecated in 4.0.0, use partitioning.bucket instead.", FutureWarning)
     from pyspark.sql.connect.functions import partitioning
 
     return partitioning.bucket(numBuckets, col)
@@ -3476,6 +3477,7 @@ bucket.__doc__ = pysparkfuncs.bucket.__doc__
 
 
 def years(col: "ColumnOrName") -> Column:
+    warnings.warn("Deprecated in 4.0.0, use partitioning.years instead.", FutureWarning)
     from pyspark.sql.connect.functions import partitioning
 
     return partitioning.years(col)
@@ -3485,6 +3487,7 @@ years.__doc__ = pysparkfuncs.years.__doc__
 
 
 def months(col: "ColumnOrName") -> Column:
+    warnings.warn("Deprecated in 4.0.0, use partitioning.months instead.", FutureWarning)
     from pyspark.sql.connect.functions import partitioning
 
     return partitioning.months(col)
@@ -3494,6 +3497,7 @@ months.__doc__ = pysparkfuncs.months.__doc__
 
 
 def days(col: "ColumnOrName") -> Column:
+    warnings.warn("Deprecated in 4.0.0, use partitioning.days instead.", FutureWarning)
     from pyspark.sql.connect.functions import partitioning
 
     return partitioning.days(col)
@@ -3503,6 +3507,7 @@ days.__doc__ = pysparkfuncs.days.__doc__
 
 
 def hours(col: "ColumnOrName") -> Column:
+    warnings.warn("Deprecated in 4.0.0, use partitioning.hours instead.", FutureWarning)
     from pyspark.sql.connect.functions import partitioning
 
     return partitioning.hours(col)
@@ -3770,16 +3775,14 @@ def hll_sketch_agg(col: "ColumnOrName", lgConfigK: Optional[Union[int, Column]] 
 hll_sketch_agg.__doc__ = pysparkfuncs.hll_sketch_agg.__doc__
 
 
-def hll_union_agg(col: "ColumnOrName", allowDifferentLgConfigK: Optional[bool] = None) -> Column:
+def hll_union_agg(
+    col: "ColumnOrName",
+    allowDifferentLgConfigK: Optional[Union[bool, Column]] = None,
+) -> Column:
     if allowDifferentLgConfigK is None:
         return _invoke_function_over_columns("hll_union_agg", col)
     else:
-        _allowDifferentLgConfigK = (
-            lit(allowDifferentLgConfigK)
-            if isinstance(allowDifferentLgConfigK, bool)
-            else allowDifferentLgConfigK
-        )
-        return _invoke_function_over_columns("hll_union_agg", col, _allowDifferentLgConfigK)
+        return _invoke_function_over_columns("hll_union_agg", col, lit(allowDifferentLgConfigK))
 
 
 hll_union_agg.__doc__ = pysparkfuncs.hll_union_agg.__doc__
