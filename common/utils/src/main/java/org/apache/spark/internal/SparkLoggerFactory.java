@@ -15,22 +15,19 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.jdbc
+package org.apache.spark.internal;
 
-import org.apache.spark.internal.Logging
+// checkstyle.off: RegexpSinglelineJava
+import org.slf4j.LoggerFactory;
+// checkstyle.on: RegexpSinglelineJava
 
-class OracleDatabaseOnDocker extends DatabaseOnDocker with Logging {
-  lazy override val imageName =
-    sys.env.getOrElse("ORACLE_DOCKER_IMAGE_NAME", "gvenzl/oracle-free:23.4-slim")
-  val oracle_password = "Th1s1sThe0racle#Pass"
-  override val env = Map(
-    "ORACLE_PWD" -> oracle_password, // oracle images uses this
-    "ORACLE_PASSWORD" -> oracle_password // gvenzl/oracle-free uses this
-  )
-  override val usesIpc = false
-  override val jdbcPort: Int = 1521
+public class SparkLoggerFactory {
 
-  override def getJdbcUrl(ip: String, port: Int): String = {
-    s"jdbc:oracle:thin:system/$oracle_password@//$ip:$port/freepdb1"
+  public static SparkLogger getLogger(String name) {
+    return new SparkLogger(LoggerFactory.getLogger(name));
+  }
+
+  public static SparkLogger getLogger(Class<?> clazz) {
+    return new SparkLogger(LoggerFactory.getLogger(clazz));
   }
 }
