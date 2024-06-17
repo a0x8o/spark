@@ -27,8 +27,6 @@ import scala.util.{Left, Right}
 import org.antlr.v4.runtime.{ParserRuleContext, Token}
 import org.antlr.v4.runtime.misc.Interval
 import org.antlr.v4.runtime.tree.{ParseTree, RuleNode, TerminalNode}
-import org.apache.commons.codec.DecoderException
-import org.apache.commons.codec.binary.Hex
 
 import org.apache.spark.{SparkArithmeticException, SparkException, SparkIllegalArgumentException, SparkThrowable}
 import org.apache.spark.internal.{Logging, MDC}
@@ -2265,6 +2263,20 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
    */
   override def visitCast(ctx: CastContext): Expression = withOrigin(ctx) {
     val rawDataType = typedVisit[DataType](ctx.dataType())
+    ctx.dataType() match {
+      case context: PrimitiveDataTypeContext =>
+        val typeCtx = context.`type`()
+        if (typeCtx.start.getType == STRING) {
+          typeCtx.children.asScala.toSeq match {
+            case Seq(_, cctx: CollateClauseContext) =>
+              throw QueryParsingErrors.dataTypeUnsupportedError(
+                rawDataType.typeName,
+                ctx.dataType().asInstanceOf[PrimitiveDataTypeContext])
+            case _ =>
+          }
+        }
+      case _ =>
+    }
     val dataType = CharVarcharUtils.replaceCharVarcharWithStringForCast(rawDataType)
     ctx.name.getType match {
       case SqlBaseParser.CAST =>
@@ -2284,6 +2296,20 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
    */
   override def visitCastByColon(ctx: CastByColonContext): Expression = withOrigin(ctx) {
     val rawDataType = typedVisit[DataType](ctx.dataType())
+    ctx.dataType() match {
+      case context: PrimitiveDataTypeContext =>
+        val typeCtx = context.`type`()
+        if (typeCtx.start.getType == STRING) {
+          typeCtx.children.asScala.toSeq match {
+            case Seq(_, cctx: CollateClauseContext) =>
+              throw QueryParsingErrors.dataTypeUnsupportedError(
+                rawDataType.typeName,
+                ctx.dataType().asInstanceOf[PrimitiveDataTypeContext])
+            case _ =>
+          }
+        }
+      case _ =>
+    }
     val dataType = CharVarcharUtils.replaceCharVarcharWithStringForCast(rawDataType)
     val cast = Cast(expression(ctx.primaryExpression), dataType)
     cast.setTagValue(Cast.USER_SPECIFIED_CAST, ())
@@ -2760,11 +2786,10 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
           Literal(interval, CalendarIntervalType)
         }
       case BINARY_HEX =>
-        val padding = if (value.length % 2 != 0) "0" else ""
         try {
-          Literal(Hex.decodeHex(padding + value))
+          Literal(Hex.unhex(value), BinaryType)
         } catch {
-          case e: DecoderException =>
+          case e: IllegalArgumentException =>
             val ex = QueryParsingErrors.cannotParseValueTypeError("X", value, ctx)
             ex.setStackTrace(e.getStackTrace)
             throw ex
