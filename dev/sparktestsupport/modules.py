@@ -1051,6 +1051,7 @@ pyspark_connect = Module(
         "pyspark.sql.tests.connect.test_parity_python_streaming_datasource",
         "pyspark.sql.tests.connect.test_utils",
         "pyspark.sql.tests.connect.client.test_artifact",
+        "pyspark.sql.tests.connect.client.test_artifact_localcluster",
         "pyspark.sql.tests.connect.client.test_client",
         "pyspark.sql.tests.connect.client.test_reattach",
         "pyspark.sql.tests.connect.streaming.test_parity_streaming",
@@ -1063,6 +1064,7 @@ pyspark_connect = Module(
         "pyspark.sql.tests.connect.test_parity_pandas_udf_window",
         "pyspark.sql.tests.connect.test_resources",
         "pyspark.sql.tests.connect.shell.test_progress",
+        "pyspark.sql.tests.connect.test_df_debug",
     ],
     excluded_python_implementations=[
         "PyPy"  # Skip these tests under PyPy since they require numpy, pandas, and pyarrow and

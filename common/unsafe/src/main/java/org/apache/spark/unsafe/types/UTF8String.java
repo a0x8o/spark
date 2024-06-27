@@ -23,6 +23,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.function.Function;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -101,6 +102,8 @@ public final class UTF8String implements Comparable<UTF8String>, Externalizable,
 
   private static final UTF8String COMMA_UTF8 = UTF8String.fromString(",");
   public static final UTF8String EMPTY_UTF8 = UTF8String.fromString("");
+  public static final UTF8String ZERO_UTF8 = UTF8String.fromString("0");
+
 
   /**
    * Creates an UTF8String from byte array, which should be encoded in UTF-8.
@@ -496,24 +499,30 @@ public final class UTF8String implements Comparable<UTF8String>, Externalizable,
   }
 
   /**
+   * Method for ASCII character conversion using a functional interface for chars.
+   */
+
+  private UTF8String convertAscii(Function<Character, Character> charConverter) {
+    byte[] bytes = new byte[numBytes];
+    for (int i = 0; i < numBytes; i++) {
+        bytes[i] = (byte) charConverter.apply((char) getByte(i)).charValue();
+    }
+    return fromBytes(bytes);
+  }
+
+  /**
    * Returns the upper case of this string
    */
   public UTF8String toUpperCase() {
     if (numBytes == 0) {
       return EMPTY_UTF8;
     }
-    // Optimization - do char level uppercase conversion in case of chars in ASCII range
-    for (int i = 0; i < numBytes; i++) {
-      if (getByte(i) < 0) {
-        // non-ASCII
-        return toUpperCaseSlow();
-      }
-    }
-    byte[] bytes = new byte[numBytes];
-    for (int i = 0; i < numBytes; i++) {
-      bytes[i] = (byte) Character.toUpperCase(getByte(i));
-    }
-    return fromBytes(bytes);
+
+    return isFullAscii() ? toUpperCaseAscii() : toUpperCaseSlow();
+  }
+
+  public UTF8String toUpperCaseAscii() {
+    return convertAscii(Character::toUpperCase);
   }
 
   private UTF8String toUpperCaseSlow() {
@@ -544,12 +553,8 @@ public final class UTF8String implements Comparable<UTF8String>, Externalizable,
     return fromString(toString().toLowerCase());
   }
 
-  private UTF8String toLowerCaseAscii() {
-    final var bytes = new byte[numBytes];
-    for (var i = 0; i < numBytes; i++) {
-      bytes[i] = (byte) Character.toLowerCase(getByte(i));
-    }
-    return fromBytes(bytes);
+  public UTF8String toLowerCaseAscii() {
+    return convertAscii(Character::toLowerCase);
   }
 
   /**
@@ -1864,4 +1869,21 @@ public final class UTF8String implements Comparable<UTF8String>, Externalizable,
     in.read((byte[]) base);
   }
 
+  /**
+   * Convert a long value to its binary format stripping leading zeros.
+   */
+  public static UTF8String toBinaryString(long val) {
+    int zeros = Long.numberOfLeadingZeros(val);
+    if (zeros == Long.SIZE) {
+      return UTF8String.ZERO_UTF8;
+    } else {
+      int length = Long.SIZE - zeros;
+      byte[] bytes = new byte[length];
+      do {
+        bytes[--length] = (byte) ((val & 0x1) == 1 ? '1': '0');
+        val >>>= 1;
+      } while (length > 0);
+      return fromBytes(bytes);
+    }
+  }
 }
