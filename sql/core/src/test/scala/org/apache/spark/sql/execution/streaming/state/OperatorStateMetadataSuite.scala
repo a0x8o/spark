@@ -42,7 +42,6 @@ class OperatorStateMetadataSuite extends StreamTest with SharedSparkSession {
       expectedMetadata: OperatorStateMetadata,
       expectedVersion: Int = 1): Unit = {
     val statePath = new Path(checkpointDir, s"state/$operatorId")
-<<<<<<< HEAD
     val operatorMetadata = OperatorStateMetadataReader.createReader(statePath,
       hadoopConf, expectedVersion).read()
     assert(operatorMetadata.isDefined)
@@ -64,37 +63,6 @@ class OperatorStateMetadataSuite extends StreamTest with SharedSparkSession {
       assert(stateStoreInfo.storeName == expectedStateStoreInfo.storeName)
       assert(stateStoreInfo.numPartitions == expectedStateStoreInfo.numPartitions)
     }
-=======
-<<<<<<< HEAD
-    val operatorMetadata = OperatorStateMetadataReader.createReader(statePath,
-      hadoopConf, expectedVersion).read()
-    assert(operatorMetadata.isDefined)
-    assert(operatorMetadata.get.version == expectedVersion)
-
-    if (expectedVersion == 1) {
-      val operatorMetadataV1 = operatorMetadata.get.asInstanceOf[OperatorStateMetadataV1]
-      val expectedMetadataV1 = expectedMetadata.asInstanceOf[OperatorStateMetadataV1]
-      assert(operatorMetadataV1.operatorInfo == expectedMetadata.operatorInfo &&
-        operatorMetadataV1.stateStoreInfo.sameElements(expectedMetadataV1.stateStoreInfo))
-    } else {
-      val operatorMetadataV2 = operatorMetadata.get.asInstanceOf[OperatorStateMetadataV2]
-      val expectedMetadataV2 = expectedMetadata.asInstanceOf[OperatorStateMetadataV2]
-      assert(operatorMetadataV2.operatorInfo == expectedMetadataV2.operatorInfo)
-      assert(operatorMetadataV2.operatorPropertiesJson.nonEmpty)
-      val stateStoreInfo = operatorMetadataV2.stateStoreInfo.head
-      val expectedStateStoreInfo = expectedMetadataV2.stateStoreInfo.head
-      assert(stateStoreInfo.stateSchemaFilePath.nonEmpty)
-      assert(stateStoreInfo.storeName == expectedStateStoreInfo.storeName)
-      assert(stateStoreInfo.numPartitions == expectedStateStoreInfo.numPartitions)
-    }
-=======
-    val operatorMetadata = new OperatorStateMetadataV1Reader(statePath, hadoopConf).read()
-      .asInstanceOf[Option[OperatorStateMetadataV1]]
-    assert(operatorMetadata.isDefined)
-    assert(operatorMetadata.get.operatorInfo == expectedMetadata.operatorInfo &&
-      operatorMetadata.get.stateStoreInfo.sameElements(expectedMetadata.stateStoreInfo))
->>>>>>> 0x1CAB5A3
->>>>>>> prod
   }
 
   test("Serialize and deserialize stateful operator metadata") {

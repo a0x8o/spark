@@ -103,18 +103,9 @@ object MimaExcludes {
     ProblemFilters.exclude[DirectMissingMethodProblem]("org.apache.spark.sql.SparkSession#implicits._sqlContext"),
     // SPARK-48761: Add clusterBy() to CreateTableWriter.
     ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.sql.CreateTableWriter.clusterBy"),
-<<<<<<< HEAD
     // SPARK-48900: Add `reason` string to all job / stage / job group cancellation calls
     ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.scheduler.JobWaiter.cancel"),
     ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.FutureAction.cancel"),
-=======
-<<<<<<< HEAD
-    // SPARK-48900: Add `reason` string to all job / stage / job group cancellation calls
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.scheduler.JobWaiter.cancel"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.FutureAction.cancel"),
-=======
->>>>>>> 0x1CAB5A3
->>>>>>> prod
     // SPARK-48901: Add clusterBy() to DataStreamWriter.
     ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.sql.DataStreamWriter.clusterBy")
   )
