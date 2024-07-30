@@ -76,9 +76,10 @@ SELECT cast(1 as tinyint) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -99,9 +100,10 @@ SELECT cast(1 as tinyint) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -122,9 +124,10 @@ SELECT cast(1 as tinyint) in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -145,9 +148,10 @@ SELECT cast(1 as tinyint) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -232,9 +236,10 @@ SELECT cast(1 as smallint) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -255,9 +260,10 @@ SELECT cast(1 as smallint) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -278,9 +284,10 @@ SELECT cast(1 as smallint) in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -301,9 +308,10 @@ SELECT cast(1 as smallint) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -388,9 +396,10 @@ SELECT cast(1 as int) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -411,9 +420,10 @@ SELECT cast(1 as int) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -434,9 +444,10 @@ SELECT cast(1 as int) in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -457,9 +468,10 @@ SELECT cast(1 as int) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -544,9 +556,10 @@ SELECT cast(1 as bigint) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -567,9 +580,10 @@ SELECT cast(1 as bigint) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -590,9 +604,10 @@ SELECT cast(1 as bigint) in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -613,9 +628,10 @@ SELECT cast(1 as bigint) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -700,9 +716,10 @@ SELECT cast(1 as float) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -723,9 +740,10 @@ SELECT cast(1 as float) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -746,9 +764,10 @@ SELECT cast(1 as float) in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -769,9 +788,10 @@ SELECT cast(1 as float) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -856,9 +876,10 @@ SELECT cast(1 as double) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -879,9 +900,10 @@ SELECT cast(1 as double) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -902,9 +924,10 @@ SELECT cast(1 as double) in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -925,9 +948,10 @@ SELECT cast(1 as double) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"DATE\"]",
     "functionName" : "`in`",
@@ -1012,9 +1036,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -1035,9 +1060,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -1058,9 +1084,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast('2017-12-11 09:30:00.0' as timestamp))
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -1081,9 +1108,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"DATE\"]",
     "functionName" : "`in`",
@@ -1168,9 +1196,10 @@ SELECT cast(1 as string) in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"STRING\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -1191,9 +1220,10 @@ SELECT cast(1 as string) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"STRING\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -1230,9 +1260,10 @@ SELECT cast('1' as binary) in (cast(1 as tinyint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -1253,9 +1284,10 @@ SELECT cast('1' as binary) in (cast(1 as smallint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -1276,9 +1308,10 @@ SELECT cast('1' as binary) in (cast(1 as int)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"INT\"]",
     "functionName" : "`in`",
@@ -1299,9 +1332,10 @@ SELECT cast('1' as binary) in (cast(1 as bigint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -1322,9 +1356,10 @@ SELECT cast('1' as binary) in (cast(1 as float)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -1345,9 +1380,10 @@ SELECT cast('1' as binary) in (cast(1 as double)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -1368,9 +1404,10 @@ SELECT cast('1' as binary) in (cast(1 as decimal(10, 0))) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -1391,9 +1428,10 @@ SELECT cast('1' as binary) in (cast(1 as string)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"STRING\"]",
     "functionName" : "`in`",
@@ -1422,9 +1460,10 @@ SELECT cast('1' as binary) in (cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -1445,9 +1484,10 @@ SELECT cast('1' as binary) in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -1468,9 +1508,10 @@ SELECT cast('1' as binary) in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"DATE\"]",
     "functionName" : "`in`",
@@ -1491,9 +1532,10 @@ SELECT true in (cast(1 as tinyint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -1514,9 +1556,10 @@ SELECT true in (cast(1 as smallint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -1537,9 +1580,10 @@ SELECT true in (cast(1 as int)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"INT\"]",
     "functionName" : "`in`",
@@ -1560,9 +1604,10 @@ SELECT true in (cast(1 as bigint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -1583,9 +1628,10 @@ SELECT true in (cast(1 as float)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -1606,9 +1652,10 @@ SELECT true in (cast(1 as double)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -1629,9 +1676,10 @@ SELECT true in (cast(1 as decimal(10, 0))) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -1652,9 +1700,10 @@ SELECT true in (cast(1 as string)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"STRING\"]",
     "functionName" : "`in`",
@@ -1675,9 +1724,10 @@ SELECT true in (cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -1706,9 +1756,10 @@ SELECT true in (cast('2017-12-11 09:30:00.0' as timestamp)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -1729,9 +1780,10 @@ SELECT true in (cast('2017-12-11 09:30:00' as date)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"DATE\"]",
     "functionName" : "`in`",
@@ -1752,9 +1804,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as tinyint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -1775,9 +1828,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as smallint)) FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -1798,9 +1852,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as int)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"INT\"]",
     "functionName" : "`in`",
@@ -1821,9 +1876,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as bigint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -1844,9 +1900,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as float)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -1867,9 +1924,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as double)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -1890,9 +1948,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as decimal(10, 0)))
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -1921,9 +1980,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2' as binary)) FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -1944,9 +2004,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast(2 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -1983,9 +2044,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as tinyint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -2006,9 +2068,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as smallint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -2029,9 +2092,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as int)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"INT\"]",
     "functionName" : "`in`",
@@ -2052,9 +2116,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as bigint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -2075,9 +2140,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as float)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -2098,9 +2164,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as double)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -2121,9 +2188,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as decimal(10, 0))) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -2152,9 +2220,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -2175,9 +2244,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast(2 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -2278,9 +2348,10 @@ SELECT cast(1 as tinyint) in (cast(1 as tinyint), cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"TINYINT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -2301,9 +2372,10 @@ SELECT cast(1 as tinyint) in (cast(1 as tinyint), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"TINYINT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -2324,9 +2396,10 @@ SELECT cast(1 as tinyint) in (cast(1 as tinyint), cast('2017-12-11 09:30:00.0' a
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"TINYINT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -2347,9 +2420,10 @@ SELECT cast(1 as tinyint) in (cast(1 as tinyint), cast('2017-12-11 09:30:00' as 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"TINYINT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -2434,9 +2508,10 @@ SELECT cast(1 as smallint) in (cast(1 as smallint), cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"SMALLINT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -2457,9 +2532,10 @@ SELECT cast(1 as smallint) in (cast(1 as smallint), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"SMALLINT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -2480,9 +2556,10 @@ SELECT cast(1 as smallint) in (cast(1 as smallint), cast('2017-12-11 09:30:00.0'
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"SMALLINT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -2503,9 +2580,10 @@ SELECT cast(1 as smallint) in (cast(1 as smallint), cast('2017-12-11 09:30:00' a
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"SMALLINT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -2590,9 +2668,10 @@ SELECT cast(1 as int) in (cast(1 as int), cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"INT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -2613,9 +2692,10 @@ SELECT cast(1 as int) in (cast(1 as int), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"INT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -2636,9 +2716,10 @@ SELECT cast(1 as int) in (cast(1 as int), cast('2017-12-11 09:30:00.0' as timest
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"INT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -2659,9 +2740,10 @@ SELECT cast(1 as int) in (cast(1 as int), cast('2017-12-11 09:30:00' as date)) F
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"INT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -2746,9 +2828,10 @@ SELECT cast(1 as bigint) in (cast(1 as bigint), cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BIGINT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -2769,9 +2852,10 @@ SELECT cast(1 as bigint) in (cast(1 as bigint), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BIGINT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -2792,9 +2876,10 @@ SELECT cast(1 as bigint) in (cast(1 as bigint), cast('2017-12-11 09:30:00.0' as 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BIGINT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -2815,9 +2900,10 @@ SELECT cast(1 as bigint) in (cast(1 as bigint), cast('2017-12-11 09:30:00' as da
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BIGINT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -2902,9 +2988,10 @@ SELECT cast(1 as float) in (cast(1 as float), cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"FLOAT\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -2925,9 +3012,10 @@ SELECT cast(1 as float) in (cast(1 as float), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"FLOAT\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -2948,9 +3036,10 @@ SELECT cast(1 as float) in (cast(1 as float), cast('2017-12-11 09:30:00.0' as ti
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"FLOAT\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -2971,9 +3060,10 @@ SELECT cast(1 as float) in (cast(1 as float), cast('2017-12-11 09:30:00' as date
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"FLOAT\", \"DATE\"]",
     "functionName" : "`in`",
@@ -3058,9 +3148,10 @@ SELECT cast(1 as double) in (cast(1 as double), cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"DOUBLE\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -3081,9 +3172,10 @@ SELECT cast(1 as double) in (cast(1 as double), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"DOUBLE\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -3104,9 +3196,10 @@ SELECT cast(1 as double) in (cast(1 as double), cast('2017-12-11 09:30:00.0' as 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"DOUBLE\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -3127,9 +3220,10 @@ SELECT cast(1 as double) in (cast(1 as double), cast('2017-12-11 09:30:00' as da
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"DOUBLE\", \"DATE\"]",
     "functionName" : "`in`",
@@ -3214,9 +3308,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast(1 as decimal(10, 0)), cast('1' as bina
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"DECIMAL(10,0)\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -3237,9 +3332,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast(1 as decimal(10, 0)), cast(1 as boolea
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"DECIMAL(10,0)\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -3260,9 +3356,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast(1 as decimal(10, 0)), cast('2017-12-11
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"DECIMAL(10,0)\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -3283,9 +3380,10 @@ SELECT cast(1 as decimal(10, 0)) in (cast(1 as decimal(10, 0)), cast('2017-12-11
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"DECIMAL(10,0)\", \"DATE\"]",
     "functionName" : "`in`",
@@ -3370,9 +3468,10 @@ SELECT cast(1 as string) in (cast(1 as string), cast('1' as binary)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"STRING\", \"STRING\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -3393,9 +3492,10 @@ SELECT cast(1 as string) in (cast(1 as string), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"STRING\", \"STRING\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -3432,9 +3532,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as tinyint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -3455,9 +3556,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as smallint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -3478,9 +3580,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as int)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"INT\"]",
     "functionName" : "`in`",
@@ -3501,9 +3604,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as bigint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -3524,9 +3628,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as float)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -3547,9 +3652,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as double)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -3570,9 +3676,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as decimal(10, 0))) F
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -3593,9 +3700,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as string)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"STRING\"]",
     "functionName" : "`in`",
@@ -3624,9 +3732,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast(1 as boolean)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -3647,9 +3756,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast('2017-12-11 09:30:00.0'
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -3670,9 +3780,10 @@ SELECT cast('1' as binary) in (cast('1' as binary), cast('2017-12-11 09:30:00' a
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BINARY\", \"DATE\"]",
     "functionName" : "`in`",
@@ -3693,9 +3804,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as tinyint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -3716,9 +3828,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as smallint)) FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -3739,9 +3852,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as int)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"INT\"]",
     "functionName" : "`in`",
@@ -3762,9 +3876,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as bigint)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -3785,9 +3900,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as float)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -3808,9 +3924,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as double)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -3831,9 +3948,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as decimal(10, 0)))
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -3854,9 +3972,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast(1 as string)) FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"STRING\"]",
     "functionName" : "`in`",
@@ -3877,9 +3996,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast('1' as binary)) FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -3908,9 +4028,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast('2017-12-11 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"TIMESTAMP\"]",
     "functionName" : "`in`",
@@ -3931,9 +4052,10 @@ SELECT cast('1' as boolean) in (cast('1' as boolean), cast('2017-12-11 09:30:00'
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BOOLEAN\", \"DATE\"]",
     "functionName" : "`in`",
@@ -3954,9 +4076,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -3977,9 +4100,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -4000,9 +4124,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"INT\"]",
     "functionName" : "`in`",
@@ -4023,9 +4148,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -4046,9 +4172,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -4069,9 +4196,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -4092,9 +4220,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -4123,9 +4252,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -4146,9 +4276,10 @@ SELECT cast('2017-12-12 09:30:00.0' as timestamp) in (cast('2017-12-12 09:30:00.
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TIMESTAMP\", \"BOOLEAN\"]",
     "functionName" : "`in`",
@@ -4185,9 +4316,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"TINYINT\"]",
     "functionName" : "`in`",
@@ -4208,9 +4340,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"SMALLINT\"]",
     "functionName" : "`in`",
@@ -4231,9 +4364,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"INT\"]",
     "functionName" : "`in`",
@@ -4254,9 +4388,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"BIGINT\"]",
     "functionName" : "`in`",
@@ -4277,9 +4412,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"FLOAT\"]",
     "functionName" : "`in`",
@@ -4300,9 +4436,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"DOUBLE\"]",
     "functionName" : "`in`",
@@ -4323,9 +4460,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"DECIMAL(10,0)\"]",
     "functionName" : "`in`",
@@ -4354,9 +4492,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"BINARY\"]",
     "functionName" : "`in`",
@@ -4377,9 +4516,10 @@ SELECT cast('2017-12-12 09:30:00' as date) in (cast('2017-12-12 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DATE\", \"BOOLEAN\"]",
     "functionName" : "`in`",

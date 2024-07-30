@@ -38,11 +38,8 @@ class CatalogMetadata(
     @Nullable val description: String)
   extends DefinedByConstructorParams {
 
-  override def toString: String = {
-    "Catalog[" +
-      s"name='$name', " +
-      Option(description).map { d => s"description='$d'] " }.getOrElse("]")
-  }
+  override def toString: String =
+    s"Catalog[name='$name', ${Option(description).map(d => s"description='$d'").getOrElse("")}]"
 }
 
 /**
@@ -138,6 +135,7 @@ class Table(
  * @param nullable whether the column is nullable.
  * @param isPartition whether the column is a partition column.
  * @param isBucket whether the column is a bucket column.
+ * @param isCluster whether the column is a clustering column.
  * @since 2.0.0
  */
 @Stable
@@ -147,8 +145,19 @@ class Column(
     val dataType: String,
     val nullable: Boolean,
     val isPartition: Boolean,
-    val isBucket: Boolean)
+    val isBucket: Boolean,
+    val isCluster: Boolean)
   extends DefinedByConstructorParams {
+
+  def this(
+      name: String,
+      description: String,
+      dataType: String,
+      nullable: Boolean,
+      isPartition: Boolean,
+      isBucket: Boolean) = {
+    this(name, description, dataType, nullable, isPartition, isBucket, isCluster = false)
+  }
 
   override def toString: String = {
     "Column[" +
@@ -157,7 +166,8 @@ class Column(
       s"dataType='$dataType', " +
       s"nullable='$nullable', " +
       s"isPartition='$isPartition', " +
-      s"isBucket='$isBucket']"
+      s"isBucket='$isBucket', " +
+      s"isCluster='$isCluster']"
   }
 
 }

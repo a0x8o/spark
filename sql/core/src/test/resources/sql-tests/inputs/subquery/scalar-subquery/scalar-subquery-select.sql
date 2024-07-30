@@ -1,5 +1,6 @@
 -- A test suite for scalar subquery in SELECT clause
 
+--ONLY_IF spark
 create temporary view t1 as select * from values
   ('val1a', 6S, 8, 10L, float(15.0), 20D, 20E2, timestamp '2014-04-04 00:00:00.000', date '2014-04-04'),
   ('val1b', 8S, 16, 19L, float(17.0), 25D, 26E2, timestamp '2014-05-04 01:01:00.000', date '2014-05-04'),
@@ -235,3 +236,26 @@ SELECT c, (
     FROM (VALUES (0, 6), (1, 5), (2, 4), (3, 3)) t1(a, b)
     WHERE a + b = c
 ) FROM (VALUES (6)) t2(c);
+
+-- SPARK-43156: scalar subquery with Literal result like `COUNT(1) is null`
+SELECT *, (SELECT count(1) is null FROM t2 WHERE t1.c1 = t2.c1) FROM t1;
+
+select (select f from (select false as f, max(c2) from t1 where t1.c1 = t1.c1)) from t2;
+
+-- SPARK-43596: handle IsNull when rewriting the domain join
+set spark.sql.optimizer.optimizeOneRowRelationSubquery.alwaysInline=false;
+WITH T AS (SELECT 1 AS a)
+SELECT (SELECT sum(1) FROM T WHERE a = col OR upper(col)= 'Y')
+FROM (SELECT null as col) as foo;
+set spark.sql.optimizer.optimizeOneRowRelationSubquery.alwaysInline=true;
+
+-- SPARK-43760: the result of the subquery can be NULL.
+select * from (
+ select t1.id c1, (
+  select t2.id c from range (1, 2) t2
+  where t1.id = t2.id  ) c2
+ from range (1, 3) t1 ) t
+where t.c2 is not null;
+
+-- SPARK-43838: Subquery on single table with having clause
+SELECT c1, c2, (SELECT count(*) cnt FROM t1 t2 WHERE t1.c1 = t2.c1 HAVING cnt = 0) FROM t1

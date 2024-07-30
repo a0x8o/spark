@@ -23,16 +23,16 @@ Spark SQL provides `spark.read().csv("file_name")` to read a file or directory o
 
 <div class="codetabs">
 
+<div data-lang="python"  markdown="1">
+{% include_example csv_dataset python/sql/datasource.py %}
+</div>
+
 <div data-lang="scala"  markdown="1">
 {% include_example csv_dataset scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
 </div>
 
 <div data-lang="java"  markdown="1">
 {% include_example csv_dataset java/org/apache/spark/examples/sql/JavaSQLDataSourceExample.java %}
-</div>
-
-<div data-lang="python"  markdown="1">
-{% include_example csv_dataset python/sql/datasource.py %}
 </div>
 
 </div>
@@ -52,16 +52,16 @@ Data source options of CSV can be set via:
 * `OPTIONS` clause at [CREATE TABLE USING DATA_SOURCE](sql-ref-syntax-ddl-create-table-datasource.html)
 
 
-<table class="table">
-  <tr><th><b>Property Name</b></th><th><b>Default</b></th><th><b>Meaning</b></th><th><b>Scope</b></th></tr>
+<table>
+  <thead><tr><th><b>Property Name</b></th><th><b>Default</b></th><th><b>Meaning</b></th><th><b>Scope</b></th></tr></thead>
   <tr>
-    <td><code>sep</code></td>
+    <td><code>sep</code><br><code>delimiter</code></td>
     <td>,</td>
     <td>Sets a separator for each field and value. This separator can be one or more characters.</td>
     <td>read/write</td>
   </tr>
   <tr>
-    <td><code>encoding</code></td>
+    <td><code>encoding</code><br><code>charset</code></td>
     <td>UTF-8</td>
     <td>For reading, decodes the CSV files by the given encoding type. For writing, specifies encoding (charset) of saved CSV files. CSV built-in functions ignore this option.</td>
     <td>read/write</td>
@@ -109,7 +109,7 @@ Data source options of CSV can be set via:
     <td>read</td>
   </tr>
   <tr>
-    <td><code>prefersDate</code></td>
+    <td><code>preferDate</code></td>
     <td>true</td>
     <td>During schema inference (<code>inferSchema</code>), attempts to infer string columns that contain dates as <code>Date</code> if the values satisfy the <code>dateFormat</code> option or default date format. For columns that contain a mixture of dates and timestamps, try inferring them as <code>TimestampType</code> if timestamp format not specified, otherwise infer them as <code>StringType</code>.</td>
     <td>read</td>
@@ -213,7 +213,7 @@ Data source options of CSV can be set via:
   <tr>
     <td><code>multiLine</code></td>
     <td>false</td>
-    <td>Parse one record, which may span multiple lines, per file. CSV built-in functions ignore this option.</td>
+    <td>Allows a row to span multiple lines, by parsing line breaks within quoted values as part of the value itself. CSV built-in functions ignore this option.</td>
     <td>read</td>
   </tr>
   <tr>
@@ -261,10 +261,22 @@ Data source options of CSV can be set via:
     <td>read</td>
   </tr>
   <tr>
-    <td><code>compression</code></td>
+    <td><code>compression</code><br><code>codec</code></td>
     <td>(none)</td>
     <td>Compression codec to use when saving to file. This can be one of the known case-insensitive shorten names (<code>none</code>, <code>bzip2</code>, <code>gzip</code>, <code>lz4</code>, <code>snappy</code> and <code>deflate</code>). CSV built-in functions ignore this option.</td>
     <td>write</td>
+  </tr>
+  <tr>
+    <td><code>timeZone</code></td>
+    <td>(value of <code>spark.sql.session.timeZone</code> configuration)</td>
+    <td>Sets the string that indicates a time zone ID to be used to format timestamps in the JSON datasources or partition values. The following formats of <code>timeZone</code> are supported:<br>
+    <ul>
+      <li>Region-based zone ID: It should have the form 'area/city', such as 'America/Los_Angeles'.</li>
+      <li>Zone offset: It should be in the format '(+|-)HH:mm', for example '-08:00' or '+01:00'. Also 'UTC' and 'Z' are supported as aliases of '+00:00'.</li>
+    </ul>
+    Other short names like 'CST' are not recommended to use because they can be ambiguous.
+    </td>
+    <td>read/write</td>
   </tr>
 </table>
 Other generic options can be found in <a href="https://spark.apache.org/docs/latest/sql-data-sources-generic-options.html">Generic File Source Options</a>.

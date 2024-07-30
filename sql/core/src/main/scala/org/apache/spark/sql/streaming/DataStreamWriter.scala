@@ -20,7 +20,7 @@ package org.apache.spark.sql.streaming
 import java.util.Locale
 import java.util.concurrent.TimeoutException
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 import org.apache.hadoop.fs.Path
 
@@ -29,18 +29,23 @@ import org.apache.spark.api.java.function.VoidFunction2
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, TableSpec}
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.plans.logical.{ColumnDefinition, CreateTable, OptionList, UnresolvedTableSpec}
 import org.apache.spark.sql.catalyst.streaming.InternalOutputModes
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{Identifier, SupportsWrite, Table, TableCatalog, TableProvider, V1Table, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.TableCapability._
+import org.apache.spark.sql.connector.expressions.{ClusterByTransform, FieldReference}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.DDLUtils
-import org.apache.spark.sql.execution.datasources.DataSource
+import org.apache.spark.sql.execution.datasources.{DataSource, DataSourceUtils}
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Utils, FileDataSourceV2}
+import org.apache.spark.sql.execution.datasources.v2.python.PythonDataSourceV2
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.execution.streaming.sources._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.util.ArrayImplicits._
 import org.apache.spark.util.Utils
 
 /**
@@ -162,6 +167,24 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
   @scala.annotation.varargs
   def partitionBy(colNames: String*): DataStreamWriter[T] = {
     this.partitioningColumns = Option(colNames)
+    validatePartitioningAndClustering()
+    this
+  }
+
+  /**
+   * Clusters the output by the given columns. If specified, the output is laid out such that
+   * records with similar values on the clustering column are grouped together in the same file.
+   *
+   * Clustering improves query efficiency by allowing queries with predicates on the clustering
+   * columns to skip unnecessary data. Unlike partitioning, clustering can be used on very high
+   * cardinality columns.
+   *
+   * @since 4.0.0
+   */
+  @scala.annotation.varargs
+  def clusterBy(colNames: String*): DataStreamWriter[T] = {
+    this.clusteringColumns = Option(colNames)
+    validatePartitioningAndClustering()
     this
   }
 
@@ -270,10 +293,9 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
     this.tableName = tableName
 
     import df.sparkSession.sessionState.analyzer.CatalogAndIdentifier
-
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-    val originalMultipartIdentifier = df.sparkSession.sessionState.sqlParser
-      .parseMultipartIdentifier(tableName)
+    val parser = df.sparkSession.sessionState.sqlParser
+    val originalMultipartIdentifier = parser.parseMultipartIdentifier(tableName)
     val CatalogAndIdentifier(catalog, identifier) = originalMultipartIdentifier
 
     // Currently we don't create a logical streaming writer node in logical plan, so cannot rely
@@ -285,22 +307,31 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
 
     if (!catalog.asTableCatalog.tableExists(identifier)) {
       import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+
+      val properties = normalizedClusteringCols.map { cols =>
+        Map(
+          DataSourceUtils.CLUSTERING_COLUMNS_KEY -> DataSourceUtils.encodePartitioningColumns(cols))
+      }.getOrElse(Map.empty)
+      val partitioningOrClusteringTransform = normalizedClusteringCols.map { colNames =>
+        Array(ClusterByTransform(colNames.map(col => FieldReference(col)))).toImmutableArraySeq
+      }.getOrElse(partitioningColumns.getOrElse(Nil).asTransforms.toImmutableArraySeq)
+
       /**
        * Note, currently the new table creation by this API doesn't fully cover the V2 table.
        * TODO (SPARK-33638): Full support of v2 table creation
        */
-      val tableSpec = TableSpec(
-        Map.empty[String, String],
+      val tableSpec = UnresolvedTableSpec(
+        properties,
         Some(source),
-        Map.empty[String, String],
+        OptionList(Seq.empty),
         extraOptions.get("path"),
         None,
         None,
         false)
       val cmd = CreateTable(
         UnresolvedIdentifier(originalMultipartIdentifier),
-        df.schema.asNullable,
-        partitioningColumns.getOrElse(Nil).asTransforms.toSeq,
+        df.schema.asNullable.map(ColumnDefinition.fromV1Column(_, parser)),
+        partitioningOrClusteringTransform,
         tableSpec,
         ignoreIfExists = false)
       Dataset.ofRows(df.sparkSession, cmd)
@@ -346,7 +377,8 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
         throw QueryCompilationErrors.queryNameNotSpecifiedForMemorySinkError()
       }
       val sink = new MemorySink()
-      val resultDf = Dataset.ofRows(df.sparkSession, new MemoryPlan(sink, df.schema.toAttributes))
+      val resultDf = Dataset.ofRows(df.sparkSession,
+        MemoryPlan(sink, DataTypeUtils.toAttributes(df.schema)))
       val recoverFromCheckpoint = outputMode == OutputMode.Complete()
       val query = startQuery(sink, extraOptions, recoverFromCheckpoint = recoverFromCheckpoint,
         catalogTable = catalogTable)
@@ -354,7 +386,7 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
       query
     } else if (source == SOURCE_NAME_FOREACH) {
       assertNotPartitioned(SOURCE_NAME_FOREACH)
-      val sink = ForeachWriterTable[T](foreachWriter, ds.exprEnc)
+      val sink = ForeachWriterTable[Any](foreachWriter, foreachWriterEncoder)
       startQuery(sink, extraOptions, catalogTable = catalogTable)
     } else if (source == SOURCE_NAME_FOREACH_BATCH) {
       assertNotPartitioned(SOURCE_NAME_FOREACH_BATCH)
@@ -366,7 +398,7 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
     } else {
       val cls = DataSource.lookupDataSource(source, df.sparkSession.sessionState.conf)
       val disabledSources =
-        Utils.stringToSeq(df.sparkSession.sqlContext.conf.disabledV2StreamingWriters)
+        Utils.stringToSeq(df.sparkSession.sessionState.conf.disabledV2StreamingWriters)
       val useV1Source = disabledSources.contains(cls.getCanonicalName) ||
         // file source v2 does not support streaming yet.
         classOf[FileDataSourceV2].isAssignableFrom(cls)
@@ -381,7 +413,7 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
         val provider = cls.getConstructor().newInstance().asInstanceOf[TableProvider]
         val sessionOptions = DataSourceV2Utils.extractSessionConfigs(
           source = provider, conf = df.sparkSession.sessionState.conf)
-        val finalOptions = sessionOptions.filterKeys(!optionsWithPath.contains(_)).toMap ++
+        val finalOptions = sessionOptions.filter { case (k, _) => !optionsWithPath.contains(k) } ++
           optionsWithPath.originalMap
         val dsOptions = new CaseInsensitiveStringMap(finalOptions.asJava)
         // If the source accepts external table metadata, here we pass the schema of input query
@@ -391,6 +423,10 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
           Some(df.schema)
         } else {
           None
+        }
+        provider match {
+          case p: PythonDataSourceV2 => p.setShortName(source)
+          case _ =>
         }
         val table = DataSourceV2Utils.getTableFromProvider(
           provider, dsOptions, userSpecifiedSchema = outputSchema)
@@ -431,10 +467,22 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
   }
 
   private def createV1Sink(optionsWithPath: CaseInsensitiveMap[String]): Sink = {
+    // Do not allow the user to specify clustering columns in the options. Ignoring this option is
+    // consistent with the behavior of DataFrameWriter on non Path-based tables and with the
+    // behavior of DataStreamWriter on partitioning columns specified in options.
+    val optionsWithoutClusteringKey =
+      optionsWithPath.originalMap - DataSourceUtils.CLUSTERING_COLUMNS_KEY
+
+    val optionsWithClusteringColumns = normalizedClusteringCols match {
+      case Some(cols) => optionsWithoutClusteringKey + (
+        DataSourceUtils.CLUSTERING_COLUMNS_KEY ->
+          DataSourceUtils.encodePartitioningColumns(cols))
+      case None => optionsWithoutClusteringKey
+    }
     val ds = DataSource(
       df.sparkSession,
       className = source,
-      options = optionsWithPath.originalMap,
+      options = optionsWithClusteringColumns,
       partitionColumns = normalizedParCols.getOrElse(Nil))
     ds.createSink(outputMode)
   }
@@ -446,12 +494,18 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
    * @since 2.0.0
    */
   def foreach(writer: ForeachWriter[T]): DataStreamWriter[T] = {
+    foreachImplementation(writer.asInstanceOf[ForeachWriter[Any]])
+  }
+
+  private[sql] def foreachImplementation(writer: ForeachWriter[Any],
+      encoder: Option[ExpressionEncoder[Any]] = None): DataStreamWriter[T] = {
     this.source = SOURCE_NAME_FOREACH
     this.foreachWriter = if (writer != null) {
       ds.sparkSession.sparkContext.clean(writer)
     } else {
       throw new IllegalArgumentException("foreach writer cannot be null")
     }
+    encoder.foreach(e => this.foreachWriterEncoder = e)
     this
   }
 
@@ -500,6 +554,10 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
     cols.map(normalize(_, "Partition"))
   }
 
+  private def normalizedClusteringCols: Option[Seq[String]] = clusteringColumns.map { cols =>
+    cols.map(normalize(_, "Clustering"))
+  }
+
   /**
    * The given column name may not be equal to any of the existing column names if we were in
    * case-insensitive context. Normalize the given column name to the real one so that we don't
@@ -518,6 +576,13 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
     }
   }
 
+  // Validate that partitionBy isn't used with clusterBy.
+  private def validatePartitioningAndClustering(): Unit = {
+    if (clusteringColumns.nonEmpty && partitioningColumns.nonEmpty) {
+      throw QueryCompilationErrors.clusterByWithPartitionedBy()
+    }
+  }
+
   ///////////////////////////////////////////////////////////////////////////////////////
   // Builder pattern config options
   ///////////////////////////////////////////////////////////////////////////////////////
@@ -532,11 +597,16 @@ final class DataStreamWriter[T] private[sql](ds: Dataset[T]) {
 
   private var extraOptions = CaseInsensitiveMap[String](Map.empty)
 
-  private var foreachWriter: ForeachWriter[T] = null
+  private var foreachWriter: ForeachWriter[Any] = null
+
+  private var foreachWriterEncoder: ExpressionEncoder[Any] =
+    ds.exprEnc.asInstanceOf[ExpressionEncoder[Any]]
 
   private var foreachBatchWriter: (Dataset[T], Long) => Unit = null
 
   private var partitioningColumns: Option[Seq[String]] = None
+
+  private var clusteringColumns: Option[Seq[String]] = None
 }
 
 object DataStreamWriter {

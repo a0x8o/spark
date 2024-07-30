@@ -18,8 +18,9 @@ import datetime
 import json
 from typing import Tuple, Optional
 
-from pyspark.sql.types import DateType, Row, StructType
+from pyspark.sql.types import Row, StructType, TimestampType
 from pyspark.sql.utils import has_numpy
+from pyspark.errors import PySparkTypeError, PySparkValueError, PySparkRuntimeError
 
 __all__ = ["GroupState", "GroupStateTimeout"]
 
@@ -98,7 +99,10 @@ class GroupState:
         if self.exists:
             return tuple(self._value)
         else:
-            raise ValueError("State is either not defined or has already been removed")
+            raise PySparkValueError(
+                errorClass="STATE_NOT_EXISTS",
+                messageParameters={},
+            )
 
     @property
     def getOption(self) -> Optional[Tuple]:
@@ -129,7 +133,10 @@ class GroupState:
         Update the value of the state. The value of the state cannot be null.
         """
         if newValue is None:
-            raise ValueError("'None' is not a valid state value")
+            raise PySparkTypeError(
+                errorClass="CANNOT_BE_NONE",
+                messageParameters={"arg_name": "newValue"},
+            )
 
         converted = []
         if has_numpy:
@@ -169,16 +176,31 @@ class GroupState:
         """
         if isinstance(durationMs, str):
             # TODO(SPARK-40437): Support string representation of durationMs.
-            raise ValueError("durationMs should be int but get :%s" % type(durationMs))
+            raise PySparkTypeError(
+                errorClass="NOT_INT",
+                messageParameters={
+                    "arg_name": "durationMs",
+                    "arg_type": type(durationMs).__name__,
+                },
+            )
 
         if self._timeout_conf != GroupStateTimeout.ProcessingTimeTimeout:
-            raise RuntimeError(
-                "Cannot set timeout duration without enabling processing time timeout in "
-                "applyInPandasWithState"
+            raise PySparkRuntimeError(
+                errorClass="CANNOT_WITHOUT",
+                messageParameters={
+                    "condition1": "set timeout duration",
+                    "condition2": "enabling processing time timeout in applyInPandasWithState",
+                },
             )
 
         if durationMs <= 0:
-            raise ValueError("Timeout duration must be positive")
+            raise PySparkValueError(
+                errorClass="VALUE_NOT_POSITIVE",
+                messageParameters={
+                    "arg_name": "durationMs",
+                    "arg_value": type(durationMs).__name__,
+                },
+            )
         self._timeout_timestamp = durationMs + self._batch_processing_time_ms
 
     # TODO(SPARK-40438): Implement additionalDuration parameter.
@@ -189,24 +211,36 @@ class GroupState:
         Event time timeout must be enabled.
         """
         if self._timeout_conf != GroupStateTimeout.EventTimeTimeout:
-            raise RuntimeError(
-                "Cannot set timeout duration without enabling processing time timeout in "
-                "applyInPandasWithState"
+            raise PySparkRuntimeError(
+                errorClass="CANNOT_WITHOUT",
+                messageParameters={
+                    "condition1": "set timeout duration",
+                    "condition2": "enabling processing time timeout in applyInPandasWithState",
+                },
             )
 
         if isinstance(timestampMs, datetime.datetime):
-            timestampMs = DateType().toInternal(timestampMs)
+            timestampMs = TimestampType().toInternal(timestampMs) / 1000
 
         if timestampMs <= 0:
-            raise ValueError("Timeout timestamp must be positive")
+            raise PySparkValueError(
+                errorClass="VALUE_NOT_POSITIVE",
+                messageParameters={
+                    "arg_name": "timestampMs",
+                    "arg_value": type(timestampMs).__name__,
+                },
+            )
 
         if (
             self._event_time_watermark_ms != GroupState.NO_TIMESTAMP
             and timestampMs < self._event_time_watermark_ms
         ):
-            raise ValueError(
-                "Timeout timestamp (%s) cannot be earlier than the "
-                "current watermark (%s)" % (timestampMs, self._event_time_watermark_ms)
+            raise PySparkValueError(
+                errorClass="INVALID_TIMEOUT_TIMESTAMP",
+                messageParameters={
+                    "timestamp": str(timestampMs),
+                    "watermark": str(self._event_time_watermark_ms),
+                },
             )
 
         self._timeout_timestamp = timestampMs
@@ -217,9 +251,12 @@ class GroupState:
         In a streaming query, this can be called only when watermark is set.
         """
         if not self._watermark_present:
-            raise RuntimeError(
-                "Cannot get event time watermark timestamp without setting watermark before "
-                "applyInPandasWithState"
+            raise PySparkRuntimeError(
+                errorClass="CANNOT_WITHOUT",
+                messageParameters={
+                    "condition1": "get event time watermark timestamp",
+                    "condition2": "setting watermark before applyInPandasWithState",
+                },
             )
         return self._event_time_watermark_ms
 

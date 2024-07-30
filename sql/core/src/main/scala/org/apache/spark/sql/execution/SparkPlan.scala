@@ -36,8 +36,9 @@ import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.catalyst.trees.{BinaryLike, LeafLike, TreeNodeTag, UnaryLike}
 import org.apache.spark.sql.connector.write.WriterCommitMessage
 import org.apache.spark.sql.errors.QueryExecutionErrors
+import org.apache.spark.sql.execution.datasources.WriteFilesSpec
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.internal.{SQLConf, WriteSpec}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.NextIterator
 import org.apache.spark.util.io.{ChunkedByteBuffer, ChunkedByteBufferOutputStream}
@@ -178,9 +179,6 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
   def requiredChildDistribution: Seq[Distribution] =
     Seq.fill(children.size)(UnspecifiedDistribution)
 
-  /** Specifies how data is ordered in each partition. */
-  def outputOrdering: Seq[SortOrder] = Nil
-
   /** Specifies sort order for each partition requirements on the input data for this operator. */
   def requiredChildOrdering: Seq[Seq[SortOrder]] = Seq.fill(children.size)(Nil)
 
@@ -230,11 +228,11 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
    *
    * Concrete implementations of SparkPlan should override `doExecuteWrite`.
    */
-  def executeWrite(writeSpec: WriteSpec): RDD[WriterCommitMessage] = executeQuery {
+  def executeWrite(writeFilesSpec: WriteFilesSpec): RDD[WriterCommitMessage] = executeQuery {
     if (isCanonicalizedPlan) {
       throw SparkException.internalError("A canonicalized plan is not supposed to be executed.")
     }
-    doExecuteWrite(writeSpec)
+    doExecuteWrite(writeFilesSpec)
   }
 
   /**
@@ -343,7 +341,7 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
    *
    * Overridden by concrete implementations of SparkPlan.
    */
-  protected def doExecuteWrite(writeSpec: WriteSpec): RDD[WriterCommitMessage] = {
+  protected def doExecuteWrite(writeFilesSpec: WriteFilesSpec): RDD[WriterCommitMessage] = {
     throw SparkException.internalError(s"Internal Error ${this.getClass} has write support" +
       s" mismatch:\n${this}")
   }
@@ -520,7 +518,7 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
         }
       }
 
-      val parts = partsScanned.until(math.min(partsScanned + numPartsToTry, totalParts).toInt)
+      val parts = partsScanned.until(math.min(partsScanned + numPartsToTry, totalParts))
       val partsToScan = if (takeFromEnd) {
         // Reverse partitions to scan. So, if parts was [1, 2, 3] in 200 partitions (0 to 199),
         // it becomes [198, 197, 196].
@@ -538,13 +536,13 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
         while (buf.length < n && i < res.length) {
           val rows = decodeUnsafeRows(res(i)._2)
           if (n - buf.length >= res(i)._1) {
-            buf.prepend(rows.toArray[InternalRow]: _*)
+            buf.prependAll(rows)
           } else {
             val dropUntil = res(i)._1 - (n - buf.length)
             // Same as Iterator.drop but this only takes a long.
             var j: Long = 0L
             while (j < dropUntil) { rows.next(); j += 1L}
-            buf.prepend(rows.toArray[InternalRow]: _*)
+            buf.prependAll(rows)
           }
           i += 1
         }
@@ -552,9 +550,9 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
         while (buf.length < n && i < res.length) {
           val rows = decodeUnsafeRows(res(i)._2)
           if (n - buf.length >= res(i)._1) {
-            buf ++= rows.toArray[InternalRow]
+            buf ++= rows
           } else {
-            buf ++= rows.take(n - buf.length).toArray[InternalRow]
+            buf ++= rows.take(n - buf.length)
           }
           i += 1
         }

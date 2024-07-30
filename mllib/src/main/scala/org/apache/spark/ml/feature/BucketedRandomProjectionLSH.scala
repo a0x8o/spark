@@ -29,6 +29,7 @@ import org.apache.spark.ml.util._
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.ArrayImplicits._
 
 /**
  * Params for [[BucketedRandomProjectionLSH]].
@@ -68,7 +69,7 @@ class BucketedRandomProjectionLSHModel private[ml](
   extends LSHModel[BucketedRandomProjectionLSHModel] with BucketedRandomProjectionLSHParams {
 
   private[ml] def this(uid: String, randUnitVectors: Array[Vector]) = {
-    this(uid, Matrices.fromVectors(randUnitVectors))
+    this(uid, Matrices.fromVectors(randUnitVectors.toImmutableArraySeq))
   }
 
   private[ml] def randUnitVectors: Array[Vector] = randMatrix.rowIter.toArray
@@ -179,7 +180,7 @@ class BucketedRandomProjectionLSH(override val uid: String)
     inputDim: Int): BucketedRandomProjectionLSHModel = {
     val rng = new Random($(seed))
     val localNumHashTables = $(numHashTables)
-    val values = Array.fill(localNumHashTables * inputDim)(rng.nextGaussian)
+    val values = Array.fill(localNumHashTables * inputDim)(rng.nextGaussian())
     var i = 0
     while (i < localNumHashTables) {
       val offset = i * inputDim
@@ -226,10 +227,10 @@ object BucketedRandomProjectionLSHModel extends MLReadable[BucketedRandomProject
     private case class Data(randUnitVectors: Matrix)
 
     override protected def saveImpl(path: String): Unit = {
-      DefaultParamsWriter.saveMetadata(instance, path, sc)
+      DefaultParamsWriter.saveMetadata(instance, path, sparkSession)
       val data = Data(instance.randMatrix)
       val dataPath = new Path(path, "data").toString
-      sparkSession.createDataFrame(Seq(data)).repartition(1).write.parquet(dataPath)
+      sparkSession.createDataFrame(Seq(data)).write.parquet(dataPath)
     }
   }
 
@@ -240,7 +241,7 @@ object BucketedRandomProjectionLSHModel extends MLReadable[BucketedRandomProject
     private val className = classOf[BucketedRandomProjectionLSHModel].getName
 
     override def load(path: String): BucketedRandomProjectionLSHModel = {
-      val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
+      val metadata = DefaultParamsReader.loadMetadata(path, sparkSession, className)
 
       val dataPath = new Path(path, "data").toString
       val data = sparkSession.read.parquet(dataPath)

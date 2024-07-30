@@ -40,8 +40,13 @@ Data Types
     NullType
     ShortType
     StringType
+    CharType
     VarcharType
     StructField
     StructType
+    VariantType
     TimestampType
+    TimestampNTZType
     DayTimeIntervalType
+    YearMonthIntervalType
+    CalendarIntervalType

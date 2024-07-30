@@ -19,8 +19,9 @@ package org.apache.spark.sql.hive.execution
 
 import java.util.Locale
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hive.ql.ErrorMsg
-import org.apache.hadoop.hive.ql.plan.TableDesc
+import org.apache.hadoop.hive.ql.plan.{FileSinkDesc, TableDesc}
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -30,8 +31,10 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.execution.datasources.BucketingUtils
 import org.apache.spark.sql.hive.client.HiveClientImpl
+import org.apache.spark.util.ArrayImplicits._
 
 trait V1WritesHiveUtils {
+
   def getPartitionSpec(partition: Map[String, Option[String]]): Map[String, String] = {
     partition.map {
       case (key, Some(null)) => key -> ExternalCatalogUtils.DEFAULT_PARTITION_NAME
@@ -83,7 +86,9 @@ trait V1WritesHiveUtils {
       // Report error if any static partition appears after a dynamic partition
       val isDynamic = partitionColumnNames.map(partitionSpec(_).isEmpty)
       if (isDynamic.init.zip(isDynamic.tail).contains((true, false))) {
-        throw new AnalysisException(ErrorMsg.PARTITION_DYN_STA_ORDER.getMsg)
+        throw new AnalysisException(
+          errorClass = "_LEGACY_ERROR_TEMP_3079",
+          messageParameters = Map.empty)
       }
     }
 
@@ -97,12 +102,41 @@ trait V1WritesHiveUtils {
       // during `loadDynamicPartitions`. Spark needs to write partition directories with lower-cased
       // column names in order to make `loadDynamicPartitions` work.
       attr.withName(name.toLowerCase(Locale.ROOT))
-    }
+    }.toImmutableArraySeq
   }
 
   def getOptionsWithHiveBucketWrite(bucketSpec: Option[BucketSpec]): Map[String, String] = {
     bucketSpec
       .map(_ => Map(BucketingUtils.optionForHiveCompatibleBucketWrite -> "true"))
       .getOrElse(Map.empty)
+  }
+
+  def setupHadoopConfForCompression(
+      fileSinkConf: FileSinkDesc,
+      hadoopConf: Configuration,
+      sparkSession: SparkSession): Unit = {
+    val isCompressed =
+      fileSinkConf.getTableInfo.getOutputFileFormatClassName.toLowerCase(Locale.ROOT) match {
+        case formatName if formatName.endsWith("orcoutputformat") =>
+          // For ORC,"mapreduce.output.fileoutputformat.compress",
+          // "mapreduce.output.fileoutputformat.compress.codec", and
+          // "mapreduce.output.fileoutputformat.compress.type"
+          // have no impact because it uses table properties to store compression information.
+          false
+        case _ => hadoopConf.get("hive.exec.compress.output", "false").toBoolean
+      }
+
+    if (isCompressed) {
+      hadoopConf.set("mapreduce.output.fileoutputformat.compress", "true")
+      fileSinkConf.setCompressed(true)
+      fileSinkConf.setCompressCodec(hadoopConf
+        .get("mapreduce.output.fileoutputformat.compress.codec"))
+      fileSinkConf.setCompressType(hadoopConf
+        .get("mapreduce.output.fileoutputformat.compress.type"))
+    } else {
+      // Set compression by priority
+      HiveOptions.getHiveWriteCompression(fileSinkConf.getTableInfo, sparkSession.sessionState.conf)
+        .foreach { case (compression, codec) => hadoopConf.set(compression, codec) }
+    }
   }
 }

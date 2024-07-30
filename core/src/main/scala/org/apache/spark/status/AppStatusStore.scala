@@ -18,16 +18,21 @@
 package org.apache.spark.status
 
 import java.io.File
+import java.io.IOException
 import java.util.{List => JList}
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.HashMap
+import scala.jdk.CollectionConverters._
 
 import org.apache.spark.{JobExecutionStatus, SparkConf, SparkContext}
+import org.apache.spark.internal.{Logging, MDC}
+import org.apache.spark.internal.LogKeys.PATH
 import org.apache.spark.internal.config.Status.LIVE_UI_LOCAL_STORE_DIR
+import org.apache.spark.status.AppStatusUtils.getQuantilesValue
 import org.apache.spark.status.api.v1
 import org.apache.spark.storage.FallbackStorage.FALLBACK_BLOCK_MANAGER_ID
 import org.apache.spark.ui.scope._
+import org.apache.spark.util.ArrayImplicits._
 import org.apache.spark.util.Utils
 import org.apache.spark.util.kvstore.KVStore
 
@@ -36,7 +41,8 @@ import org.apache.spark.util.kvstore.KVStore
  */
 private[spark] class AppStatusStore(
     val store: KVStore,
-    val listener: Option[AppStatusListener] = None) {
+    val listener: Option[AppStatusListener] = None,
+    val storePath: Option[File] = None) {
 
   def applicationInfo(): v1.ApplicationInfo = {
     try {
@@ -251,7 +257,7 @@ private[spark] class AppStatusStore(
       stageAttemptId: Int,
       unsortedQuantiles: Array[Double]): Option[v1.TaskMetricDistributions] = {
     val stageKey = Array(stageId, stageAttemptId)
-    val quantiles = unsortedQuantiles.sorted
+    val quantiles = unsortedQuantiles.sorted.toImmutableArraySeq
 
     // We don't know how many tasks remain in the store that actually have metrics. So scan one
     // metric and count how many valid tasks there are. Use skip() instead of next() since it's
@@ -318,7 +324,18 @@ private[spark] class AppStatusStore(
           toValues(_.shuffleFetchWaitTime),
           toValues(_.shuffleRemoteBytesRead),
           toValues(_.shuffleRemoteBytesReadToDisk),
-          toValues(_.shuffleTotalBlocksFetched)),
+          toValues(_.shuffleTotalBlocksFetched),
+          toValues(_.shuffleRemoteReqsDuration),
+          new v1.ShufflePushReadMetricDistributions(
+            toValues(_.shuffleCorruptMergedBlockChunks),
+            toValues(_.shuffleMergedFetchFallbackCount),
+            toValues(_.shuffleMergedRemoteBlocksFetched),
+            toValues(_.shuffleMergedLocalBlocksFetched),
+            toValues(_.shuffleMergedRemoteChunksFetched),
+            toValues(_.shuffleMergedLocalChunksFetched),
+            toValues(_.shuffleMergedRemoteBytesRead),
+            toValues(_.shuffleMergedLocalBytesRead),
+            toValues(_.shuffleMergedRemoteReqsDuration))),
         shuffleWriteMetrics = new v1.ShuffleWriteMetricDistributions(
           toValues(_.shuffleWriteBytes),
           toValues(_.shuffleWriteRecords),
@@ -355,7 +372,7 @@ private[spark] class AppStatusStore(
               Double.NaN
             }
           }
-        }.toIndexedSeq
+        }
       }
     }
 
@@ -404,11 +421,42 @@ private[spark] class AppStatusStore(
         },
         scanTasks(TaskIndexNames.SHUFFLE_TOTAL_BLOCKS) { m =>
           m.shuffleLocalBlocksFetched + m.shuffleRemoteBlocksFetched
-        }),
-      shuffleWriteMetrics = new v1.ShuffleWriteMetricDistributions(
-        scanTasks(TaskIndexNames.SHUFFLE_WRITE_SIZE) { t => t.shuffleBytesWritten },
-        scanTasks(TaskIndexNames.SHUFFLE_WRITE_RECORDS) { t => t.shuffleRecordsWritten },
-        scanTasks(TaskIndexNames.SHUFFLE_WRITE_TIME) { t => t.shuffleWriteTime }))
+        },
+        scanTasks(TaskIndexNames.SHUFFLE_REMOTE_REQS_DURATION) {
+          t => t.shuffleRemoteReqsDuration
+        },
+        new v1.ShufflePushReadMetricDistributions(
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_CORRUPT_MERGED_BLOCK_CHUNKS) { t =>
+            t.shuffleCorruptMergedBlockChunks
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_FETCH_FALLBACK_COUNT) {
+            t => t.shuffleMergedFetchFallbackCount
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_REMOTE_BLOCKS) { t =>
+            t.shuffleMergedRemoteBlocksFetched
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_LOCAL_BLOCKS) { t =>
+            t.shuffleMergedLocalBlocksFetched
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_REMOTE_CHUNKS) { t =>
+            t.shuffleMergedRemoteChunksFetched
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_LOCAL_CHUNKS) { t =>
+            t.shuffleMergedLocalChunksFetched
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_REMOTE_READS) { t =>
+            t.shuffleMergedRemoteBytesRead
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_LOCAL_READS) { t =>
+            t.shuffleMergedLocalBytesRead
+          },
+          scanTasks(TaskIndexNames.SHUFFLE_PUSH_MERGED_REMOTE_REQS_DURATION) { t =>
+            t.shuffleMergedRemoteReqDuration
+          })),
+        shuffleWriteMetrics = new v1.ShuffleWriteMetricDistributions(
+          scanTasks(TaskIndexNames.SHUFFLE_WRITE_SIZE) { t => t.shuffleBytesWritten },
+          scanTasks(TaskIndexNames.SHUFFLE_WRITE_RECORDS) { t => t.shuffleRecordsWritten },
+          scanTasks(TaskIndexNames.SHUFFLE_WRITE_TIME) { t => t.shuffleWriteTime }))
 
     // Go through the computed quantiles and cache the values that match the caching criteria.
     computedQuantiles.quantiles.zipWithIndex
@@ -445,6 +493,35 @@ private[spark] class AppStatusStore(
           shuffleRemoteBytesReadToDisk =
             computedQuantiles.shuffleReadMetrics.remoteBytesReadToDisk(idx),
           shuffleTotalBlocksFetched = computedQuantiles.shuffleReadMetrics.totalBlocksFetched(idx),
+          shuffleCorruptMergedBlockChunks =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .corruptMergedBlockChunks(idx),
+          shuffleMergedFetchFallbackCount =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .mergedFetchFallbackCount(idx),
+          shuffleMergedRemoteBlocksFetched =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .remoteMergedBlocksFetched(idx),
+          shuffleMergedLocalBlocksFetched =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .localMergedBlocksFetched(idx),
+          shuffleMergedRemoteChunksFetched =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .remoteMergedChunksFetched(idx),
+          shuffleMergedLocalChunksFetched =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .localMergedChunksFetched(idx),
+          shuffleMergedRemoteBytesRead =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .remoteMergedBytesRead(idx),
+          shuffleMergedLocalBytesRead =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .localMergedBytesRead(idx),
+          shuffleRemoteReqsDuration =
+            computedQuantiles.shuffleReadMetrics.remoteReqsDuration(idx),
+          shuffleMergedRemoteReqsDuration =
+            computedQuantiles.shuffleReadMetrics.shufflePushReadMetricsDist
+              .remoteMergedReqsDuration(idx),
 
           shuffleWriteBytes = computedQuantiles.shuffleWriteMetrics.writeBytes(idx),
           shuffleWriteRecords = computedQuantiles.shuffleWriteMetrics.writeRecords(idx),
@@ -627,6 +704,16 @@ private[spark] class AppStatusStore(
         shuffleLocalBytesRead = stage.shuffleLocalBytesRead,
         shuffleReadBytes = stage.shuffleReadBytes,
         shuffleReadRecords = stage.shuffleReadRecords,
+        shuffleCorruptMergedBlockChunks = stage.shuffleCorruptMergedBlockChunks,
+        shuffleMergedFetchFallbackCount = stage.shuffleMergedFetchFallbackCount,
+        shuffleMergedRemoteBlocksFetched = stage.shuffleMergedRemoteBlocksFetched,
+        shuffleMergedLocalBlocksFetched = stage.shuffleMergedLocalBlocksFetched,
+        shuffleMergedRemoteChunksFetched = stage.shuffleMergedRemoteChunksFetched,
+        shuffleMergedLocalChunksFetched = stage.shuffleMergedLocalChunksFetched,
+        shuffleMergedRemoteBytesRead = stage.shuffleMergedRemoteBytesRead,
+        shuffleMergedLocalBytesRead = stage.shuffleMergedLocalBytesRead,
+        shuffleRemoteReqsDuration = stage.shuffleRemoteReqsDuration,
+        shuffleMergedRemoteReqsDuration = stage.shuffleMergedRemoteReqsDuration,
         shuffleWriteBytes = stage.shuffleWriteBytes,
         shuffleWriteTime = stage.shuffleWriteTime,
         shuffleWriteRecords = stage.shuffleWriteRecords,
@@ -643,7 +730,9 @@ private[spark] class AppStatusStore(
         resourceProfileId = stage.resourceProfileId,
         peakExecutorMetrics = stage.peakExecutorMetrics,
         taskMetricsDistributions = taskMetricsDistribution,
-        executorMetricsDistributions = executorMetricsDistributions)
+        executorMetricsDistributions = executorMetricsDistributions,
+        isShufflePushEnabled = stage.isShufflePushEnabled,
+        shuffleMergersCount = stage.shuffleMergersCount)
     }
   }
 
@@ -658,7 +747,7 @@ private[spark] class AppStatusStore(
     } else {
       val values = summary.values.toIndexedSeq
       Some(new v1.ExecutorMetricsDistributions(
-        quantiles = quantiles,
+        quantiles = quantiles.toImmutableArraySeq,
         taskTime = getQuantilesValue(values.map(_.taskTime.toDouble).sorted, quantiles),
         failedTasks = getQuantilesValue(values.map(_.failedTasks.toDouble).sorted, quantiles),
         succeededTasks = getQuantilesValue(values.map(_.succeededTasks.toDouble).sorted, quantiles),
@@ -678,18 +767,10 @@ private[spark] class AppStatusStore(
         diskBytesSpilled =
           getQuantilesValue(values.map(_.diskBytesSpilled.toDouble).sorted, quantiles),
         peakMemoryMetrics =
-          new v1.ExecutorPeakMetricsDistributions(quantiles,
+          new v1.ExecutorPeakMetricsDistributions(quantiles.toImmutableArraySeq,
             values.flatMap(_.peakMemoryMetrics))
       ))
     }
-  }
-
-  def getQuantilesValue(
-    values: IndexedSeq[Double],
-    quantiles: Array[Double]): IndexedSeq[Double] = {
-    val count = values.size
-    val indices = quantiles.map { q => math.min((q * count).toLong, count - 1) }
-    indices.map(i => values(i.toInt)).toIndexedSeq
   }
 
   def rdd(rddId: Int): v1.RDDStorageInfo = {
@@ -733,6 +814,11 @@ private[spark] class AppStatusStore(
 
   def close(): Unit = {
     store.close()
+    cleanUpStorePath()
+  }
+
+  private def cleanUpStorePath(): Unit = {
+    storePath.foreach(Utils.deleteRecursively)
   }
 
   def constructTaskDataList(taskDataWrapperIter: Iterable[TaskDataWrapper]): Seq[v1.TaskData] = {
@@ -761,7 +847,7 @@ private[spark] class AppStatusStore(
   }
 }
 
-private[spark] object AppStatusStore {
+private[spark] object AppStatusStore extends Logging {
 
   val CURRENT_VERSION = 2L
 
@@ -771,10 +857,26 @@ private[spark] object AppStatusStore {
   def createLiveStore(
       conf: SparkConf,
       appStatusSource: Option[AppStatusSource] = None): AppStatusStore = {
-    val storePath = conf.get(LIVE_UI_LOCAL_STORE_DIR).map(new File(_))
+
+    def createStorePath(rootDir: String): Option[File] = {
+      try {
+        val localDir = Utils.createDirectory(rootDir, "spark-ui")
+        logInfo(log"Created spark ui store directory at ${MDC(PATH, rootDir)}")
+        Some(localDir)
+      } catch {
+        case e: IOException =>
+          logError(log"Failed to create spark ui store path in ${MDC(PATH, rootDir)}.", e)
+          None
+      }
+    }
+
+    val storePath =
+      conf.get(LIVE_UI_LOCAL_STORE_DIR)
+        .orElse(sys.env.get("LIVE_UI_LOCAL_STORE_DIR")) // the ENV variable is for testing purpose
+        .flatMap(createStorePath)
     val kvStore = KVUtils.createKVStore(storePath, live = true, conf)
     val store = new ElementTrackingStore(kvStore, conf)
     val listener = new AppStatusListener(store, conf, true, appStatusSource)
-    new AppStatusStore(store, listener = Some(listener))
+    new AppStatusStore(store, listener = Some(listener), storePath)
   }
 }

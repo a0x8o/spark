@@ -39,9 +39,30 @@ class ErrorParserSuite extends AnalysisTest {
       context = ExpectedContext(fragment = "order by q\ncluster by q", start = 16, stop = 38))
   }
 
+  test("Illegal characters in unquoted identifier") {
+    // scalastyle:off
+    checkError(
+      exception = parseException("USE \u0196pfel"),
+      errorClass = "INVALID_IDENTIFIER",
+      parameters = Map("ident" -> "\u0196pfel"))
+    checkError(
+      exception = parseException("USE \u88681"),
+      errorClass = "INVALID_IDENTIFIER",
+      parameters = Map("ident" -> "\u88681"))
+    // scalastyle:on
+    checkError(
+      exception = parseException("USE https://www.spa.rk/bucket/pa-th.json?=&#%"),
+      errorClass = "INVALID_IDENTIFIER",
+      parameters = Map("ident" -> "https://www.spa.rk/bucket/pa-th.json?=&#%"))
+  }
+
   test("hyphen in identifier - DDL tests") {
     checkError(
       exception = parseException("USE test-test"),
+      errorClass = "INVALID_IDENTIFIER",
+      parameters = Map("ident" -> "test-test"))
+    checkError(
+      exception = parseException("SET CATALOG test-test"),
       errorClass = "INVALID_IDENTIFIER",
       parameters = Map("ident" -> "test-test"))
     checkError(
@@ -65,24 +86,6 @@ class ErrorParserSuite extends AnalysisTest {
           |ALTER TABLE t
           |CHANGE COLUMN
           |test-col TYPE BIGINT
-        """.stripMargin),
-      errorClass = "INVALID_IDENTIFIER",
-      parameters = Map("ident" -> "test-col"))
-    checkError(
-      exception = parseException(
-        """
-          |ALTER TABLE t
-          |RENAME COLUMN
-          |test-col TO test
-        """.stripMargin),
-      errorClass = "INVALID_IDENTIFIER",
-      parameters = Map("ident" -> "test-col"))
-    checkError(
-      exception = parseException(
-        """
-          |ALTER TABLE t
-          |RENAME COLUMN
-          |test TO test-col
         """.stripMargin),
       errorClass = "INVALID_IDENTIFIER",
       parameters = Map("ident" -> "test-col"))
@@ -150,6 +153,10 @@ class ErrorParserSuite extends AnalysisTest {
       exception = parseException("ANALYZE TABLE test-table PARTITION (part1)"),
       errorClass = "INVALID_IDENTIFIER",
       parameters = Map("ident" -> "test-table"))
+    checkError(
+      exception = parseException("CREATE TABLE t(c1 struct<test-test INT, c2 INT>)"),
+      errorClass = "INVALID_IDENTIFIER",
+      parameters = Map("ident" -> "test-test"))
     checkError(
       exception = parseException("LOAD DATA INPATH \"path\" INTO TABLE my-tab"),
       errorClass = "INVALID_IDENTIFIER",
@@ -259,6 +266,19 @@ class ErrorParserSuite extends AnalysisTest {
         """.stripMargin),
       errorClass = "INVALID_IDENTIFIER",
       parameters = Map("ident" -> "test-table"))
+    checkError(
+      exception = parseException(
+        """
+          |SELECT * FROM (
+          |  SELECT year, course, earnings FROM courseSales
+          |)
+          |PIVOT (
+          |  sum(earnings)
+          |  FOR test-test IN ('dotNET', 'Java')
+          |);
+        """.stripMargin),
+      errorClass = "INVALID_IDENTIFIER",
+      parameters = Map("ident" -> "test-test"))
   }
 
   test("datatype not supported") {
@@ -284,5 +304,38 @@ class ErrorParserSuite extends AnalysisTest {
       errorClass = "DATATYPE_MISSING_SIZE",
       parameters = Map("type" -> "\"CHARACTER\""),
       context = ExpectedContext(fragment = "Character", start = 19, stop = 27))
+  }
+
+  test("'!' where only NOT should be allowed") {
+    checkError(
+      exception = parseException("SELECT 1 ! IN (2)"),
+      errorClass = "SYNTAX_DISCONTINUED.BANG_EQUALS_NOT",
+      parameters = Map("clause" -> "!"),
+      context = ExpectedContext(fragment = "!", start = 9, stop = 9))
+    checkError(
+      exception = parseException("SELECT 'a' ! LIKE 'b'"),
+      errorClass = "SYNTAX_DISCONTINUED.BANG_EQUALS_NOT",
+      parameters = Map("clause" -> "!"),
+      context = ExpectedContext(fragment = "!", start = 11, stop = 11))
+    checkError(
+      exception = parseException("SELECT 1 ! BETWEEN 1 AND 2"),
+      errorClass = "SYNTAX_DISCONTINUED.BANG_EQUALS_NOT",
+      parameters = Map("clause" -> "!"),
+      context = ExpectedContext(fragment = "!", start = 9, stop = 9))
+    checkError(
+      exception = parseException("SELECT 1 IS ! NULL"),
+      errorClass = "SYNTAX_DISCONTINUED.BANG_EQUALS_NOT",
+      parameters = Map("clause" -> "!"),
+      context = ExpectedContext(fragment = "!", start = 12, stop = 12))
+    checkError(
+      exception = parseException("CREATE TABLE IF ! EXISTS t(c1 INT)"),
+      errorClass = "SYNTAX_DISCONTINUED.BANG_EQUALS_NOT",
+      parameters = Map("clause" -> "!"),
+      context = ExpectedContext(fragment = "!", start = 16, stop = 16))
+    checkError(
+      exception = parseException("CREATE TABLE t(c1 INT ! NULL)"),
+      errorClass = "SYNTAX_DISCONTINUED.BANG_EQUALS_NOT",
+      parameters = Map("clause" -> "!"),
+      context = ExpectedContext(fragment = "!", start = 22, stop = 22))
   }
 }

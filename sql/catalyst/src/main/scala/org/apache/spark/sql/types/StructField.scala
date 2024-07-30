@@ -23,8 +23,8 @@ import org.json4s.JsonDSL._
 import org.apache.spark.annotation.Stable
 import org.apache.spark.sql.catalyst.util.{escapeSingleQuotedString, quoteIfNeeded}
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
-import org.apache.spark.sql.catalyst.util.StringUtils.StringConcat
-import org.apache.spark.sql.util.SchemaUtils
+import org.apache.spark.sql.catalyst.util.StringConcat
+import org.apache.spark.util.SparkSchemaUtils
 
 /**
  * A field inside a StructType.
@@ -51,7 +51,7 @@ case class StructField(
       stringConcat: StringConcat,
       maxDepth: Int): Unit = {
     if (maxDepth > 0) {
-      stringConcat.append(s"$prefix-- ${SchemaUtils.escapeMetaCharacters(name)}: " +
+      stringConcat.append(s"$prefix-- ${SparkSchemaUtils.escapeMetaCharacters(name)}: " +
         s"${dataType.typeName} (nullable = $nullable)\n")
       DataType.buildFormattedString(dataType, s"$prefix    |", stringConcat, maxDepth)
     }
@@ -140,6 +140,10 @@ case class StructField(
     }
   }
 
+  private def getDDLDefault = getCurrentDefaultValue()
+    .map(" DEFAULT " + _)
+    .getOrElse("")
+
   private def getDDLComment = getComment()
     .map(escapeSingleQuotedString)
     .map(" COMMENT '" + _ + "'")
@@ -159,6 +163,6 @@ case class StructField(
    */
   def toDDL: String = {
     val nullString = if (nullable) "" else " NOT NULL"
-    s"${quoteIfNeeded(name)} ${dataType.sql}${nullString}$getDDLComment"
+    s"${quoteIfNeeded(name)} ${dataType.sql}${nullString}$getDDLDefault$getDDLComment"
   }
 }

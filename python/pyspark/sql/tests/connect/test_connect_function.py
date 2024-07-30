@@ -14,46 +14,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import os
 import unittest
-import tempfile
+from inspect import getmembers, isfunction
 
-from pyspark.sql import SparkSession
-from pyspark.testing.pandasutils import PandasOnSparkTestCase
-from pyspark.testing.connectutils import should_test_connect, connect_requirement_message
-from pyspark.testing.utils import ReusedPySparkTestCase
+from pyspark.util import is_remote_only
+from pyspark.errors import PySparkTypeError, PySparkValueError
+from pyspark.sql import SparkSession as PySparkSession
+from pyspark.sql.types import (
+    _drop_metadata,
+    StringType,
+    StructType,
+    StructField,
+    ArrayType,
+    IntegerType,
+)
+from pyspark.testing import assertDataFrameEqual
+from pyspark.testing.pandasutils import PandasOnSparkTestUtils
+from pyspark.testing.connectutils import ReusedConnectTestCase, should_test_connect
 from pyspark.testing.sqlutils import SQLTestUtils
-from pyspark.sql.connect.client import SparkConnectException
+from pyspark.errors.exceptions.connect import AnalysisException, SparkConnectException
 
 if should_test_connect:
-    from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+    from pyspark.sql.connect.column import Column
+    from pyspark.sql import functions as SF
+    from pyspark.sql.window import Window as SW
+    from pyspark.sql.connect import functions as CF
+    from pyspark.sql.connect.window import Window as CW
 
 
-@unittest.skipIf(not should_test_connect, connect_requirement_message)
-class SparkConnectFuncTestCase(PandasOnSparkTestCase, ReusedPySparkTestCase, SQLTestUtils):
-    """Parent test fixture class for all Spark Connect related
-    test cases."""
-
-    @classmethod
-    def setUpClass(cls):
-        ReusedPySparkTestCase.setUpClass()
-        cls.tempdir = tempfile.NamedTemporaryFile(delete=False)
-        cls.hive_available = True
-        # Create the new Spark Session
-        cls.spark = SparkSession(cls.sc)
-        # Setup Remote Spark Session
-        cls.connect = RemoteSparkSession.builder.remote().getOrCreate()
-
-    @classmethod
-    def tearDownClass(cls):
-        ReusedPySparkTestCase.tearDownClass()
-
-
-class SparkConnectFunctionTests(SparkConnectFuncTestCase):
+@unittest.skipIf(is_remote_only(), "Requires JVM access")
+class SparkConnectFunctionTests(ReusedConnectTestCase, PandasOnSparkTestUtils, SQLTestUtils):
     """These test cases exercise the interface to the proto plan
     generation but do not call Spark."""
 
+    @classmethod
+    def setUpClass(cls):
+        super(SparkConnectFunctionTests, cls).setUpClass()
+        # Disable the shared namespace so pyspark.sql.functions, etc point the regular
+        # PySpark libraries.
+        os.environ["PYSPARK_NO_NAMESPACE_SHARE"] = "1"
+        cls.connect = cls.spark  # Switch Spark Connect session and regular PySpark sesion.
+        cls.spark = PySparkSession._instantiatedSession
+        assert cls.spark is not None
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.spark = cls.connect  # Stopping Spark Connect closes the session in JVM at the server.
+        super(SparkConnectFunctionTests, cls).setUpClass()
+        del os.environ["PYSPARK_NO_NAMESPACE_SHARE"]
+
     def compare_by_show(self, df1, df2, n: int = 20, truncate: int = 20):
-        from pyspark.sql.dataframe import DataFrame as SDF
+        from pyspark.sql.classic.dataframe import DataFrame as SDF
         from pyspark.sql.connect.dataframe import DataFrame as CDF
 
         assert isinstance(df1, (SDF, CDF))
@@ -70,10 +82,61 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
 
         self.assertEqual(str1, str2)
 
-    def test_broadcast(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
+    def test_count_star(self):
+        # SPARK-42099: test count(*), count(col(*)) and count(expr(*))
+        data = [(2, "Alice"), (3, "Alice"), (5, "Bob"), (10, "Bob")]
 
+        cdf = self.connect.createDataFrame(data, schema=["age", "name"])
+        sdf = self.spark.createDataFrame(data, schema=["age", "name"])
+
+        self.assertEqual(
+            cdf.select(CF.count(CF.expr("*")), CF.count(cdf.age)).collect(),
+            sdf.select(SF.count(SF.expr("*")), SF.count(sdf.age)).collect(),
+        )
+
+        self.assertEqual(
+            cdf.select(CF.count(CF.col("*")), CF.count(cdf.age)).collect(),
+            sdf.select(SF.count(SF.col("*")), SF.count(sdf.age)).collect(),
+        )
+
+        self.assertEqual(
+            cdf.select(CF.count("*"), CF.count(cdf.age)).collect(),
+            sdf.select(SF.count("*"), SF.count(sdf.age)).collect(),
+        )
+
+        self.assertEqual(
+            cdf.groupby("name").agg({"*": "count"}).sort("name").collect(),
+            sdf.groupby("name").agg({"*": "count"}).sort("name").collect(),
+        )
+
+        self.assertEqual(
+            cdf.groupby("name")
+            .agg(CF.count(CF.expr("*")), CF.count(cdf.age))
+            .sort("name")
+            .collect(),
+            sdf.groupby("name")
+            .agg(SF.count(SF.expr("*")), SF.count(sdf.age))
+            .sort("name")
+            .collect(),
+        )
+
+        self.assertEqual(
+            cdf.groupby("name")
+            .agg(CF.count(CF.col("*")), CF.count(cdf.age))
+            .sort("name")
+            .collect(),
+            sdf.groupby("name")
+            .agg(SF.count(SF.col("*")), SF.count(sdf.age))
+            .sort("name")
+            .collect(),
+        )
+
+        self.assertEqual(
+            cdf.groupby("name").agg(CF.count("*"), CF.count(cdf.age)).sort("name").collect(),
+            sdf.groupby("name").agg(SF.count("*"), SF.count(sdf.age)).sort("name").collect(),
+        )
+
+    def test_broadcast(self):
         query = """
             SELECT * FROM VALUES
             (0, float("NAN"), NULL), (1, NULL, 2.0), (2, 2.1, 3.5)
@@ -82,8 +145,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +---+----+----+
         # |  a|   b|   c|
         # +---+----+----+
-        # |  0| NaN|null|
-        # |  1|null| 2.0|
+        # |  0| NaN|NULL|
+        # |  1|NULL| 2.0|
         # |  2| 2.1| 3.5|
         # +---+----+----+
 
@@ -112,10 +175,16 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             SF.broadcast(sdf1).join(SF.broadcast(sdf2), on="a").toPandas(),
         )
 
-    def test_normal_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
+        with self.assertRaises(PySparkTypeError) as pe:
+            CF.broadcast(cdf.a)
 
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_DATAFRAME",
+            messageParameters={"arg_name": "df", "arg_type": "Column"},
+        )
+
+    def test_normal_functions(self):
         query = """
             SELECT * FROM VALUES
             (0, float("NAN"), NULL), (1, NULL, 2.0), (2, 2.1, 3.5)
@@ -124,8 +193,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +---+----+----+
         # |  a|   b|   c|
         # +---+----+----+
-        # |  0| NaN|null|
-        # |  1|null| 2.0|
+        # |  0| NaN|NULL|
+        # |  1|NULL| 2.0|
         # |  2| 2.1| 3.5|
         # +---+----+----+
 
@@ -200,9 +269,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         )
 
     def test_when_otherwise(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (0, float("NAN"), NULL), (1, NULL, 2.0), (2, 2.1, 3.5), (3, 3.1, float("NAN"))
@@ -211,8 +277,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +---+----+----+
         # |  a|   b|   c|
         # +---+----+----+
-        # |  0| NaN|null|
-        # |  1|null| 2.0|
+        # |  0| NaN|NULL|
+        # |  1|NULL| 2.0|
         # |  2| 2.1| 3.5|
         # |  3| 3.1| NaN|
         # +---+----+----+
@@ -304,16 +370,16 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         ):
             CF.when(cdf.a == 0, 1.0).otherwise(1.0).otherwise(1.0)
 
-        with self.assertRaisesRegex(
-            TypeError,
-            """condition should be a Column""",
-        ):
+        with self.assertRaises(PySparkTypeError) as pe:
             CF.when(True, 1.0).otherwise(1.0)
 
-    def test_sorting_functions_with_column(self):
-        from pyspark.sql.connect import functions as CF
-        from pyspark.sql.connect.column import Column
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN",
+            messageParameters={"arg_name": "condition", "arg_type": "bool"},
+        )
 
+    def test_sorting_functions_with_column(self):
         funs = [
             CF.asc_nulls_first,
             CF.asc_nulls_last,
@@ -339,9 +405,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             self.assertIn("""DESC NULLS LAST'""", str(res))
 
     def test_sort_with_nulls_order(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (false, 1, NULL), (true, NULL, 2.0), (NULL, 3, 3.0)
@@ -350,9 +413,9 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +-----+----+----+
         # |    a|   b|   c|
         # +-----+----+----+
-        # |false|   1|null|
-        # | true|null| 2.0|
-        # | null|   3| 3.0|
+        # |false|   1|NULL|
+        # | true|NULL| 2.0|
+        # | NULL|   3| 3.0|
         # +-----+----+----+
 
         cdf = self.connect.sql(query)
@@ -385,9 +448,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             )
 
     def test_math_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (false, 1, NULL), (true, NULL, 2.0), (NULL, 3, 3.5)
@@ -396,9 +456,9 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +-----+----+----+
         # |    a|   b|   c|
         # +-----+----+----+
-        # |false|   1|null|
-        # | true|null| 2.0|
-        # | null|   3| 3.5|
+        # |false|   1|NULL|
+        # | true|NULL| 2.0|
+        # | NULL|   3| 3.5|
         # +-----+----+----+
 
         cdf = self.connect.sql(query)
@@ -446,6 +506,12 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                 cdf.select(cfunc("b"), cfunc(cdf.c)).toPandas(),
                 sdf.select(sfunc("b"), sfunc(sdf.c)).toPandas(),
             )
+
+        # test log(arg1, arg2)
+        self.assert_eq(
+            cdf.select(CF.log(1.1, "b"), CF.log(1.2, cdf.c)).toPandas(),
+            sdf.select(SF.log(1.1, "b"), SF.log(1.2, sdf.c)).toPandas(),
+        )
 
         self.assert_eq(
             cdf.select(CF.atan2("b", cdf.c)).toPandas(),
@@ -501,9 +567,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         )
 
     def test_aggregation_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (0, float("NAN"), NULL), (1, NULL, 2.0), (1, 2.1, 3.5), (0, 0.5, 1.0)
@@ -512,8 +575,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +---+----+----+
         # |  a|   b|   c|
         # +---+----+----+
-        # |  0| NaN|null|
-        # |  1|null| 2.0|
+        # |  0| NaN|NULL|
+        # |  1|NULL| 2.0|
         # |  1| 2.1| 3.5|
         # |  0| 0.5| 1.0|
         # +---+----+----+
@@ -521,7 +584,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         cdf = self.connect.sql(query)
         sdf = self.spark.sql(query)
 
-        # TODO(SPARK-41383): add tests for grouping, grouping_id after DataFrame.cube is supported.
         for cfunc, sfunc in [
             (CF.approx_count_distinct, SF.approx_count_distinct),
             (CF.approxCountDistinct, SF.approxCountDistinct),
@@ -552,10 +614,12 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             self.assert_eq(
                 cdf.select(cfunc("b"), cfunc(cdf.c)).toPandas(),
                 sdf.select(sfunc("b"), sfunc(sdf.c)).toPandas(),
+                check_exact=False,
             )
             self.assert_eq(
                 cdf.groupBy("a").agg(cfunc("b"), cfunc(cdf.c)).toPandas(),
                 sdf.groupBy("a").agg(sfunc("b"), sfunc(sdf.c)).toPandas(),
+                check_exact=False,
             )
 
         for cfunc, sfunc in [
@@ -574,6 +638,18 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                 sdf.groupBy("a").agg(sfunc(sdf.b, "c")).toPandas(),
             )
 
+        # test grouping
+        self.assert_eq(
+            cdf.cube("a").agg(CF.grouping("a"), CF.sum("c")).orderBy("a").toPandas(),
+            sdf.cube("a").agg(SF.grouping("a"), SF.sum("c")).orderBy("a").toPandas(),
+        )
+
+        # test grouping_id
+        self.assert_eq(
+            cdf.cube("a").agg(CF.grouping_id(), CF.sum("c")).orderBy("a").toPandas(),
+            sdf.cube("a").agg(SF.grouping_id(), SF.sum("c")).orderBy("a").toPandas(),
+        )
+
         # test percentile_approx
         self.assert_eq(
             cdf.select(CF.percentile_approx(cdf.b, 0.5, 1000)).toPandas(),
@@ -582,14 +658,17 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         self.assert_eq(
             cdf.select(CF.percentile_approx(cdf.b, [0.1, 0.9])).toPandas(),
             sdf.select(SF.percentile_approx(sdf.b, [0.1, 0.9])).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.groupBy("a").agg(CF.percentile_approx("b", 0.5)).toPandas(),
             sdf.groupBy("a").agg(SF.percentile_approx("b", 0.5)).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.groupBy("a").agg(CF.percentile_approx(cdf.b, [0.1, 0.9])).toPandas(),
             sdf.groupBy("a").agg(SF.percentile_approx(sdf.b, [0.1, 0.9])).toPandas(),
+            check_exact=False,
         )
 
         # test count_distinct
@@ -613,11 +692,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         )
 
     def test_window_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.window import Window as SW
-        from pyspark.sql.connect import functions as CF
-        from pyspark.sql.connect.window import Window as CW
-
         self.assertEqual(CW.unboundedPreceding, SW.unboundedPreceding)
 
         self.assertEqual(CW.unboundedFollowing, SW.unboundedFollowing)
@@ -633,8 +707,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +---+----+----+
         # |  a|   b|   c|
         # +---+----+----+
-        # |  0| NaN|null|
-        # |  1|null| 2.0|
+        # |  0| NaN|NULL|
+        # |  1|NULL| 2.0|
         # |  1| 2.1| 3.5|
         # |  0| 0.5| 1.0|
         # |  0| 1.5| 1.1|
@@ -669,7 +743,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             (CF.ntile(2), SF.ntile(2)),
             (CF.ntile(4), SF.ntile(4)),
         ]:
-
             for cwin, swin in [
                 (CW.orderBy("b"), SW.orderBy("b")),
                 (CW.partitionBy("a").orderBy("b"), SW.partitionBy("a").orderBy("b")),
@@ -684,7 +757,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                     SW.partitionBy("a").orderBy("b", sdf.c.desc()),
                 ),
             ]:
-
                 self.assert_eq(
                     cdf.select(ccol.over(cwin)).toPandas(),
                     sdf.select(scol.over(swin)).toPandas(),
@@ -697,7 +769,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             (CF.max(cdf.c), SF.max(sdf.c)),
             (CF.min(cdf.c), SF.min(sdf.c)),
         ]:
-
             for cwin, swin in [
                 (CW.orderBy("b"), SW.orderBy("b")),
                 (
@@ -798,27 +869,32 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                     .rangeBetween(SW.currentRow, SW.unboundedFollowing),
                 ),
             ]:
-
                 self.assert_eq(
                     cdf.select(ccol.over(cwin)).toPandas(),
                     sdf.select(scol.over(swin)).toPandas(),
                 )
 
         # check error
-        with self.assertRaisesRegex(
-            ValueError,
-            "end is out of bound",
-        ):
+        with self.assertRaises(PySparkValueError) as pe:
             cdf.select(CF.sum("a").over(CW.orderBy("b").rowsBetween(0, (1 << 33)))).show()
 
-        with self.assertRaisesRegex(
-            TypeError,
-            "window should be WindowSpec",
-        ):
+        self.check_error(
+            exception=pe.exception,
+            errorClass="VALUE_NOT_BETWEEN",
+            messageParameters={"arg_name": "end", "min": "-2147483648", "max": "2147483647"},
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
             cdf.select(CF.rank().over(cdf.a))
 
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_WINDOWSPEC",
+            messageParameters={"arg_name": "window", "arg_type": "Column"},
+        )
+
         # invalid window function
-        with self.assertRaises(SparkConnectException):
+        with self.assertRaises(AnalysisException):
             cdf.select(cdf.b.over(CW.orderBy("b"))).show()
 
         # invalid window frame
@@ -832,42 +908,84 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             CF.lead("c", 1),
             CF.ntile(1),
         ]:
-            with self.assertRaises(SparkConnectException):
+            with self.assertRaises(AnalysisException):
                 cdf.select(
                     ccol.over(CW.orderBy("b").rowsBetween(CW.currentRow, CW.currentRow + 123))
                 ).show()
 
-            with self.assertRaises(SparkConnectException):
+            with self.assertRaises(AnalysisException):
                 cdf.select(
                     ccol.over(CW.orderBy("b").rangeBetween(CW.currentRow, CW.currentRow + 123))
                 ).show()
 
-            with self.assertRaises(SparkConnectException):
+            with self.assertRaises(AnalysisException):
                 cdf.select(
                     ccol.over(CW.orderBy("b").rangeBetween(CW.unboundedPreceding, CW.currentRow))
                 ).show()
 
         # Function 'cume_dist' requires Windowframe(RangeFrame, UnboundedPreceding, CurrentRow)
         ccol = CF.cume_dist()
-        with self.assertRaises(SparkConnectException):
+        with self.assertRaises(AnalysisException):
             cdf.select(
                 ccol.over(CW.orderBy("b").rangeBetween(CW.currentRow, CW.currentRow + 123))
             ).show()
 
-        with self.assertRaises(SparkConnectException):
+        with self.assertRaises(AnalysisException):
             cdf.select(
                 ccol.over(CW.orderBy("b").rowsBetween(CW.currentRow, CW.currentRow + 123))
             ).show()
 
-        with self.assertRaises(SparkConnectException):
+        with self.assertRaises(AnalysisException):
             cdf.select(
                 ccol.over(CW.orderBy("b").rowsBetween(CW.unboundedPreceding, CW.currentRow))
             ).show()
 
-    def test_collection_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
+    def test_window_order(self):
+        # SPARK-41773: test window function with order
+        data = [(1, "a"), (1, "a"), (2, "a"), (1, "b"), (2, "b"), (3, "b")]
+        # +---+--------+
+        # | id|category|
+        # +---+--------+
+        # |  1|       a|
+        # |  1|       a|
+        # |  2|       a|
+        # |  1|       b|
+        # |  2|       b|
+        # |  3|       b|
+        # +---+--------+
 
+        cdf = self.connect.createDataFrame(data, ["id", "category"])
+        sdf = self.spark.createDataFrame(data, ["id", "category"])
+
+        cw = CW.partitionBy("id").orderBy("category")
+        sw = SW.partitionBy("id").orderBy("category")
+        self.assert_eq(
+            cdf.withColumn("row_number", CF.row_number().over(cw)).toPandas(),
+            sdf.withColumn("row_number", SF.row_number().over(sw)).toPandas(),
+        )
+
+        cw = CW.partitionBy("category").orderBy("id")
+        sw = SW.partitionBy("category").orderBy("id")
+        self.assert_eq(
+            cdf.withColumn("row_number", CF.row_number().over(cw)).toPandas(),
+            sdf.withColumn("row_number", SF.row_number().over(sw)).toPandas(),
+        )
+
+        cw = CW.partitionBy("category").orderBy("id").rowsBetween(CW.currentRow, 1)
+        sw = SW.partitionBy("category").orderBy("id").rowsBetween(SW.currentRow, 1)
+        self.assert_eq(
+            cdf.withColumn("sum", CF.sum("id").over(cw)).sort("id", "category", "sum").toPandas(),
+            sdf.withColumn("sum", SF.sum("id").over(sw)).sort("id", "category", "sum").toPandas(),
+        )
+
+        cw = CW.partitionBy("category").orderBy("id").rangeBetween(CW.currentRow, 1)
+        sw = SW.partitionBy("category").orderBy("id").rangeBetween(SW.currentRow, 1)
+        self.assert_eq(
+            cdf.withColumn("sum", CF.sum("id").over(cw)).sort("id", "category").toPandas(),
+            sdf.withColumn("sum", SF.sum("id").over(sw)).sort("id", "category").toPandas(),
+        )
+
+    def test_collection_functions(self):
         query = """
             SELECT * FROM VALUES
             (ARRAY('a', 'ab'), ARRAY(1, 2, 3), ARRAY(1, NULL, 3), 1, 2, 'a'),
@@ -879,8 +997,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # |        a|           b|           c|  d|  e|   f|
         # +---------+------------+------------+---+---+----+
         # |  [a, ab]|   [1, 2, 3]|[1, null, 3]|  1|  2|   a|
-        # |[x, null]|        null|      [1, 3]|  3|  4|   x|
-        # |     null|[-1, -2, -3]|          []|  5|  6|null|
+        # |[x, null]|        NULL|      [1, 3]|  3|  4|   x|
+        # |     NULL|[-1, -2, -3]|          []|  5|  6|NULL|
         # +---------+------------+------------+---+---+----+
 
         cdf = self.connect.sql(query)
@@ -888,6 +1006,7 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
 
         for cfunc, sfunc in [
             (CF.array_distinct, SF.array_distinct),
+            (CF.array_compact, SF.array_compact),
             (CF.array_max, SF.array_max),
             (CF.array_min, SF.array_min),
             (CF.reverse, SF.reverse),
@@ -896,6 +1015,7 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             self.assert_eq(
                 cdf.select(cfunc("a"), cfunc(cdf.b)).toPandas(),
                 sdf.select(sfunc("a"), sfunc(sdf.b)).toPandas(),
+                check_exact=False,
             )
 
         for cfunc, sfunc in [
@@ -907,6 +1027,7 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             self.assert_eq(
                 cdf.select(cfunc("b", cdf.c)).toPandas(),
                 sdf.select(sfunc("b", sdf.c)).toPandas(),
+                check_exact=False,
             )
 
         for cfunc, sfunc in [
@@ -916,26 +1037,77 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             self.assert_eq(
                 cdf.select(cfunc(cdf.a, "ab")).toPandas(),
                 sdf.select(sfunc(sdf.a, "ab")).toPandas(),
+                check_exact=False,
             )
 
         # test array
         self.assert_eq(
             cdf.select(CF.array(cdf.d, "e")).toPandas(),
             sdf.select(SF.array(sdf.d, "e")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.array(cdf.d, "e", CF.lit(99))).toPandas(),
             sdf.select(SF.array(sdf.d, "e", SF.lit(99))).toPandas(),
+            check_exact=False,
         )
 
         # test array_contains
         self.assert_eq(
             cdf.select(CF.array_contains(cdf.a, "ab")).toPandas(),
             sdf.select(SF.array_contains(sdf.a, "ab")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.array_contains(cdf.a, cdf.f)).toPandas(),
             sdf.select(SF.array_contains(sdf.a, sdf.f)).toPandas(),
+            check_exact=False,
+        )
+
+        # test array_append
+        self.assert_eq(
+            cdf.select(CF.array_append(cdf.a, "xyz")).toPandas(),
+            sdf.select(SF.array_append(sdf.a, "xyz")).toPandas(),
+            check_exact=False,
+        )
+        self.assert_eq(
+            cdf.select(CF.array_append(cdf.a, CF.lit("ab"))).toPandas(),
+            sdf.select(SF.array_append(sdf.a, SF.lit("ab"))).toPandas(),
+            check_exact=False,
+        )
+        self.assert_eq(
+            cdf.select(CF.array_append(cdf.a, cdf.f)).toPandas(),
+            sdf.select(SF.array_append(sdf.a, sdf.f)).toPandas(),
+            check_exact=False,
+        )
+
+        # test array_prepend
+        self.assert_eq(
+            cdf.select(CF.array_prepend(cdf.a, "xyz")).toPandas(),
+            sdf.select(SF.array_prepend(sdf.a, "xyz")).toPandas(),
+            check_exact=False,
+        )
+        self.assert_eq(
+            cdf.select(CF.array_prepend(cdf.a, CF.lit("ab"))).toPandas(),
+            sdf.select(SF.array_prepend(sdf.a, SF.lit("ab"))).toPandas(),
+            check_exact=False,
+        )
+        self.assert_eq(
+            cdf.select(CF.array_prepend(cdf.a, cdf.f)).toPandas(),
+            sdf.select(SF.array_prepend(sdf.a, sdf.f)).toPandas(),
+            check_exact=False,
+        )
+
+        # test array_insert
+        self.assert_eq(
+            cdf.select(CF.array_insert(cdf.a, -5, "ab")).toPandas(),
+            sdf.select(SF.array_insert(sdf.a, -5, "ab")).toPandas(),
+            check_exact=False,
+        )
+        self.assert_eq(
+            cdf.select(CF.array_insert(cdf.a, 3, cdf.f)).toPandas(),
+            sdf.select(SF.array_insert(sdf.a, 3, sdf.f)).toPandas(),
+            check_exact=False,
         )
 
         # test array_join
@@ -946,6 +1118,7 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             sdf.select(
                 SF.array_join(sdf.a, ","), SF.array_join("b", ":"), SF.array_join("c", "~")
             ).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(
@@ -958,24 +1131,25 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                 SF.array_join("b", ":", ".null."),
                 SF.array_join("c", "~", "NULL"),
             ).toPandas(),
+            check_exact=False,
         )
 
         # test array_repeat
         self.assert_eq(
             cdf.select(CF.array_repeat(cdf.f, "d")).toPandas(),
             sdf.select(SF.array_repeat(sdf.f, "d")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.array_repeat("f", cdf.d)).toPandas(),
             sdf.select(SF.array_repeat("f", sdf.d)).toPandas(),
+            check_exact=False,
         )
-        # TODO: Make Literal contains DataType
-        #   Cannot resolve "array_repeat(f, 3)" due to data type mismatch:
-        #   Parameter 2 requires the "INT" type, however "3" has the type "BIGINT".
-        # self.assert_eq(
-        #     cdf.select(CF.array_repeat("f", 3)).toPandas(),
-        #     sdf.select(SF.array_repeat("f", 3)).toPandas(),
-        # )
+        self.assert_eq(
+            cdf.select(CF.array_repeat("f", 3)).toPandas(),
+            sdf.select(SF.array_repeat("f", 3)).toPandas(),
+            check_exact=False,
+        )
 
         # test arrays_zip
         # TODO: Make toPandas support complex nested types like Array<Struct>
@@ -1035,12 +1209,32 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         self.assert_eq(
             cdf.select(CF.slice(cdf.a, 1, 2), CF.slice("c", 2, 3)).toPandas(),
             sdf.select(SF.slice(sdf.a, 1, 2), SF.slice("c", 2, 3)).toPandas(),
+            check_exact=False,
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            CF.slice(cdf.a, 1.0, 2)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN_OR_INT_OR_STR",
+            messageParameters={"arg_name": "start", "arg_type": "float"},
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            CF.slice(cdf.a, 1, 2.0)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN_OR_INT_OR_STR",
+            messageParameters={"arg_name": "length", "arg_type": "float"},
         )
 
         # test sort_array
         self.assert_eq(
             cdf.select(CF.sort_array(cdf.a, True), CF.sort_array("c", False)).toPandas(),
             sdf.select(SF.sort_array(sdf.a, True), SF.sort_array("c", False)).toPandas(),
+            check_exact=False,
         )
 
         # test struct
@@ -1053,24 +1247,25 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         self.assert_eq(
             cdf.select(CF.sequence(CF.lit(1), CF.lit(5))).toPandas(),
             sdf.select(SF.sequence(SF.lit(1), SF.lit(5))).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.sequence(CF.lit(1), CF.lit(5), CF.lit(1))).toPandas(),
             sdf.select(SF.sequence(SF.lit(1), SF.lit(5), SF.lit(1))).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.sequence(cdf.d, "e")).toPandas(),
             sdf.select(SF.sequence(sdf.d, "e")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.sequence(cdf.d, "e", CF.lit(1))).toPandas(),
             sdf.select(SF.sequence(sdf.d, "e", SF.lit(1))).toPandas(),
+            check_exact=False,
         )
 
     def test_map_collection_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (MAP('a', 'ab'), MAP('x', 'ab'), MAP(1, 2, 3, 4), 1, 'a', ARRAY(1, 2), ARRAY('X', 'Y')),
@@ -1082,8 +1277,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # |        a|          b|                     c|  e|  f|     g|     h|
         # +---------+-----------+----------------------+---+---+------+------+
         # |{a -> ab}|  {x -> ab}|      {1 -> 2, 3 -> 4}|  1|  a|[1, 2]|[X, Y]|
-        # |{x -> yz}|{c -> null}|                  null|  2|  x|[3, 4]|[A, B]|
-        # |{c -> de}|       null|{-1 -> null, -3 -> -4}| -3|  c|  null|   [Z]|
+        # |{x -> yz}|{c -> null}|                  NULL|  2|  x|[3, 4]|[A, B]|
+        # |{c -> de}|       NULL|{-1 -> null, -3 -> -4}| -3|  c|  NULL|   [Z]|
         # +---------+-----------+----------------------+---+---+------+------+
 
         cdf = self.connect.sql(query)
@@ -1126,9 +1321,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         )
 
     def test_generator_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (ARRAY('a', 'ab'), ARRAY(1, 2, 3), ARRAY(1, NULL, 3),
@@ -1143,8 +1335,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # |        a|           b|           c|                     d|  e|  f|  g|
         # +---------+------------+------------+----------------------+---+---+---+
         # |  [a, ab]|   [1, 2, 3]|[1, null, 3]|      {1 -> 2, 3 -> 4}|  1|2.0|  3|
-        # |[x, null]|        null|      [1, 3]|                  null|  3|4.0|  5|
-        # |     null|[-1, -2, -3]|          []|{-1 -> null, -3 -> -4}|  7|NaN|  9|
+        # |[x, null]|        NULL|      [1, 3]|                  NULL|  3|4.0|  5|
+        # |     NULL|[-1, -2, -3]|          []|{-1 -> null, -3 -> -4}|  7|NaN|  9|
         # +---------+------------+------------+----------------------+---+---+---+
 
         cdf = self.connect.sql(query)
@@ -1154,44 +1346,53 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         self.assert_eq(
             cdf.select(CF.explode(cdf.a), CF.col("b")).toPandas(),
             sdf.select(SF.explode(sdf.a), SF.col("b")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.explode("a"), "b").toPandas(),
             sdf.select(SF.explode("a"), "b").toPandas(),
+            check_exact=False,
         )
         # test explode with maps
         self.assert_eq(
             cdf.select(CF.explode(cdf.d), CF.col("c")).toPandas(),
             sdf.select(SF.explode(sdf.d), SF.col("c")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.explode("d"), "c").toPandas(),
             sdf.select(SF.explode("d"), "c").toPandas(),
+            check_exact=False,
         )
 
         # test explode_outer with arrays
         self.assert_eq(
             cdf.select(CF.explode_outer(cdf.a), CF.col("b")).toPandas(),
             sdf.select(SF.explode_outer(sdf.a), SF.col("b")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.explode_outer("a"), "b").toPandas(),
             sdf.select(SF.explode_outer("a"), "b").toPandas(),
+            check_exact=False,
         )
         # test explode_outer with maps
         self.assert_eq(
             cdf.select(CF.explode_outer(cdf.d), CF.col("c")).toPandas(),
             sdf.select(SF.explode_outer(sdf.d), SF.col("c")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.explode_outer("d"), "c").toPandas(),
             sdf.select(SF.explode_outer("d"), "c").toPandas(),
+            check_exact=False,
         )
 
         # test flatten
         self.assert_eq(
             cdf.select(CF.flatten(CF.array("b", cdf.c)), CF.col("b")).toPandas(),
             sdf.select(SF.flatten(SF.array("b", sdf.c)), SF.col("b")).toPandas(),
+            check_exact=False,
         )
 
         # test inline
@@ -1202,6 +1403,7 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             sdf.select(SF.expr("ARRAY(STRUCT(e, f), STRUCT(g AS e, f))").alias("X"))
             .select(SF.inline("X"))
             .toPandas(),
+            check_exact=False,
         )
 
         # test inline_outer
@@ -1212,50 +1414,56 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             sdf.select(SF.expr("ARRAY(STRUCT(e, f), STRUCT(g AS e, f))").alias("X"))
             .select(SF.inline_outer("X"))
             .toPandas(),
+            check_exact=False,
         )
 
         # test posexplode with arrays
         self.assert_eq(
             cdf.select(CF.posexplode(cdf.a), CF.col("b")).toPandas(),
             sdf.select(SF.posexplode(sdf.a), SF.col("b")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.posexplode("a"), "b").toPandas(),
             sdf.select(SF.posexplode("a"), "b").toPandas(),
+            check_exact=False,
         )
         # test posexplode with maps
         self.assert_eq(
             cdf.select(CF.posexplode(cdf.d), CF.col("c")).toPandas(),
             sdf.select(SF.posexplode(sdf.d), SF.col("c")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.posexplode("d"), "c").toPandas(),
             sdf.select(SF.posexplode("d"), "c").toPandas(),
+            check_exact=False,
         )
 
         # test posexplode_outer with arrays
         self.assert_eq(
             cdf.select(CF.posexplode_outer(cdf.a), CF.col("b")).toPandas(),
             sdf.select(SF.posexplode_outer(sdf.a), SF.col("b")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.posexplode_outer("a"), "b").toPandas(),
             sdf.select(SF.posexplode_outer("a"), "b").toPandas(),
+            check_exact=False,
         )
         # test posexplode_outer with maps
         self.assert_eq(
             cdf.select(CF.posexplode_outer(cdf.d), CF.col("c")).toPandas(),
             sdf.select(SF.posexplode_outer(sdf.d), SF.col("c")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.posexplode_outer("d"), "c").toPandas(),
             sdf.select(SF.posexplode_outer("d"), "c").toPandas(),
+            check_exact=False,
         )
 
     def test_lambda_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (ARRAY('a', 'ab'), ARRAY(1, 2, 3), ARRAY(1, NULL, 3), 1, 2, 'a', NULL, MAP(0, 0)),
@@ -1266,9 +1474,9 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +---------+------------+------------+---+---+----+-------------------+---------+
         # |        a|           b|           c|  d|  e|   f|                  g|        h|
         # +---------+------------+------------+---+---+----+-------------------+---------+
-        # |  [a, ab]|   [1, 2, 3]|[1, null, 3]|  1|  2|   a|               null| {0 -> 0}|
-        # |[x, null]|        null|      [1, 3]|  3|  4|   x|           {2 -> 0}|{-1 -> 1}|
-        # |     null|[-1, -2, -3]|          []|  5|  6|null|{-1 -> 2, -3 -> -4}|     null|
+        # |  [a, ab]|   [1, 2, 3]|[1, null, 3]|  1|  2|   a|               NULL| {0 -> 0}|
+        # |[x, null]|        NULL|      [1, 3]|  3|  4|   x|           {2 -> 0}|{-1 -> 1}|
+        # |     NULL|[-1, -2, -3]|          []|  5|  6|NULL|{-1 -> 2, -3 -> -4}|     NULL|
         # +---------+------------+------------+---+---+----+-------------------+---------+
 
         cdf = self.connect.sql(query)
@@ -1317,6 +1525,7 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         self.assert_eq(
             cdf.select(CF.array_sort(cdf.b, lambda x, y: CF.abs(x) - CF.abs(y))).toPandas(),
             sdf.select(SF.array_sort(sdf.b, lambda x, y: SF.abs(x) - SF.abs(y))).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(
@@ -1335,26 +1544,31 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                     ),
                 )
             ).toPandas(),
+            check_exact=False,
         )
 
         # test filter
         self.assert_eq(
             cdf.select(CF.filter(cdf.b, lambda x: x < 0)).toPandas(),
             sdf.select(SF.filter(sdf.b, lambda x: x < 0)).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.filter("a", lambda x: ~CF.isnull(x))).toPandas(),
             sdf.select(SF.filter("a", lambda x: ~SF.isnull(x))).toPandas(),
+            check_exact=False,
         )
 
         # test forall
         self.assert_eq(
             cdf.select(CF.filter(cdf.b, lambda x: x != 0)).toPandas(),
             sdf.select(SF.filter(sdf.b, lambda x: x != 0)).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.filter("a", lambda x: ~CF.isnull(x))).toPandas(),
             sdf.select(SF.filter("a", lambda x: ~SF.isnull(x))).toPandas(),
+            check_exact=False,
         )
 
         # test transform
@@ -1362,30 +1576,36 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         self.assert_eq(
             cdf.select(CF.transform(cdf.b, lambda x: x + 1)).toPandas(),
             sdf.select(SF.transform(sdf.b, lambda x: x + 1)).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.transform("b", lambda x: x + 1)).toPandas(),
             sdf.select(SF.transform("b", lambda x: x + 1)).toPandas(),
+            check_exact=False,
         )
 
         # transform with index
         self.assert_eq(
             cdf.select(CF.transform(cdf.b, lambda x, i: x + 1 - i)).toPandas(),
             sdf.select(SF.transform(sdf.b, lambda x, i: x + 1 - i)).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.transform("b", lambda x, i: x + 1 - i)).toPandas(),
             sdf.select(SF.transform("b", lambda x, i: x + 1 - i)).toPandas(),
+            check_exact=False,
         )
 
         # test zip_with
         self.assert_eq(
             cdf.select(CF.zip_with(cdf.b, "c", lambda v1, v2: v1 - CF.abs(v2))).toPandas(),
             sdf.select(SF.zip_with(sdf.b, "c", lambda v1, v2: v1 - SF.abs(v2))).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.zip_with("b", cdf.c, lambda v1, v2: v1 - CF.abs(v2))).toPandas(),
             sdf.select(SF.zip_with("b", sdf.c, lambda v1, v2: v1 - SF.abs(v2))).toPandas(),
+            check_exact=False,
         )
 
         # test map_filter
@@ -1428,10 +1648,37 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             sdf.select(SF.transform_values("g", lambda k, v: SF.abs(v) + 1)),
         )
 
-    def test_csv_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
+    def test_nested_lambda_function(self):
+        # SPARK-42089: test nested lambda function
+        query = "SELECT array(1, 2, 3) as numbers, array('a', 'b', 'c') as letters"
 
+        cdf = self.connect.sql(query).select(
+            CF.flatten(
+                CF.transform(
+                    "numbers",
+                    lambda number: CF.transform(
+                        "letters", lambda letter: CF.struct(number.alias("n"), letter.alias("l"))
+                    ),
+                )
+            )
+        )
+
+        sdf = self.spark.sql(query).select(
+            SF.flatten(
+                SF.transform(
+                    "numbers",
+                    lambda number: SF.transform(
+                        "letters", lambda letter: SF.struct(number.alias("n"), letter.alias("l"))
+                    ),
+                )
+            )
+        )
+
+        # TODO: 'cdf.schema' has an extra metadata '{'__autoGeneratedAlias': 'true'}'
+        self.assertEqual(_drop_metadata(cdf.schema), _drop_metadata(sdf.schema))
+        self.assertEqual(cdf.collect(), sdf.collect())
+
+    def test_csv_functions(self):
         query = """
             SELECT * FROM VALUES
             ('1,2,3', 'a,b,5.0'),
@@ -1469,11 +1716,33 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                 SF.from_csv("b", SF.lit("x STRING, y STRING, z DOUBLE")),
             ),
         )
+        self.compare_by_show(
+            cdf.select(
+                CF.from_csv(cdf.a, CF.lit("a INT, b INT, c INT"), {"maxCharsPerColumn": "3"}),
+                CF.from_csv(
+                    "b", CF.lit("x STRING, y STRING, z DOUBLE"), {"maxCharsPerColumn": "3"}
+                ),
+            ),
+            sdf.select(
+                SF.from_csv(sdf.a, SF.lit("a INT, b INT, c INT"), {"maxCharsPerColumn": "3"}),
+                SF.from_csv(
+                    "b", SF.lit("x STRING, y STRING, z DOUBLE"), {"maxCharsPerColumn": "3"}
+                ),
+            ),
+        )
 
         # test schema_of_csv
         self.assert_eq(
             cdf.select(CF.schema_of_csv(CF.lit('{"a": 0}'))).toPandas(),
             sdf.select(SF.schema_of_csv(SF.lit('{"a": 0}'))).toPandas(),
+        )
+        self.assert_eq(
+            cdf.select(
+                CF.schema_of_csv(CF.lit('{"a": 0}'), {"maxCharsPerColumn": "10"})
+            ).toPandas(),
+            sdf.select(
+                SF.schema_of_csv(SF.lit('{"a": 0}'), {"maxCharsPerColumn": "10"})
+            ).toPandas(),
         )
 
         # test to_csv
@@ -1481,11 +1750,12 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             cdf.select(CF.to_csv(CF.struct(CF.lit("a"), CF.lit("b")))),
             sdf.select(SF.to_csv(SF.struct(SF.lit("a"), SF.lit("b")))),
         )
+        self.compare_by_show(
+            cdf.select(CF.to_csv(CF.struct(CF.lit("a"), CF.lit("b")), {"maxCharsPerColumn": "10"})),
+            sdf.select(SF.to_csv(SF.struct(SF.lit("a"), SF.lit("b")), {"maxCharsPerColumn": "10"})),
+        )
 
     def test_json_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             ('{"a": 1}', '[1, 2, 3]', '{"f1": "value1", "f2": "value2"}'),
@@ -1506,8 +1776,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         for schema in [
             "a INT",
             "MAP<STRING,INT>",
-            # StructType([StructField("a", IntegerType())]),
-            # ArrayType(StructType([StructField("a", IntegerType())])),
+            StructType([StructField("a", IntegerType())]),
+            ArrayType(StructType([StructField("a", IntegerType())])),
         ]:
             self.compare_by_show(
                 cdf.select(CF.from_json(cdf.a, schema)),
@@ -1517,10 +1787,18 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                 cdf.select(CF.from_json("a", schema)),
                 sdf.select(SF.from_json("a", schema)),
             )
+            self.compare_by_show(
+                cdf.select(CF.from_json(cdf.a, schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_json(sdf.a, schema, {"mode": "FAILFAST"})),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_json("a", schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_json("a", schema, {"mode": "FAILFAST"})),
+            )
 
         for schema in [
             "ARRAY<INT>",
-            # ArrayType(IntegerType()),
+            ArrayType(IntegerType()),
         ]:
             self.compare_by_show(
                 cdf.select(CF.from_json(cdf.b, schema)),
@@ -1530,6 +1808,44 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                 cdf.select(CF.from_json("b", schema)),
                 sdf.select(SF.from_json("b", schema)),
             )
+            self.compare_by_show(
+                cdf.select(CF.from_json(cdf.b, schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_json(sdf.b, schema, {"mode": "FAILFAST"})),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_json("b", schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_json("b", schema, {"mode": "FAILFAST"})),
+            )
+
+        # SPARK-41880: from_json support non-literal expression
+        c_schema = CF.schema_of_json(CF.lit("""{"a": 2}"""))
+        s_schema = SF.schema_of_json(SF.lit("""{"a": 2}"""))
+
+        self.compare_by_show(
+            cdf.select(CF.from_json(cdf.a, c_schema)),
+            sdf.select(SF.from_json(sdf.a, s_schema)),
+        )
+        self.compare_by_show(
+            cdf.select(CF.from_json("a", c_schema)),
+            sdf.select(SF.from_json("a", s_schema)),
+        )
+        self.compare_by_show(
+            cdf.select(CF.from_json(cdf.a, c_schema, {"mode": "FAILFAST"})),
+            sdf.select(SF.from_json(sdf.a, s_schema, {"mode": "FAILFAST"})),
+        )
+        self.compare_by_show(
+            cdf.select(CF.from_json("a", c_schema, {"mode": "FAILFAST"})),
+            sdf.select(SF.from_json("a", s_schema, {"mode": "FAILFAST"})),
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            CF.from_json("a", [c_schema])
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN_OR_DATATYPE_OR_STR",
+            messageParameters={"arg_name": "schema", "arg_type": "list"},
+        )
 
         # test get_json_object
         self.assert_eq(
@@ -1558,17 +1874,141 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             cdf.select(CF.schema_of_json(CF.lit('{"a": 0}'))).toPandas(),
             sdf.select(SF.schema_of_json(SF.lit('{"a": 0}'))).toPandas(),
         )
+        self.assert_eq(
+            cdf.select(CF.schema_of_json(CF.lit('{"a": 0}'), {"mode": "FAILFAST"})).toPandas(),
+            sdf.select(SF.schema_of_json(SF.lit('{"a": 0}'), {"mode": "FAILFAST"})).toPandas(),
+        )
 
         # test to_json
         self.compare_by_show(
             cdf.select(CF.to_json(CF.struct(CF.lit("a"), CF.lit("b")))),
             sdf.select(SF.to_json(SF.struct(SF.lit("a"), SF.lit("b")))),
         )
+        self.compare_by_show(
+            cdf.select(CF.to_json(CF.struct(CF.lit("a"), CF.lit("b")), {"mode": "FAILFAST"})),
+            sdf.select(SF.to_json(SF.struct(SF.lit("a"), SF.lit("b")), {"mode": "FAILFAST"})),
+        )
+
+    def test_xml_functions(self):
+        query = """
+            SELECT * FROM VALUES
+            ('<p><a>1</a></p>', '<p><a>1</a><a>2</a><a>3</a></p>',
+            '<p><a attr="s"><b>5.0</b></a></p>'),
+            ('<p><a>0</a></p>', '<p><a>4</a><a>5</a><a>6</a></p>', '<p><a attr="t"></a></p>')
+            AS tab(a, b, c)
+            """
+        # +---------------+-------------------------------+---------------------------------+
+        # |              a|                              b|                                c|
+        # +---------------+-------------------------------+---------------------------------+
+        # |<p><a>1</a></p>|<p><a>1</a><a>2</a><a>3</a></p>|<p><a attr="s"><b>5.0</b></a></p>|
+        # |<p><a>1</a></p>|<p><a>4</a><a>5</a><a>6</a></p>|          <p><a attr="t"></a></p>|
+        # +---------------+-------------------------------+---------------------------------+
+
+        cdf = self.connect.sql(query)
+        sdf = self.spark.sql(query)
+
+        # test from_xml
+        for schema in [
+            "a INT",
+            StructType([StructField("a", IntegerType())]),
+            StructType([StructField("a", ArrayType(IntegerType()))]),
+        ]:
+            self.compare_by_show(
+                cdf.select(CF.from_xml(cdf.a, schema)),
+                sdf.select(SF.from_xml(sdf.a, schema)),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_xml("a", schema)),
+                sdf.select(SF.from_xml("a", schema)),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_xml(cdf.a, schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_xml(sdf.a, schema, {"mode": "FAILFAST"})),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_xml("a", schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_xml("a", schema, {"mode": "FAILFAST"})),
+            )
+
+        for schema in [
+            "STRUCT<a: ARRAY<INT>>",
+            StructType([StructField("a", ArrayType(IntegerType()))]),
+        ]:
+            self.compare_by_show(
+                cdf.select(CF.from_xml(cdf.b, schema)),
+                sdf.select(SF.from_xml(sdf.b, schema)),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_xml("b", schema)),
+                sdf.select(SF.from_xml("b", schema)),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_xml(cdf.b, schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_xml(sdf.b, schema, {"mode": "FAILFAST"})),
+            )
+            self.compare_by_show(
+                cdf.select(CF.from_xml("b", schema, {"mode": "FAILFAST"})),
+                sdf.select(SF.from_xml("b", schema, {"mode": "FAILFAST"})),
+            )
+            self.compare_by_show(
+                sdf.select(SF.to_xml(SF.struct(SF.from_xml("b", schema)), {"rowTag": "person"})),
+                sdf.select(SF.to_xml(SF.struct(SF.from_xml("b", schema)), {"rowTag": "person"})),
+            )
+
+        c_schema = CF.schema_of_xml(CF.lit("""<p><a>1</a></p>"""))
+        s_schema = SF.schema_of_xml(SF.lit("""<p><a>1</a></p>"""))
+
+        self.compare_by_show(
+            cdf.select(CF.from_xml(cdf.a, c_schema)),
+            sdf.select(SF.from_xml(sdf.a, s_schema)),
+        )
+        self.compare_by_show(
+            cdf.select(CF.from_xml("a", c_schema)),
+            sdf.select(SF.from_xml("a", s_schema)),
+        )
+        self.compare_by_show(
+            cdf.select(CF.from_xml(cdf.a, c_schema, {"mode": "FAILFAST"})),
+            sdf.select(SF.from_xml(sdf.a, s_schema, {"mode": "FAILFAST"})),
+        )
+        self.compare_by_show(
+            cdf.select(CF.from_xml("a", c_schema, {"mode": "FAILFAST"})),
+            sdf.select(SF.from_xml("a", s_schema, {"mode": "FAILFAST"})),
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            CF.from_xml("a", [c_schema])
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN_OR_STR_OR_STRUCT",
+            messageParameters={"arg_name": "schema", "arg_type": "list"},
+        )
+
+        # test schema_of_xml
+        self.assert_eq(
+            cdf.select(CF.schema_of_xml(CF.lit("<p><a>1</a></p>"))).toPandas(),
+            sdf.select(SF.schema_of_xml(SF.lit("<p><a>1</a></p>"))).toPandas(),
+        )
+        self.assert_eq(
+            cdf.select(
+                CF.schema_of_xml(CF.lit("<p><a>1</a></p>"), {"mode": "FAILFAST"})
+            ).toPandas(),
+            sdf.select(
+                SF.schema_of_xml(SF.lit("<p><a>1</a></p>"), {"mode": "FAILFAST"})
+            ).toPandas(),
+        )
+
+        # test to_xml
+        self.compare_by_show(
+            cdf.select(CF.to_xml(CF.struct(CF.lit("a"), CF.lit("b")))),
+            sdf.select(SF.to_xml(SF.struct(SF.lit("a"), SF.lit("b")))),
+        )
+        self.compare_by_show(
+            cdf.select(CF.to_xml(CF.struct(CF.lit("a"), CF.lit("b")), {"mode": "FAILFAST"})),
+            sdf.select(SF.to_xml(SF.struct(SF.lit("a"), SF.lit("b")), {"mode": "FAILFAST"})),
+        )
 
     def test_string_functions_one_arg(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             ('   ab   ', 'ab   ', NULL), ('   ab', NULL, 'ab')
@@ -1577,8 +2017,8 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # +--------+-----+----+
         # |       a|    b|   c|
         # +--------+-----+----+
-        # |   ab   |ab   |null|
-        # |      ab| null|  ab|
+        # |   ab   |ab   |NULL|
+        # |      ab| NULL|  ab|
         # +--------+-----+----+
 
         cdf = self.connect.sql(query)
@@ -1596,7 +2036,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             (CF.sentences, SF.sentences),
             (CF.initcap, SF.initcap),
             (CF.soundex, SF.soundex),
-            (CF.bin, SF.bin),
             (CF.hex, SF.hex),
             (CF.unhex, SF.unhex),
             (CF.length, SF.length),
@@ -1609,10 +2048,20 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
                 sdf.select(sfunc("a"), sfunc(sdf.b)).toPandas(),
             )
 
-    def test_string_functions_multi_args(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
+        query = """
+                SELECT * FROM VALUES
+                ('   1   ', '2   ', NULL), ('   3', NULL, '4')
+                AS tab(a, b, c)
+                """
+        cdf = self.connect.sql(query)
+        sdf = self.spark.sql(query)
 
+        self.assert_eq(
+            cdf.select(CF.bin(cdf.a), CF.bin(cdf.b)).toPandas(),
+            sdf.select(SF.bin(sdf.a), SF.bin(sdf.b)).toPandas(),
+        )
+
+    def test_string_functions_multi_args(self):
         query = """
             SELECT * FROM VALUES
             (1, 'abcdef', 'ghij', 'hello world', 'a.b.c.d'),
@@ -1677,6 +2126,11 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             sdf.select(SF.levenshtein(sdf.b, sdf.c)).toPandas(),
         )
         self.assert_eq(
+            cdf.select(CF.levenshtein(cdf.b, cdf.c, 1)).toPandas(),
+            sdf.select(SF.levenshtein(sdf.b, sdf.c, 1)).toPandas(),
+        )
+
+        self.assert_eq(
             cdf.select(CF.locate("e", cdf.b)).toPandas(),
             sdf.select(SF.locate("e", sdf.b)).toPandas(),
         )
@@ -1694,6 +2148,7 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         self.assert_eq(
             cdf.select(CF.split(cdf.b, "[bd]")).toPandas(),
             sdf.select(SF.split(sdf.b, "[bd]")).toPandas(),
+            check_exact=False,
         )
         self.assert_eq(
             cdf.select(CF.regexp_extract(cdf.b, "(a+)(b)?(c)", 1)).toPandas(),
@@ -1710,20 +2165,17 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
 
     # TODO(SPARK-41283): To compare toPandas for test cases with dtypes marked
     def test_date_ts_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
-            ('1997/02/28 10:30:00', '2023/03/01 06:00:00', 'JST', 1428476400, 2020, 12, 6),
-            ('2000/01/01 04:30:05', '2020/05/01 12:15:00', 'PST', 1403892395, 2022, 12, 6)
+            ('1997-02-28 10:30:00', '2023-03-01 06:00:00', 'JST', 1428476400, 2020, 12, 6),
+            ('2000-01-01 04:30:05', '2020-05-01 12:15:00', 'PST', 1403892395, 2022, 12, 6)
             AS tab(ts1, ts2, tz, seconds, Y, M, D)
             """
         # +-------------------+-------------------+---+----------+----+---+---+
         # |                ts1|                ts2| tz|   seconds|   Y|  M|  D|
         # +-------------------+-------------------+---+----------+----+---+---+
-        # |1997/02/28 10:30:00|2023/03/01 06:00:00|JST|1428476400|2020| 12|  6|
-        # |2000/01/01 04:30:05|2020/05/01 12:15:00|PST|1403892395|2022| 12|  6|
+        # |1997-02-28 10:30:00|2023-03-01 06:00:00|JST|1428476400|2020| 12|  6|
+        # |2000-01-01 04:30:05|2020-05-01 12:15:00|PST|1403892395|2022| 12|  6|
         # +-------------------+-------------------+---+----------+----+---+---+
 
         cdf = self.connect.sql(query)
@@ -1779,14 +2231,14 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             (CF.to_date, SF.to_date),
         ]:
             self.assert_eq(
-                cdf.select(cfunc(cdf.ts1, format="yyyy-MM-dd")).toPandas(),
-                sdf.select(sfunc(sdf.ts1, format="yyyy-MM-dd")).toPandas(),
+                cdf.select(cfunc(cdf.ts1, format="yyyy-MM-dd HH:mm:ss")).toPandas(),
+                sdf.select(sfunc(sdf.ts1, format="yyyy-MM-dd HH:mm:ss")).toPandas(),
             )
         self.compare_by_show(
             # [left]:  datetime64[ns, America/Los_Angeles]
             # [right]: datetime64[ns]
-            cdf.select(CF.to_timestamp(cdf.ts1, format="yyyy-MM-dd")),
-            sdf.select(SF.to_timestamp(sdf.ts1, format="yyyy-MM-dd")),
+            cdf.select(CF.to_timestamp(cdf.ts1, format="yyyy-MM-dd HH:mm:ss")),
+            sdf.select(SF.to_timestamp(sdf.ts1, format="yyyy-MM-dd HH:mm:ss")),
         )
 
         # With tz parameter
@@ -1857,9 +2309,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         )
 
     def test_time_window_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT * FROM VALUES
             (TIMESTAMP('2022-12-25 10:30:00'), 1),
@@ -1919,6 +2368,24 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             truncate=100,
         )
 
+        with self.assertRaises(PySparkTypeError) as pe:
+            CF.window("date", "15 seconds", 10, "5 seconds")
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_STR",
+            messageParameters={"arg_name": "slideDuration", "arg_type": "int"},
+        )
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            CF.window("date", "15 seconds", "10 seconds", 5)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_STR",
+            messageParameters={"arg_name": "startTime", "arg_type": "int"},
+        )
+
         # test session_window
         self.compare_by_show(
             cdf.select(CF.session_window("date", "15 seconds")),
@@ -1943,9 +2410,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         )
 
     def test_misc_functions(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT a, b, c, BINARY(c) as d FROM VALUES
             (0, float("NAN"), 'x'), (1, NULL, 'y'), (1, 2.1, 'z'), (0, 0.5, NULL)
@@ -1955,9 +2419,9 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # |  a|   b|   c|   d|
         # +---+----+----+----+
         # |  0| NaN|   x|[78]|
-        # |  1|null|   y|[79]|
+        # |  1|NULL|   y|[79]|
         # |  1| 2.1|   z|[7A]|
-        # |  0| 0.5|null|null|
+        # |  0| 0.5|NULL|NULL|
         # +---+----+----+----+
 
         cdf = self.connect.sql(query)
@@ -2008,9 +2472,6 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         )
 
     def test_call_udf(self):
-        from pyspark.sql import functions as SF
-        from pyspark.sql.connect import functions as CF
-
         query = """
             SELECT a, b, c, BINARY(c) as d FROM VALUES
             (-1.0, float("NAN"), 'x'), (-2.1, NULL, 'y'), (1, 2.1, 'z'), (0, 0.5, NULL)
@@ -2021,9 +2482,9 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
         # |   a|   b|   c|   d|
         # +----+----+----+----+
         # |-1.0| NaN|   x|[78]|
-        # |-2.1|null|   y|[79]|
+        # |-2.1|NULL|   y|[79]|
         # | 1.0| 2.1|   z|[7A]|
-        # | 0.0| 0.5|null|null|
+        # | 0.0| 0.5|NULL|NULL|
         # +----+----+----+----+
 
         cdf = self.connect.sql(query)
@@ -2038,13 +2499,114 @@ class SparkConnectFunctionTests(SparkConnectFuncTestCase):
             ).toPandas(),
         )
 
+    def test_udf(self):
+        query = """
+            SELECT a, b, c FROM VALUES
+            (1, 1.0, 'x'), (2, 2.0, 'y'), (3, 3.0, 'z')
+            AS tab(a, b, c)
+            """
+        # +---+---+---+
+        # |  a|  b|  c|
+        # +---+---+---+
+        # |  1|1.0|  x|
+        # |  2|2.0|  y|
+        # |  3|3.0|  z|
+        # +---+---+---+
+
+        cdf = self.connect.sql(query)
+        sdf = self.spark.sql(query)
+
+        # as a normal function
+        self.assert_eq(
+            cdf.withColumn("A", CF.udf(lambda x: x + 1)(cdf.a)).toPandas(),
+            sdf.withColumn("A", SF.udf(lambda x: x + 1)(sdf.a)).toPandas(),
+        )
+        self.assert_eq(  # returnType as DDL strings
+            cdf.withColumn("C", CF.udf(lambda x: len(x), "int")(cdf.c)).toPandas(),
+            sdf.withColumn("C", SF.udf(lambda x: len(x), "int")(sdf.c)).toPandas(),
+        )
+        self.assert_eq(  # returnType as DataType
+            cdf.withColumn("C", CF.udf(lambda x: len(x), IntegerType())(cdf.c)).toPandas(),
+            sdf.withColumn("C", SF.udf(lambda x: len(x), IntegerType())(sdf.c)).toPandas(),
+        )
+
+        # as a decorator
+        @CF.udf(StringType())
+        def cfun(x):
+            return x + "a"
+
+        @SF.udf(StringType())
+        def sfun(x):
+            return x + "a"
+
+        self.assert_eq(
+            cdf.withColumn("A", cfun(cdf.c)).toPandas(),
+            sdf.withColumn("A", sfun(sdf.c)).toPandas(),
+        )
+
+    def test_udtf(self):
+        class TestUDTF:
+            def eval(self, x: int, y: int):
+                yield x, x + 1
+                yield y, y + 1
+
+        sfunc = SF.udtf(TestUDTF, returnType="a: int, b: int")
+        cfunc = CF.udtf(TestUDTF, returnType="a: int, b: int")
+
+        assertDataFrameEqual(sfunc(SF.lit(1), SF.lit(1)), cfunc(CF.lit(1), CF.lit(1)))
+
+        self.spark.udtf.register("test_udtf", sfunc)
+        self.connect.udtf.register("test_udtf", cfunc)
+
+        query = "select * from test_udtf(1, 2)"
+        assertDataFrameEqual(self.spark.sql(query), self.connect.sql(query))
+
+    def test_pandas_udf_import(self):
+        self.assert_eq(getattr(CF, "pandas_udf"), getattr(SF, "pandas_udf"))
+
+    def test_function_parity(self):
+        # This test compares the available list of functions in pyspark.sql.functions with those
+        # available in the Spark Connect Python Client in pyspark.sql.connect.functions
+
+        sf_fn = {name for (name, value) in getmembers(SF, isfunction) if name[0] != "_"}
+
+        cf_fn = {name for (name, value) in getmembers(CF, isfunction) if name[0] != "_"}
+
+        # Functions in vanilla PySpark we do not expect to be available in Spark Connect
+        sf_excluded_fn = set()
+
+        self.assertEqual(
+            sf_fn - cf_fn,
+            sf_excluded_fn,
+            "Missing functions in Spark Connect not as expected",
+        )
+
+        # Functions in Spark Connect we do not expect to be available in vanilla PySpark
+        cf_excluded_fn = {
+            "check_dependencies",  # internal helper function
+        }
+
+        self.assertEqual(
+            cf_fn - sf_fn,
+            cf_excluded_fn,
+            "Missing functions in vanilla PySpark not as expected",
+        )
+
+    # SPARK-45216: Fix non-deterministic seeded Dataset APIs
+    def test_non_deterministic_with_seed(self):
+        df = self.connect.createDataFrame([([*range(0, 10, 1)],)], ["a"])
+
+        r = CF.rand()
+        r2 = CF.randn()
+        r3 = CF.shuffle("a")
+        res = df.select(r, r, r2, r2, r3, r3).collect()
+        for i in range(3):
+            self.assertEqual(res[0][i * 2], res[0][i * 2 + 1])
+
 
 if __name__ == "__main__":
     import os
     from pyspark.sql.tests.connect.test_connect_function import *  # noqa: F401
-
-    # TODO(SPARK-41547): Enable ANSI mode in this file.
-    os.environ["SPARK_ANSI_SQL_MODE"] = "false"
 
     try:
         import xmlrunner  # type: ignore

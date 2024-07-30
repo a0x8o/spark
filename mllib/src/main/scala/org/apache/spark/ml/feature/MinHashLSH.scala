@@ -79,8 +79,8 @@ class MinHashLSHModel private[ml](
       return 1.0
     }
 
-    var xIndex = xIter.next
-    var yIndex = yIter.next
+    var xIndex = xIter.next()
+    var yIndex = yIter.next()
     var xSize = 1
     var ySize = 1
     var intersectionSize = 0
@@ -88,12 +88,12 @@ class MinHashLSHModel private[ml](
     while (xIndex != -1 && yIndex != -1) {
       if (xIndex == yIndex) {
         intersectionSize += 1
-        xIndex = if (xIter.hasNext) { xSize += 1; xIter.next } else -1
-        yIndex = if (yIter.hasNext) { ySize += 1; yIter.next } else -1
+        xIndex = if (xIter.hasNext) { xSize += 1; xIter.next() } else -1
+        yIndex = if (yIter.hasNext) { ySize += 1; yIter.next() } else -1
       } else if (xIndex > yIndex) {
-        yIndex = if (yIter.hasNext) { ySize += 1; yIter.next } else -1
+        yIndex = if (yIter.hasNext) { ySize += 1; yIter.next() } else -1
       } else {
-        xIndex = if (xIter.hasNext) { xSize += 1; xIter.next } else -1
+        xIndex = if (xIter.hasNext) { xSize += 1; xIter.next() } else -1
       }
     }
 
@@ -220,10 +220,10 @@ object MinHashLSHModel extends MLReadable[MinHashLSHModel] {
     private case class Data(randCoefficients: Array[Int])
 
     override protected def saveImpl(path: String): Unit = {
-      DefaultParamsWriter.saveMetadata(instance, path, sc)
+      DefaultParamsWriter.saveMetadata(instance, path, sparkSession)
       val data = Data(instance.randCoefficients.flatMap(tuple => Array(tuple._1, tuple._2)))
       val dataPath = new Path(path, "data").toString
-      sparkSession.createDataFrame(Seq(data)).repartition(1).write.parquet(dataPath)
+      sparkSession.createDataFrame(Seq(data)).write.parquet(dataPath)
     }
   }
 
@@ -233,7 +233,7 @@ object MinHashLSHModel extends MLReadable[MinHashLSHModel] {
     private val className = classOf[MinHashLSHModel].getName
 
     override def load(path: String): MinHashLSHModel = {
-      val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
+      val metadata = DefaultParamsReader.loadMetadata(path, sparkSession, className)
 
       val dataPath = new Path(path, "data").toString
       val data = sparkSession.read.parquet(dataPath).select("randCoefficients").head()

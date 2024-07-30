@@ -68,9 +68,10 @@ select map_contains_key(map('1', 'a', '2', 'b'), 1)
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.MAP_FUNCTION_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "\"MAP\"",
     "functionName" : "`map_contains_key`",
@@ -93,9 +94,10 @@ select map_contains_key(map(1, 'a', 2, 'b'), '1')
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.MAP_FUNCTION_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "\"MAP\"",
     "functionName" : "`map_contains_key`",

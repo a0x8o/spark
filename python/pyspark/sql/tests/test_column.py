@@ -16,13 +16,16 @@
 # limitations under the License.
 #
 
+from enum import Enum
+from itertools import chain
 from pyspark.sql import Column, Row
-from pyspark.sql.types import StructType, StructField, LongType
-from pyspark.sql.utils import AnalysisException
+from pyspark.sql import functions as sf
+from pyspark.sql.types import StructType, StructField, IntegerType, LongType
+from pyspark.errors import AnalysisException, PySparkTypeError, PySparkValueError
 from pyspark.testing.sqlutils import ReusedSQLTestCase
 
 
-class ColumnTests(ReusedSQLTestCase):
+class ColumnTestsMixin:
     def test_column_name_encoding(self):
         """Ensure that created columns has `str` type consistently."""
         columns = self.spark.createDataFrame([("Alice", 1)], ["name", "age"]).columns
@@ -40,14 +43,19 @@ class ColumnTests(ReusedSQLTestCase):
 
     def test_validate_column_types(self):
         from pyspark.sql.functions import udf, to_json
-        from pyspark.sql.column import _to_java_column
+        from pyspark.sql.classic.column import _to_java_column
 
         self.assertTrue("Column" in _to_java_column("a").getClass().toString())
         self.assertTrue("Column" in _to_java_column("a").getClass().toString())
         self.assertTrue("Column" in _to_java_column(self.spark.range(1).id).getClass().toString())
 
-        self.assertRaisesRegex(
-            TypeError, "Invalid argument, not a string or column", lambda: _to_java_column(1)
+        with self.assertRaises(PySparkTypeError) as pe:
+            _to_java_column(1)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN_OR_STR",
+            messageParameters={"arg_name": "col", "arg_type": "int"},
         )
 
         class A:
@@ -56,8 +64,13 @@ class ColumnTests(ReusedSQLTestCase):
         self.assertRaises(TypeError, lambda: _to_java_column(A()))
         self.assertRaises(TypeError, lambda: _to_java_column([]))
 
-        self.assertRaisesRegex(
-            TypeError, "Invalid argument, not a string or column", lambda: udf(lambda x: x)(None)
+        with self.assertRaises(PySparkTypeError) as pe:
+            udf(lambda x: x)(None)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN_OR_STR",
+            messageParameters={"arg_name": "col", "arg_type": "NoneType"},
         )
         self.assertRaises(TypeError, lambda: to_json(1))
 
@@ -82,6 +95,14 @@ class ColumnTests(ReusedSQLTestCase):
             cs.startswith("a"),
             cs.endswith("a"),
             ci.eqNullSafe(cs),
+            sf.col("b") & sf.lit(True),
+            sf.col("b") & True,
+            sf.lit(True) & sf.col("b"),
+            True & sf.col("b"),
+            sf.col("b") | sf.lit(True),
+            sf.col("b") | True,
+            sf.lit(True) | sf.col("b"),
+            True | sf.col("b"),
         )
         self.assertTrue(all(isinstance(c, Column) for c in css))
         self.assertTrue(isinstance(ci.cast(LongType()), Column))
@@ -125,7 +146,7 @@ class ColumnTests(ReusedSQLTestCase):
         self.assertTrue(columnName in repr(df[columnName]))
 
     def test_field_accessor(self):
-        df = self.sc.parallelize([Row(l=[1], r=Row(a=1, b="b"), d={"k": "v"})]).toDF()
+        df = self.spark.createDataFrame([Row(l=[1], r=Row(a=1, b="b"), d={"k": "v"})])
         self.assertEqual(1, df.select(df.l[0]).first()[0])
         self.assertEqual(1, df.select(df.r["a"]).first()[0])
         self.assertEqual(1, df.select(df["r.a"]).first()[0])
@@ -160,11 +181,22 @@ class ColumnTests(ReusedSQLTestCase):
         result = df.withColumn("a", df["a"].withField("b", lit(3))).collect()[0].asDict()
         self.assertEqual(3, result["a"]["b"])
 
-        self.assertRaisesRegex(
-            TypeError, "col should be a Column", lambda: df["a"].withField("b", 3)
+        with self.assertRaises(PySparkTypeError) as pe:
+            df["a"].withField("b", 3)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_COLUMN",
+            messageParameters={"arg_name": "col", "arg_type": "int"},
         )
-        self.assertRaisesRegex(
-            TypeError, "fieldName should be a string", lambda: df["a"].withField(col("b"), lit(3))
+
+        with self.assertRaises(PySparkTypeError) as pe:
+            df["a"].withField(col("b"), lit(3))
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_STR",
+            messageParameters={"arg_name": "fieldName", "arg_type": "Column"},
         )
 
     def test_drop_fields(self):
@@ -185,6 +217,136 @@ class ColumnTests(ReusedSQLTestCase):
         self.assertTrue("b" not in result["a1"] and "c" in result["a1"] and "d" in result["a1"])
 
         self.assertTrue("e" not in result["a2"]["d"] and "f" in result["a2"]["d"])
+
+    def test_getitem_column(self):
+        mapping = {"A": "20", "B": "28", "C": "34"}
+        mapping_expr = sf.create_map([sf.lit(x) for x in chain(*mapping.items())])
+        df = self.spark.createDataFrame(
+            data=[["A", "10"], ["B", "14"], ["C", "17"]],
+            schema=["key", "value"],
+        ).withColumn("square_value", mapping_expr[sf.col("key")])
+        self.assertEqual(df.count(), 3)
+
+    def test_alias_negative(self):
+        with self.assertRaises(PySparkValueError) as pe:
+            self.spark.range(1).id.alias("a", "b", metadata={})
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="ONLY_ALLOWED_FOR_SINGLE_COLUMN",
+            messageParameters={"arg_name": "metadata"},
+        )
+
+    def test_cast_str_representation(self):
+        self.assertEqual(str(sf.col("a").cast("int")), "Column<'CAST(a AS INT)'>")
+        self.assertEqual(str(sf.col("a").cast("INT")), "Column<'CAST(a AS INT)'>")
+        self.assertEqual(str(sf.col("a").cast(IntegerType())), "Column<'CAST(a AS INT)'>")
+        self.assertEqual(str(sf.col("a").cast(LongType())), "Column<'CAST(a AS BIGINT)'>")
+
+        self.assertEqual(str(sf.col("a").try_cast("int")), "Column<'TRY_CAST(a AS INT)'>")
+        self.assertEqual(str(sf.col("a").try_cast("INT")), "Column<'TRY_CAST(a AS INT)'>")
+        self.assertEqual(str(sf.col("a").try_cast(IntegerType())), "Column<'TRY_CAST(a AS INT)'>")
+        self.assertEqual(str(sf.col("a").try_cast(LongType())), "Column<'TRY_CAST(a AS BIGINT)'>")
+
+    def test_cast_negative(self):
+        with self.assertRaises(PySparkTypeError) as pe:
+            self.spark.range(1).id.cast(123)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_DATATYPE_OR_STR",
+            messageParameters={"arg_name": "dataType", "arg_type": "int"},
+        )
+
+    def test_over_negative(self):
+        with self.assertRaises(PySparkTypeError) as pe:
+            self.spark.range(1).id.over(123)
+
+        self.check_error(
+            exception=pe.exception,
+            errorClass="NOT_WINDOWSPEC",
+            messageParameters={"arg_name": "window", "arg_type": "int"},
+        )
+
+    def test_eqnullsafe_classmethod_usage(self):
+        df = self.spark.range(1)
+        self.assertEqual(df.select(Column.eqNullSafe(df.id, df.id)).first()[0], True)
+
+    def test_isinstance_dataframe(self):
+        self.assertIsInstance(self.spark.range(1).id, Column)
+
+    def test_expr_str_representation(self):
+        expression = sf.expr("foo")
+        when_cond = sf.when(expression, sf.lit(None))
+        self.assertEqual(str(when_cond), "Column<'CASE WHEN foo THEN NULL END'>")
+
+    def test_enum_literals(self):
+        class IntEnum(Enum):
+            X = 1
+            Y = 2
+            Z = 3
+
+        class BoolEnum(Enum):
+            T = True
+
+        class StrEnum(Enum):
+            X = "x"
+
+        id = sf.col("id")
+        s = sf.col("s")
+        b = sf.col("b")
+
+        cols, expected = list(
+            zip(
+                (id + IntEnum.X, 2),
+                (id - IntEnum.X, 0),
+                (id * IntEnum.X, 1),
+                (id / IntEnum.X, 1.0),
+                (id % IntEnum.X, 0),
+                (IntEnum.X + id, 2),
+                (IntEnum.X - id, 0),
+                (IntEnum.X * id, 1),
+                (IntEnum.X / id, 1.0),
+                (IntEnum.X % id, 0),
+                (id**IntEnum.X, 1.0),
+                (IntEnum.X**id, 1, 0),
+                (id == IntEnum.X, True),
+                (IntEnum.X == id, True),
+                (id < IntEnum.X, False),
+                (id <= IntEnum.X, True),
+                (id >= IntEnum.X, True),
+                (id > IntEnum.X, False),
+                (id.eqNullSafe(IntEnum.X), True),
+                (b & BoolEnum.T, True),
+                (b | BoolEnum.T, True),
+                (BoolEnum.T & b, True),
+                (BoolEnum.T | b, True),
+                (id.bitwiseOR(IntEnum.X), 1),
+                (id.bitwiseAND(IntEnum.X), 1),
+                (id.bitwiseXOR(IntEnum.X), 0),
+                (id.contains(IntEnum.X), True),
+                (s.startswith(StrEnum.X), False),
+                (s.endswith(StrEnum.X), False),
+                (s.like(StrEnum.X), False),
+                (s.rlike(StrEnum.X), False),
+                (s.ilike(StrEnum.X), False),
+                (s.substr(IntEnum.X, IntEnum.Y), "1"),
+                (sf.when(b, IntEnum.X).when(~b, IntEnum.Y).otherwise(IntEnum.Z), 1),
+            )
+        )
+        result = (
+            self.spark.range(1, 2)
+            .select(id, id.astype("string").alias("s"), id.astype("boolean").alias("b"))
+            .select(*cols)
+            .first()
+        )
+
+        for r, c, e in zip(result, cols, expected):
+            self.assertEqual(r, e, str(c))
+
+
+class ColumnTests(ColumnTestsMixin, ReusedSQLTestCase):
+    pass
 
 
 if __name__ == "__main__":

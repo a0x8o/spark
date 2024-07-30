@@ -190,10 +190,10 @@ object RobustScaler extends DefaultParamsReadable[RobustScaler] {
           val summaries = Array.fill(numFeatures)(
             new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, relativeError))
           while (iter.hasNext) {
-            val vec = iter.next
+            val vec = iter.next()
             vec.foreach { (i, v) => if (!v.isNaN) summaries(i) = summaries(i).insert(v) }
           }
-          Iterator.tabulate(numFeatures)(i => (i, summaries(i).compress))
+          Iterator.tabulate(numFeatures)(i => (i, summaries(i).compress()))
         } else Iterator.empty
       }.reduceByKey { (s1, s2) => s1.merge(s2) }
     } else {
@@ -206,9 +206,9 @@ object RobustScaler extends DefaultParamsReadable[RobustScaler] {
       }.aggregateByKey(
         new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, relativeError))(
         seqOp = (s, v) => s.insert(v),
-        combOp = (s1, s2) => s1.compress.merge(s2.compress)
+        combOp = (s1, s2) => s1.compress().merge(s2.compress())
       ).map { case ((_, i), s) => (i, s)
-      }.reduceByKey { (s1, s2) => s1.compress.merge(s2.compress) }
+      }.reduceByKey { (s1, s2) => s1.compress().merge(s2.compress()) }
     }
   }
 
@@ -284,10 +284,10 @@ object RobustScalerModel extends MLReadable[RobustScalerModel] {
     private case class Data(range: Vector, median: Vector)
 
     override protected def saveImpl(path: String): Unit = {
-      DefaultParamsWriter.saveMetadata(instance, path, sc)
+      DefaultParamsWriter.saveMetadata(instance, path, sparkSession)
       val data = Data(instance.range, instance.median)
       val dataPath = new Path(path, "data").toString
-      sparkSession.createDataFrame(Seq(data)).repartition(1).write.parquet(dataPath)
+      sparkSession.createDataFrame(Seq(data)).write.parquet(dataPath)
     }
   }
 
@@ -296,7 +296,7 @@ object RobustScalerModel extends MLReadable[RobustScalerModel] {
     private val className = classOf[RobustScalerModel].getName
 
     override def load(path: String): RobustScalerModel = {
-      val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
+      val metadata = DefaultParamsReader.loadMetadata(path, sparkSession, className)
       val dataPath = new Path(path, "data").toString
       val data = sparkSession.read.parquet(dataPath)
       val Row(range: Vector, median: Vector) = MLUtils

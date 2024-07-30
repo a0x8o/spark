@@ -71,6 +71,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb1`.`t1`.`i1`, `spark_catalog`.`mydb1`.`t1`.`i1`]"
@@ -93,6 +94,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`t1`.`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb1`.`t1`.`i1`, `spark_catalog`.`mydb1`.`t1`.`i1`]"
@@ -115,6 +117,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`mydb1`.`t1`.`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb1`.`t1`.`i1`, `spark_catalog`.`mydb1`.`t1`.`i1`]"
@@ -137,6 +140,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb1`.`t1`.`i1`, `spark_catalog`.`mydb2`.`t1`.`i1`]"
@@ -159,6 +163,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`t1`.`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb1`.`t1`.`i1`, `spark_catalog`.`mydb2`.`t1`.`i1`]"
@@ -189,6 +194,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb1`.`t1`.`i1`, `spark_catalog`.`mydb2`.`t1`.`i1`]"
@@ -211,6 +217,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`t1`.`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb1`.`t1`.`i1`, `spark_catalog`.`mydb2`.`t1`.`i1`]"
@@ -233,6 +240,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb2`.`t1`.`i1`, `spark_catalog`.`mydb2`.`t1`.`i1`]"
@@ -255,6 +263,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "AMBIGUOUS_REFERENCE",
+  "sqlState" : "42704",
   "messageParameters" : {
     "name" : "`t1`.`i1`",
     "referenceNames" : "[`spark_catalog`.`mydb2`.`t1`.`i1`, `spark_catalog`.`mydb2`.`t1`.`i1`]"
@@ -274,10 +283,10 @@ SELECT db1.t1.i1 FROM t1, mydb2.t1
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-  "sqlState" : "42000",
+  "sqlState" : "42703",
   "messageParameters" : {
     "objectName" : "`db1`.`t1`.`i1`",
     "proposal" : "`spark_catalog`.`mydb2`.`t1`.`i1`, `spark_catalog`.`mydb2`.`t1`.`i1`"
@@ -313,13 +322,13 @@ SELECT mydb1.t1 FROM t1
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-  "sqlState" : "42000",
+  "sqlState" : "42703",
   "messageParameters" : {
     "objectName" : "`mydb1`.`t1`",
-    "proposal" : "`spark_catalog`.`mydb1`.`t1`.`i1`"
+    "proposal" : "`t1`.`i1`"
   },
   "queryContext" : [ {
     "objectType" : "",
@@ -338,10 +347,11 @@ struct<>
 -- !query output
 org.apache.spark.sql.AnalysisException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_1051",
+  "errorClass" : "CANNOT_RESOLVE_STAR_EXPAND",
+  "sqlState" : "42704",
   "messageParameters" : {
-    "columns" : "i1",
-    "targetString" : "t1.x.y"
+    "columns" : "`i1`",
+    "targetString" : "`t1`.`x`.`y`"
   },
   "queryContext" : [ {
     "objectType" : "",
@@ -358,13 +368,13 @@ SELECT t1 FROM mydb1.t1
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-  "sqlState" : "42000",
+  "sqlState" : "42703",
   "messageParameters" : {
     "objectName" : "`t1`",
-    "proposal" : "`spark_catalog`.`mydb1`.`t1`.`i1`"
+    "proposal" : "`i1`"
   },
   "queryContext" : [ {
     "objectType" : "",
@@ -389,10 +399,10 @@ SELECT mydb1.t1.i1 FROM t1
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-  "sqlState" : "42000",
+  "sqlState" : "42703",
   "messageParameters" : {
     "objectName" : "`mydb1`.`t1`.`i1`",
     "proposal" : "`spark_catalog`.`mydb2`.`t1`.`i1`"
@@ -404,6 +414,108 @@ org.apache.spark.sql.AnalysisException
     "stopIndex" : 18,
     "fragment" : "mydb1.t1.i1"
   } ]
+}
+
+
+-- !query
+USE mydb1
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+CREATE VIEW v1 AS SELECT * FROM t1
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+DROP TABLE t1
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+CREATE TABLE t1 USING parquet AS SELECT 1 AS i2
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+SELECT * FROM v1
+-- !query schema
+struct<>
+-- !query output
+org.apache.spark.sql.AnalysisException
+{
+  "errorClass" : "INCOMPATIBLE_VIEW_SCHEMA_CHANGE",
+  "sqlState" : "51024",
+  "messageParameters" : {
+    "actualCols" : "[]",
+    "colName" : "i1",
+    "expectedNum" : "1",
+    "suggestion" : "CREATE OR REPLACE VIEW spark_catalog.mydb1.v1 AS SELECT * FROM t1",
+    "viewName" : "`spark_catalog`.`mydb1`.`v1`"
+  }
+}
+
+
+-- !query
+USE mydb2
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+CREATE TEMP VIEW v2 AS SELECT * FROM t1
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+DROP TABLE t1
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+CREATE TABLE t1 USING parquet AS SELECT 1 AS i2
+-- !query schema
+struct<>
+-- !query output
+
+
+
+-- !query
+SELECT * FROM v2
+-- !query schema
+struct<>
+-- !query output
+org.apache.spark.sql.AnalysisException
+{
+  "errorClass" : "INCOMPATIBLE_VIEW_SCHEMA_CHANGE",
+  "sqlState" : "51024",
+  "messageParameters" : {
+    "actualCols" : "[]",
+    "colName" : "i1",
+    "expectedNum" : "1",
+    "suggestion" : "CREATE OR REPLACE TEMPORARY VIEW",
+    "viewName" : "`v2`"
+  }
 }
 
 

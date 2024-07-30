@@ -18,10 +18,11 @@
 package org.apache.spark.sql.avro
 
 import java.io._
-import java.net.URI
 
 import scala.util.control.NonFatal
 
+import org.apache.avro.{LogicalTypes, Schema}
+import org.apache.avro.LogicalType
 import org.apache.avro.file.DataFileReader
 import org.apache.avro.generic.{GenericDatumReader, GenericRecord}
 import org.apache.avro.mapred.FsInput
@@ -41,6 +42,8 @@ import org.apache.spark.util.SerializableConfiguration
 
 private[sql] class AvroFileFormat extends FileFormat
   with DataSourceRegister with Logging with Serializable {
+
+  AvroFileFormat.registerCustomAvroTypes()
 
   override def equals(other: Any): Boolean = other match {
     case _: AvroFileFormat => true
@@ -96,9 +99,9 @@ private[sql] class AvroFileFormat extends FileFormat
       // Doing input file filtering is improper because we may generate empty tasks that process no
       // input files but stress the scheduler. We should probably add a more general input file
       // filtering mechanism for `FileFormat` data sources. See SPARK-16317.
-      if (parsedOptions.ignoreExtension || file.filePath.endsWith(".avro")) {
+      if (parsedOptions.ignoreExtension || file.urlEncodedPath.endsWith(".avro")) {
         val reader = {
-          val in = new FsInput(new Path(new URI(file.filePath)), conf)
+          val in = new FsInput(file.toPath, conf)
           try {
             val datumReader = userProvidedSchema match {
               case Some(userSchema) => new GenericDatumReader[GenericRecord](userSchema)
@@ -140,7 +143,9 @@ private[sql] class AvroFileFormat extends FileFormat
             requiredSchema,
             parsedOptions.positionalFieldMatching,
             datetimeRebaseMode,
-            avroFilters)
+            avroFilters,
+            parsedOptions.useStableIdForUnionType,
+            parsedOptions.stableIdPrefixForUnionType)
           override val stopPosition = file.start + file.length
 
           override def hasNext: Boolean = hasNextRow
@@ -169,4 +174,18 @@ private[sql] class AvroFileFormat extends FileFormat
 
 private[avro] object AvroFileFormat {
   val IgnoreFilesWithoutExtensionProperty = "avro.mapred.ignore.inputs.without.extension"
+
+  /**
+   * Register Spark defined custom Avro types.
+   */
+  def registerCustomAvroTypes(): Unit = {
+    // Register the customized decimal type backed by long.
+    LogicalTypes.register(CustomDecimal.TYPE_NAME, new LogicalTypes.LogicalTypeFactory {
+      override def fromSchema(schema: Schema): LogicalType = {
+        new CustomDecimal(schema)
+      }
+    })
+  }
+
+  registerCustomAvroTypes()
 }

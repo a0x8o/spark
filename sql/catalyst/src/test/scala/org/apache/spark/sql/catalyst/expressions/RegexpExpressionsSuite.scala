@@ -279,14 +279,27 @@ class RegexpExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     checkLiteralRow("abc"  rlike _, "^bc", false)
     checkLiteralRow("abc"  rlike _, "^ab", true)
     checkLiteralRow("abc"  rlike _, "^bc", false)
-
-    intercept[java.util.regex.PatternSyntaxException] {
-      evaluateWithoutCodegen("abbbbc" rlike "**")
-    }
-    intercept[java.util.regex.PatternSyntaxException] {
-      val regex = $"a".string.at(0)
-      evaluateWithoutCodegen("abbbbc" rlike regex, create_row("**"))
-    }
+    checkError(
+      exception = intercept[SparkRuntimeException] {
+        evaluateWithoutCodegen("abbbbc" rlike "**")
+      },
+      errorClass = "INVALID_PARAMETER_VALUE.PATTERN",
+      parameters = Map(
+        "parameter" -> toSQLId("regexp"),
+        "functionName" -> toSQLId("rlike"),
+        "value" -> "'**'")
+    )
+    checkError(
+      exception = intercept[SparkRuntimeException] {
+        val regex = $"a".string.at(0)
+        evaluateWithoutCodegen("abbbbc" rlike regex, create_row("**"))
+      },
+      errorClass = "INVALID_PARAMETER_VALUE.PATTERN",
+      parameters = Map(
+        "parameter" -> toSQLId("regexp"),
+        "functionName" -> toSQLId("rlike"),
+        "value" -> "'**'")
+    )
   }
 
   test("RegexReplace") {
@@ -378,17 +391,56 @@ class RegexpExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val row11 = create_row("100-200", "(\\d+)-(\\d+)", -1)
     val row12 = create_row("100-200", "\\d+", -1)
 
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row8, "Regex group count is 2, but the specified group index is 3")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row9, "Regex group count is 1, but the specified group index is 2")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row10, "Regex group count is 0, but the specified group index is 1")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row11, "The specified group index cannot be less than zero")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row12, "The specified group index cannot be less than zero")
-
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row8,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract`",
+        "groupCount" -> "2",
+        "groupIndex" -> "3"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row9,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract`",
+        "groupCount" -> "1",
+        "groupIndex" -> "2"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row10,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract`",
+        "groupCount" -> "0",
+        "groupIndex" -> "1"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row11,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract`",
+        "groupCount" -> "2",
+        "groupIndex" -> "-1"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row12,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract`",
+        "groupCount" -> "0",
+        "groupIndex" -> "-1"
+      )
+    )
     // Test escaping of arguments
     GenerateUnsafeProjection.generate(
       RegExpExtract(Literal("\"quote"), Literal("\"quote"), Literal(1)) :: Nil)
@@ -432,16 +484,56 @@ class RegexpExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val row12 = create_row("100-200,300-400,500-600", "(\\d+)-(\\d+)", -1)
     val row13 = create_row("100-200,300-400,500-600", "\\d+", -1)
 
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row9, "Regex group count is 2, but the specified group index is 3")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row10, "Regex group count is 1, but the specified group index is 2")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row11, "Regex group count is 0, but the specified group index is 1")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row12, "The specified group index cannot be less than zero")
-    checkExceptionInExpression[IllegalArgumentException](
-      expr, row13, "The specified group index cannot be less than zero")
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row9,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract_all`",
+        "groupCount" -> "2",
+        "groupIndex" -> "3"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row10,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName"-> "`regexp_extract_all`",
+        "groupCount" -> "1",
+        "groupIndex" -> "2"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row11,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract_all`",
+        "groupCount" -> "0",
+        "groupIndex" -> "1"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row12,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract_all`",
+        "groupCount" -> "2",
+        "groupIndex" -> "-1"
+      )
+    )
+    checkErrorInExpression[SparkRuntimeException](
+      expr,
+      row13,
+      "INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX",
+      Map("parameter" -> "`idx`",
+        "functionName" -> "`regexp_extract_all`",
+        "groupCount" -> "0",
+        "groupIndex" -> "-1"
+      )
+    )
   }
 
   test("SPLIT") {
@@ -520,19 +612,24 @@ class RegexpExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val s = $"s".string.at(0)
     val p = $"p".string.at(1)
     val r = $"r".int.at(2)
-    val prefix = "[INVALID_PARAMETER_VALUE] The value of parameter(s) 'regexp' in"
-    checkExceptionInExpression[SparkRuntimeException](
+    checkErrorInExpression[SparkRuntimeException](
       RegExpExtract(s, p, r),
       create_row("1a 2b 14m", "(?l)", 0),
-      s"$prefix `regexp_extract` is invalid: '(?l)'")
-    checkExceptionInExpression[SparkRuntimeException](
+      "INVALID_PARAMETER_VALUE.PATTERN",
+      Map("parameter" -> "`regexp`", "functionName" -> "`regexp_extract`", "value" -> "'(?l)'")
+    )
+    checkErrorInExpression[SparkRuntimeException](
       RegExpExtractAll(s, p, r),
       create_row("abc", "] [", 0),
-      s"$prefix `regexp_extract_all` is invalid: '] ['")
-    checkExceptionInExpression[SparkRuntimeException](
+      "INVALID_PARAMETER_VALUE.PATTERN",
+      Map("parameter" -> "`regexp`", "functionName" -> "`regexp_extract_all`", "value" -> "'] ['")
+    )
+    checkErrorInExpression[SparkRuntimeException](
       RegExpInStr(s, p, r),
       create_row("abc", ", (", 0),
-      s"$prefix `regexp_instr` is invalid: ', ('")
+      "INVALID_PARAMETER_VALUE.PATTERN",
+      Map("parameter" -> "`regexp`", "functionName" -> "`regexp_instr`", "value" -> "', ('")
+    )
   }
 
   test("RegExpReplace: fails analysis if pos is not a constant") {
@@ -546,7 +643,7 @@ class RegexpExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
       DataTypeMismatch(
         errorSubClass = "NON_FOLDABLE_INPUT",
         messageParameters = Map(
-          "inputName" -> "position",
+          "inputName" -> toSQLId("position"),
           "inputType" -> toSQLType(posExpr.dataType),
           "inputExpr" -> toSQLExpr(posExpr)
         )

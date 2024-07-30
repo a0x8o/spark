@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.execution.streaming
 
-import scala.collection.{immutable, GenTraversableOnce}
+import scala.collection.immutable
 
 import org.apache.spark.sql.connector.read.streaming.{Offset => OffsetV2, SparkDataStream}
 
@@ -36,17 +36,16 @@ class StreamProgress(
   override def toString: String =
     baseMap.map { case (k, v) => s"$k: $v"}.mkString("{", ",", "}")
 
-  override def +[B1 >: OffsetV2](kv: (SparkDataStream, B1)): Map[SparkDataStream, B1] = {
-    baseMap + kv
-  }
+  override def updated[B1 >: OffsetV2](key: SparkDataStream, value: B1): Map[SparkDataStream, B1] =
+    baseMap + (key -> value)
 
   override def get(key: SparkDataStream): Option[OffsetV2] = baseMap.get(key)
 
   override def iterator: Iterator[(SparkDataStream, OffsetV2)] = baseMap.iterator
 
-  override def -(key: SparkDataStream): Map[SparkDataStream, OffsetV2] = baseMap - key
+  override def removed(key: SparkDataStream): Map[SparkDataStream, OffsetV2] = baseMap - key
 
-  def ++(updates: GenTraversableOnce[(SparkDataStream, OffsetV2)]): StreamProgress = {
+  def ++(updates: IterableOnce[(SparkDataStream, OffsetV2)]): StreamProgress = {
     new StreamProgress(baseMap ++ updates)
   }
 }

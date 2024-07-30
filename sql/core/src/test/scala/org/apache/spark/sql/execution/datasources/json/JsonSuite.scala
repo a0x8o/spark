@@ -23,17 +23,22 @@ import java.nio.file.Files
 import java.sql.{Date, Timestamp}
 import java.time.{Duration, Instant, LocalDate, LocalDateTime, Period, ZoneId}
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 import com.fasterxml.jackson.core.JsonFactory
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{Path, PathFilter}
 import org.apache.hadoop.io.SequenceFile.CompressionType
 import org.apache.hadoop.io.compress.GzipCodec
 
-import org.apache.spark.{SparkConf, SparkException, SparkUpgradeException, TestUtils}
+import org.apache.spark.{SparkConf, SparkException, SparkRuntimeException, SparkUpgradeException, TestUtils}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobEnd}
 import org.apache.spark.sql.{functions => F, _}
 import org.apache.spark.sql.catalyst.json._
-import org.apache.spark.sql.catalyst.util.{DateTimeTestUtils, DateTimeUtils}
+import org.apache.spark.sql.catalyst.util.{DateTimeTestUtils, DateTimeUtils, HadoopCompressionCodec}
+import org.apache.spark.sql.catalyst.util.HadoopCompressionCodec.GZIP
+import org.apache.spark.sql.catalyst.util.TypeUtils.toSQLType
 import org.apache.spark.sql.execution.ExternalRDD
 import org.apache.spark.sql.execution.datasources.{CommonFileDataSourceSuite, DataSource, InMemoryFileIndex, NoopCache}
 import org.apache.spark.sql.execution.datasources.v2.json.JsonScanBuilder
@@ -43,6 +48,7 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.types.StructType.fromDDL
 import org.apache.spark.sql.types.TestUDT.{MyDenseVector, MyDenseVectorUDT}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.util.ArrayImplicits._
 import org.apache.spark.util.Utils
 
 class TestFileFilter extends PathFilter {
@@ -1057,23 +1063,29 @@ abstract class JsonSuite
 
   test("Corrupt records: FAILFAST mode") {
     // `FAILFAST` mode should throw an exception for corrupt records.
-    val exceptionOne = intercept[SparkException] {
-      spark.read
-        .option("mode", "FAILFAST")
-        .json(corruptRecords)
-    }.getMessage
-    assert(exceptionOne.contains(
-      "Malformed records are detected in schema inference. Parse Mode: FAILFAST."))
+    checkError(
+      exception = intercept[SparkException] {
+        spark.read
+          .option("mode", "FAILFAST")
+          .json(corruptRecords)
+      },
+      errorClass = "_LEGACY_ERROR_TEMP_2165",
+      parameters = Map("failFastMode" -> "FAILFAST")
+    )
 
-    val exceptionTwo = intercept[SparkException] {
-      spark.read
-        .option("mode", "FAILFAST")
-        .schema("a string")
-        .json(corruptRecords)
-        .collect()
-    }.getMessage
-    assert(exceptionTwo.contains(
-      "Malformed records are detected in record parsing. Parse Mode: FAILFAST."))
+    checkError(
+      exception = intercept[SparkException] {
+        spark.read
+          .option("mode", "FAILFAST")
+          .schema("a string")
+          .json(corruptRecords)
+          .collect()
+      },
+      errorClass = "MALFORMED_RECORD_IN_PARSING.WITHOUT_SUGGESTION",
+      parameters = Map(
+        "badRecord" -> "[null]",
+        "failFastMode" -> "FAILFAST")
+    )
   }
 
   test("Corrupt records: DROPMALFORMED mode") {
@@ -1245,7 +1257,7 @@ abstract class JsonSuite
 
       val df1 = spark.createDataFrame(rowRDD1, schema1)
       df1.createOrReplaceTempView("applySchema1")
-      val df2 = df1.toDF
+      val df2 = df1.toDF()
       val result = df2.toJSON.collect()
       // scalastyle:off
       assert(result(0) === "{\"f1\":1,\"f2\":\"A1\",\"f3\":true,\"f4\":[\"1\",\" A1\",\" true\",\" null\"]}")
@@ -1268,7 +1280,7 @@ abstract class JsonSuite
 
       val df3 = spark.createDataFrame(rowRDD2, schema2)
       df3.createOrReplaceTempView("applySchema2")
-      val df4 = df3.toDF
+      val df4 = df3.toDF()
       val result2 = df4.toJSON.collect()
 
       assert(result2(1) === "{\"f1\":{\"f11\":2,\"f12\":false},\"f2\":{\"B2\":null}}")
@@ -1370,7 +1382,7 @@ abstract class JsonSuite
       val d1 = DataSource(
         spark,
         userSpecifiedSchema = None,
-        partitionColumns = Array.empty[String],
+        partitionColumns = Array.empty[String].toImmutableArraySeq,
         bucketSpec = None,
         className = classOf[JsonFileFormat].getCanonicalName,
         options = Map("path" -> path)).resolveRelation()
@@ -1378,7 +1390,7 @@ abstract class JsonSuite
       val d2 = DataSource(
         spark,
         userSpecifiedSchema = None,
-        partitionColumns = Array.empty[String],
+        partitionColumns = Array.empty[String].toImmutableArraySeq,
         bucketSpec = None,
         className = classOf[JsonFileFormat].getCanonicalName,
         options = Map("path" -> path)).resolveRelation()
@@ -1577,7 +1589,7 @@ abstract class JsonSuite
         // inferring partitions because the original path in the "path" option will list the
         // partition directory that has been removed.
         assert(
-          spark.read.options(extraOptions).format("json").option("path", path).load.count() === 2)
+          spark.read.options(extraOptions).format("json").option("path", path).load().count() === 2)
       }
     }
   }
@@ -1656,7 +1668,7 @@ abstract class JsonSuite
         .format("json")
         .load(jsonDir)
 
-      assert(jsonCopy.count == jsonDF.count)
+      assert(jsonCopy.count() == jsonDF.count())
       val jsonCopySome = jsonCopy.selectExpr("string", "long", "boolean")
       val jsonDFSome = jsonDF.selectExpr("string", "long", "boolean")
       checkAnswer(jsonCopySome, jsonDFSome)
@@ -1682,7 +1694,7 @@ abstract class JsonSuite
       val jsonDir = new File(dir, "json").getCanonicalPath
       jsonDF.coalesce(1).write
         .format("json")
-        .option("compression", "none")
+        .option("compression", HadoopCompressionCodec.NONE.lowerCaseName())
         .options(extraOptions)
         .save(jsonDir)
 
@@ -1694,7 +1706,7 @@ abstract class JsonSuite
         .options(extraOptions)
         .load(jsonDir)
 
-      assert(jsonCopy.count == jsonDF.count)
+      assert(jsonCopy.count() == jsonDF.count())
       val jsonCopySome = jsonCopy.selectExpr("string", "long", "boolean")
       val jsonDFSome = jsonDF.selectExpr("string", "long", "boolean")
       checkAnswer(jsonCopySome, jsonDFSome)
@@ -1755,6 +1767,39 @@ abstract class JsonSuite
         Row("2016/01/28"))
 
       checkAnswer(stringDatesWithFormat, expectedStringDatesWithFormat)
+    }
+  }
+
+  test("Write timestamps correctly in ISO8601 format by default") {
+    val customSchema = new StructType(Array(StructField("date", TimestampType, true)))
+    withTempDir { dir =>
+      // lets set LA timezone as for old dates LA had seconds offset
+      withSQLConf("spark.sql.session.timeZone" -> "America/Los_Angeles") {
+        // With dateFormat option.
+        val timestampsWithoutFormatPath = s"${dir.getCanonicalPath}/timestampsWithoutFormat.json"
+        val timestampsWithoutFormat = spark.read
+          .schema(customSchema)
+          .option("timestampFormat", "dd/MM/yyyy HH:mm[XXX]")
+          .json(datesRecords.union(oldDatesRecord))
+
+        timestampsWithoutFormat.write
+          .format("json")
+          .save(timestampsWithoutFormatPath)
+
+        // This will load back the timestamps as string.
+        val stringSchema = StructType(StructField("date", StringType, true) :: Nil)
+        val stringTimestampsWithFormat = spark.read
+          .schema(stringSchema)
+          .json(timestampsWithoutFormatPath)
+        val expectedStringDatesWithoutFormat = Seq(
+          Row("1800-01-01T10:07:02.000-07:52:58"),
+          Row("1885-01-01T10:30:00.000-08:00"),
+          Row("2014-10-27T18:30:00.000-07:00"),
+          Row("2015-08-26T18:00:00.000-07:00"),
+          Row("2016-01-28T20:00:00.000-08:00"))
+
+        checkAnswer(stringTimestampsWithFormat, expectedStringDatesWithoutFormat)
+      }
     }
   }
 
@@ -1906,6 +1951,56 @@ abstract class JsonSuite
     }
   }
 
+  test("SPARK-45035: json enable ignoreCorruptFiles/ignoreMissingFiles") {
+    withCorruptFile(inputFile => {
+      withSQLConf(SQLConf.IGNORE_CORRUPT_FILES.key -> "false") {
+        val e = intercept[SparkException] {
+          spark.read.json(inputFile.toURI.toString).collect()
+        }
+        checkErrorMatchPVals(
+          exception = e,
+          errorClass = "FAILED_READ_FILE.NO_HINT",
+          parameters = Map("path" -> s".*${inputFile.getName}.*"))
+        assert(e.getCause.isInstanceOf[EOFException])
+        assert(e.getCause.getMessage === "Unexpected end of input stream")
+        val e2 = intercept[SparkException] {
+          spark.read.option("multiLine", true).json(inputFile.toURI.toString).collect()
+        }
+        assert(e2.getCause.isInstanceOf[EOFException])
+        assert(e2.getCause.getMessage === "Unexpected end of input stream")
+      }
+      withSQLConf(SQLConf.IGNORE_CORRUPT_FILES.key -> "true") {
+        assert(spark.read.json(inputFile.toURI.toString).collect().isEmpty)
+        assert(spark.read.option("multiLine", true).json(inputFile.toURI.toString).collect()
+          .isEmpty)
+      }
+    })
+    withTempPath { dir =>
+      val jsonPath = new Path(dir.getCanonicalPath, "json")
+      val fs = jsonPath.getFileSystem(spark.sessionState.newHadoopConf())
+
+      sampledTestData.write.json(jsonPath.toString)
+      val df = spark.read.option("multiLine", true).json(jsonPath.toString)
+      fs.delete(jsonPath, true)
+      withSQLConf(SQLConf.IGNORE_MISSING_FILES.key -> "false") {
+        checkErrorMatchPVals(
+          exception = intercept[SparkException] {
+            df.collect()
+          },
+          errorClass = "FAILED_READ_FILE.FILE_NOT_EXIST",
+          parameters = Map("path" -> s".*$dir.*")
+        )
+      }
+
+      sampledTestData.write.json(jsonPath.toString)
+      val df2 = spark.read.option("multiLine", true).json(jsonPath.toString)
+      fs.delete(jsonPath, true)
+      withSQLConf(SQLConf.IGNORE_MISSING_FILES.key -> "true") {
+        assert(df2.collect().isEmpty)
+      }
+    }
+  }
+
   test("SPARK-18352: Handle multi-line corrupt documents (PERMISSIVE)") {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
@@ -1971,16 +2066,17 @@ abstract class JsonSuite
       val schema = new StructType().add("dummy", StringType)
 
       // `FAILFAST` mode should throw an exception for corrupt records.
-      val exceptionOne = intercept[SparkException] {
-        spark.read
-          .option("multiLine", true)
-          .option("mode", "FAILFAST")
-          .json(path)
-      }
-      assert(exceptionOne.getMessage.contains("Malformed records are detected in schema " +
-        "inference. Parse Mode: FAILFAST."))
+      checkErrorMatchPVals(
+        exception = intercept[SparkException] {
+          spark.read
+            .option("multiLine", true)
+            .option("mode", "FAILFAST")
+            .json(path)
+        },
+        errorClass = "_LEGACY_ERROR_TEMP_2167",
+        parameters = Map("failFastMode" -> "FAILFAST", "dataType" -> "string|bigint"))
 
-      val exceptionTwo = intercept[SparkException] {
+      val ex = intercept[SparkException] {
         spark.read
           .option("multiLine", true)
           .option("mode", "FAILFAST")
@@ -1988,8 +2084,17 @@ abstract class JsonSuite
           .json(path)
           .collect()
       }
-      assert(exceptionTwo.getMessage.contains("Malformed records are detected in record " +
-        "parsing. Parse Mode: FAILFAST."))
+      checkErrorMatchPVals(
+        exception = ex,
+        errorClass = "FAILED_READ_FILE.NO_HINT",
+        parameters = Map("path" -> s".*$path.*"))
+      checkError(
+        exception = ex.getCause.asInstanceOf[SparkException],
+        errorClass = "MALFORMED_RECORD_IN_PARSING.WITHOUT_SUGGESTION",
+        parameters = Map(
+          "badRecord" -> "[null]",
+          "failFastMode" -> "FAILFAST")
+      )
     }
   }
 
@@ -2000,39 +2105,46 @@ abstract class JsonSuite
         StructField("a", StringType, true) ::
         StructField("b", StringType, true) ::
         StructField("c", StringType, true) :: Nil)
-    val errMsg = intercept[AnalysisException] {
-      spark.read
-        .option("mode", "Permissive")
-        .option("columnNameOfCorruptRecord", columnNameOfCorruptRecord)
-        .schema(schema)
-        .json(corruptRecords)
-    }.getMessage
-    assert(errMsg.startsWith("The field for corrupt records must be string type and nullable"))
+
+    checkError(
+      exception = intercept[AnalysisException] {
+        spark.read
+          .option("mode", "Permissive")
+          .option("columnNameOfCorruptRecord", columnNameOfCorruptRecord)
+          .schema(schema)
+          .json(corruptRecords)
+      },
+      errorClass = "_LEGACY_ERROR_TEMP_1097",
+      parameters = Map.empty
+    )
 
     // We use `PERMISSIVE` mode by default if invalid string is given.
     withTempPath { dir =>
       val path = dir.getCanonicalPath
       corruptRecords.toDF("value").write.text(path)
-      val errMsg = intercept[AnalysisException] {
-        spark.read
-          .option("mode", "permm")
-          .option("columnNameOfCorruptRecord", columnNameOfCorruptRecord)
-          .schema(schema)
-          .json(path)
-          .collect
-      }.getMessage
-      assert(errMsg.startsWith("The field for corrupt records must be string type and nullable"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.read
+            .option("mode", "permm")
+            .option("columnNameOfCorruptRecord", columnNameOfCorruptRecord)
+            .schema(schema)
+            .json(path)
+            .collect()
+        },
+        errorClass = "_LEGACY_ERROR_TEMP_1097",
+        parameters = Map.empty
+      )
     }
   }
 
   test("SPARK-18772: Parse special floats correctly") {
-    val jsons = Seq(
-      """{"a": "NaN"}""",
-      """{"a": "+INF"}""",
-      """{"a": "-INF"}""",
-      """{"a": "Infinity"}""",
-      """{"a": "+Infinity"}""",
-      """{"a": "-Infinity"}""")
+    val jsonFieldValues = Seq(
+      ("""{"a": "NaN"}""", """'NaN'"""),
+      ("""{"a": "+INF"}""", """'+INF'"""),
+      ("""{"a": "-INF"}""", """'-INF'"""),
+      ("""{"a": "Infinity"}""", """'Infinity'"""),
+      ("""{"a": "+Infinity"}""", """'+Infinity'"""),
+      ("""{"a": "-Infinity"}""", """'-Infinity'"""))
 
     // positive cases
     val checks: Seq[Double => Boolean] = Seq(
@@ -2044,10 +2156,10 @@ abstract class JsonSuite
       _.isNegInfinity)
 
     Seq(FloatType, DoubleType).foreach { dt =>
-      jsons.zip(checks).foreach { case (json, check) =>
+      jsonFieldValues.zip(checks).foreach { case (jsonFieldValue, check) =>
         val ds = spark.read
           .schema(StructType(Seq(StructField("a", dt))))
-          .json(Seq(json).toDS())
+          .json(Seq(jsonFieldValue._1).toDS())
           .select($"a".cast(DoubleType)).as[Double]
         assert(check(ds.first()))
       }
@@ -2055,17 +2167,27 @@ abstract class JsonSuite
 
     // negative cases
     Seq(FloatType, DoubleType).foreach { dt =>
-      val lowerCasedJsons = jsons.map(_.toLowerCase(Locale.ROOT))
+      val lowerCasedJsonFieldValues = jsonFieldValues.map(j =>
+        (j._1.toLowerCase(Locale.ROOT), j._2.toLowerCase(Locale.ROOT)))
       // The special floats are case-sensitive so these cases below throw exceptions.
-      lowerCasedJsons.foreach { lowerCasedJson =>
-        val e = intercept[SparkException] {
-          spark.read
-            .option("mode", "FAILFAST")
-            .schema(StructType(Seq(StructField("a", dt))))
-            .json(Seq(lowerCasedJson).toDS())
-            .collect()
-        }
-        assert(e.getMessage.contains("Cannot parse"))
+      lowerCasedJsonFieldValues.foreach { lowerCasedJsonFieldValue =>
+        checkError(
+          exception = intercept[SparkRuntimeException] {
+            spark.read
+              .option("mode", "FAILFAST")
+              .schema(StructType(Seq(StructField("a", dt))))
+              .json(Seq(lowerCasedJsonFieldValue._1).toDS())
+              .collect()
+          },
+          errorClass = "MALFORMED_RECORD_IN_PARSING.CANNOT_PARSE_STRING_AS_DATATYPE",
+          parameters = Map(
+            "failFastMode" -> "FAILFAST",
+            "badRecord" -> lowerCasedJsonFieldValue._1,
+            "fieldValue" -> lowerCasedJsonFieldValue._2,
+            "fieldName" -> "`a`",
+            "targetType" -> dt.toString,
+            "inputType" -> "StringType")
+        )
       }
     }
   }
@@ -2081,10 +2203,13 @@ abstract class JsonSuite
       Seq(data).toDF().repartition(1).write.text(path)
       val schema = new StructType().add("field", ByteType).add("_corrupt_record", StringType)
       // negative cases
-      val msg = intercept[AnalysisException] {
-        spark.read.schema(schema).json(path).select("_corrupt_record").collect()
-      }.getMessage
-      assert(msg.contains("only include the internal corrupt record column"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.read.schema(schema).json(path).select("_corrupt_record").collect()
+        },
+        errorClass = "_LEGACY_ERROR_TEMP_1285",
+        parameters = Map.empty
+      )
 
       // workaround
       val df = spark.read.schema(schema).json(path).cache()
@@ -2179,7 +2304,7 @@ abstract class JsonSuite
         // inferred when sampling ratio is involved.
         val readback2 = spark.read
           .option("samplingRatio", 0.1).option("path", path.getCanonicalPath)
-          .format("json").load
+          .format("json").load()
         assert(readback2.schema == new StructType().add("f1", LongType))
       }
     })
@@ -2267,16 +2392,24 @@ abstract class JsonSuite
   test("SPARK-23723: specified encoding is not matched to actual encoding") {
     val fileName = "test-data/utf16LE.json"
     val schema = new StructType().add("firstName", StringType).add("lastName", StringType)
+    val inputFile = testFile(fileName)
     val exception = intercept[SparkException] {
       spark.read.schema(schema)
         .option("mode", "FAILFAST")
         .option("multiline", "true")
         .options(Map("encoding" -> "UTF-16BE"))
-        .json(testFile(fileName))
+        .json(inputFile)
         .count()
     }
-
-    assert(exception.getMessage.contains("Malformed records are detected in record parsing"))
+    checkErrorMatchPVals(
+      exception = exception,
+      errorClass = "FAILED_READ_FILE.NO_HINT",
+      parameters = Map("path" -> s".*$fileName.*"))
+    checkError(
+      exception = exception.getCause.asInstanceOf[SparkException],
+      errorClass = "MALFORMED_RECORD_IN_PARSING.WITHOUT_SUGGESTION",
+      parameters = Map("badRecord" -> "[empty row]", "failFastMode" -> "FAILFAST")
+    )
   }
 
   def checkEncoding(expectedEncoding: String, pathToJsonFiles: String,
@@ -2606,17 +2739,22 @@ abstract class JsonSuite
 
   private def failedOnEmptyString(dataType: DataType): Unit = {
     val df = spark.read.schema(s"a ${dataType.catalogString}")
-      .option("mode", "FAILFAST").json(Seq("""{"a":""}""").toDS)
-    val errMessage = intercept[SparkException] {
-      df.collect()
-    }.getMessage
-    assert(errMessage.contains(
-      s"Failed to parse an empty string for data type ${dataType.catalogString}"))
+      .option("mode", "FAILFAST").json(Seq("""{"a":""}""").toDS())
+    val e = intercept[SparkException] { df.collect() }
+    checkError(
+      exception = e,
+      errorClass = "MALFORMED_RECORD_IN_PARSING.WITHOUT_SUGGESTION",
+      parameters = Map("badRecord" -> "[null]", "failFastMode" -> "FAILFAST"))
+    checkError(
+      exception = e.getCause.asInstanceOf[SparkRuntimeException],
+      errorClass = "EMPTY_JSON_FIELD_VALUE",
+      parameters = Map("dataType" -> toSQLType(dataType))
+    )
   }
 
   private def emptyString(dataType: DataType, expected: Any): Unit = {
     val df = spark.read.schema(s"a ${dataType.catalogString}")
-      .option("mode", "FAILFAST").json(Seq("""{"a":""}""").toDS)
+      .option("mode", "FAILFAST").json(Seq("""{"a":""}""").toDS())
     checkAnswer(df, Row(expected) :: Nil)
   }
 
@@ -2642,7 +2780,7 @@ abstract class JsonSuite
   test("SPARK-25040: allowing empty strings when legacy config is enabled") {
     def emptyStringAsNull(dataType: DataType): Unit = {
       val df = spark.read.schema(s"a ${dataType.catalogString}")
-        .option("mode", "FAILFAST").json(Seq("""{"a":""}""").toDS)
+        .option("mode", "FAILFAST").json(Seq("""{"a":""}""").toDS())
       checkAnswer(df, Row(null) :: Nil)
     }
 
@@ -2684,7 +2822,7 @@ abstract class JsonSuite
 
   test("inferring timestamp type") {
     def schemaOf(jsons: String*): StructType = {
-      spark.read.option("inferTimestamp", true).json(jsons.toDS).schema
+      spark.read.option("inferTimestamp", true).json(jsons.toDS()).schema
     }
 
     assert(schemaOf(
@@ -2746,10 +2884,14 @@ abstract class JsonSuite
       .option("timestampFormat", "yyyy-MM-dd'T'HH:mm:ss.SSSz")
       .json(ds)
     withSQLConf(SQLConf.LEGACY_TIME_PARSER_POLICY.key -> "exception") {
-      val msg = intercept[SparkException] {
-        json.collect()
-      }.getCause.getMessage
-      assert(msg.contains("Fail to parse"))
+      checkError(
+        exception = intercept[SparkUpgradeException] {
+          json.collect()
+        },
+        errorClass = "INCONSISTENT_BEHAVIOR_CROSS_VERSION.PARSE_DATETIME_BY_NEW_PARSER",
+        parameters = Map(
+          "datetime" -> "'2020-01-27T20:06:11.847-08000'",
+          "config" -> "\"spark.sql.legacy.timeParserPolicy\""))
     }
     withSQLConf(SQLConf.LEGACY_TIME_PARSER_POLICY.key -> "legacy") {
       checkAnswer(json, Row(Timestamp.valueOf("2020-01-27 20:06:11.847")))
@@ -2834,7 +2976,7 @@ abstract class JsonSuite
         SQLConf.TimestampTypes.TIMESTAMP_NTZ.toString,
         SQLConf.TimestampTypes.TIMESTAMP_LTZ.toString)
 
-      for (timestampType <- timestampTypes) {
+      timestampTypes.foreach { timestampType =>
         withSQLConf(SQLConf.TIMESTAMP_TYPE.key -> timestampType) {
           val res = spark.read.option("inferTimestamp", "true").json(path.getAbsolutePath)
 
@@ -2933,10 +3075,16 @@ abstract class JsonSuite
         val err = intercept[SparkException] {
           exp.write.option("timestampNTZFormat", pattern).json(path.getAbsolutePath)
         }
+        checkErrorMatchPVals(
+          exception = err,
+          errorClass = "TASK_WRITE_FAILED",
+          parameters = Map("path" -> s".*${path.getName}.*"))
+
+        val msg = err.getCause.getMessage
         assert(
-          err.getMessage.contains("Unsupported field: OffsetSeconds") ||
-          err.getMessage.contains("Unable to extract value") ||
-          err.getMessage.contains("Unable to extract ZoneId"))
+          msg.contains("Unsupported field: OffsetSeconds") ||
+          msg.contains("Unable to extract value") ||
+          msg.contains("Unable to extract ZoneId"))
       }
     }
   }
@@ -3048,7 +3196,9 @@ abstract class JsonSuite
                 readback.filter($"AAA" === 0 && $"bbb" === 1).collect()
               },
               errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-              parameters = Map("objectName" -> "`AAA`", "proposal" -> "`BBB`, `aaa`"))
+              parameters = Map("objectName" -> "`AAA`", "proposal" -> "`BBB`, `aaa`"),
+              context =
+                ExpectedContext(fragment = "$", callSitePattern = getCurrentClassCallSitePattern))
             // Schema inferring
             val readback2 = spark.read.json(path.getCanonicalPath)
             checkAnswer(
@@ -3070,7 +3220,7 @@ abstract class JsonSuite
       spark.range(3).coalesce(1).write.json(s"$basePath/$jsonTableName")
       val readback = spark.read
         .json(s"$basePath/${"""(\[|\]|\{|\})""".r.replaceAllIn(jsonTableName, """\\$1""")}")
-      assert(readback.collect sameElements Array(Row(0), Row(1), Row(2)))
+      assert(readback.collect() sameElements Array(Row(0), Row(1), Row(2)))
     }
   }
 
@@ -3079,7 +3229,7 @@ abstract class JsonSuite
     withTempPaths(2) { paths =>
       paths.foreach(_.delete())
       val seq = Seq("a", "\n", "\u3042")
-      val df = seq.toDF
+      val df = seq.toDF()
 
       val basePath1 = paths(0).getCanonicalPath
       df.write.option("writeNonAsciiCharacterAsCodePoint", "true")
@@ -3133,7 +3283,7 @@ abstract class JsonSuite
     withSQLConf(SQLConf.LEAF_NODE_DEFAULT_PARALLELISM.key -> "1") {
       withTempPath { path =>
         val basePath = path.getCanonicalPath
-        val df = Seq("a", "b", "c").toDF
+        val df = Seq("a", "b", "c").toDF()
         df.write.option("pretty", "true").json(basePath)
 
         val expectedText =
@@ -3184,7 +3334,7 @@ abstract class JsonSuite
           StructType(
             StructField("f1", LongType, nullable = false) ::
             StructField("f2", LongType, nullable = false) :: Nil)
-        ).option("mode", "DROPMALFORMED").json(Seq("""{"f1": 1}""").toDS),
+        ).option("mode", "DROPMALFORMED").json(Seq("""{"f1": 1}""").toDS()),
         // It is for testing legacy configuration. This is technically a bug as
         // `0` has to be `null` but the schema is non-nullable.
         Row(1, 0))
@@ -3192,17 +3342,44 @@ abstract class JsonSuite
   }
 
   test("SPARK-36379: proceed parsing with root nulls in permissive mode") {
-    assert(intercept[SparkException] {
+    val exception = intercept[SparkException] {
       spark.read.option("mode", "failfast")
-        .schema("a string").json(Seq("""[{"a": "str"}, null]""").toDS).collect()
-    }.getMessage.contains("Malformed records are detected"))
+        .schema("a string").json(Seq("""[{"a": "str"}, null]""").toDS()).collect()
+    }
+
+    checkError(
+      exception = exception,
+      errorClass = "MALFORMED_RECORD_IN_PARSING.WITHOUT_SUGGESTION",
+      parameters = Map("badRecord" -> "[null]", "failFastMode" -> "FAILFAST")
+    )
+
+    checkError(
+      exception = ExceptionUtils.getRootCause(exception).asInstanceOf[SparkRuntimeException],
+      errorClass = "INVALID_JSON_ROOT_FIELD",
+      parameters = Map.empty
+    )
 
     // Permissive modes should proceed parsing malformed records (null).
     // Here, since an array fails to parse in the middle, we will return one row.
     checkAnswer(
       spark.read.option("mode", "permissive")
-        .json(Seq("""[{"a": "str"}, null, {"a": "str"}]""").toDS),
+        .json(Seq("""[{"a": "str"}, null, {"a": "str"}]""").toDS()),
       Row(null) :: Nil)
+  }
+
+  test("SPARK-44079: fix incorrect result when parse array as struct " +
+    "using PERMISSIVE mode with corrupt record") {
+    val data = """[{"a": "incorrect", "b": "correct"}, {"a": "incorrect", "b": "correct"}]"""
+    val schema = new StructType(Array(StructField("a", IntegerType),
+      StructField("b", StringType), StructField("_corrupt_record", StringType)))
+
+    val result = spark.read
+      .option("mode", "PERMISSIVE")
+      .option("multiline", "true")
+      .schema(schema)
+      .json(Seq(data).toDS())
+
+    checkAnswer(result, Seq(Row(null, "correct", data), Row(null, "correct", data)))
   }
 
   test("SPARK-36536: use casting when datetime pattern is not set") {
@@ -3291,10 +3468,9 @@ abstract class JsonSuite
         )
       )
 
-      val err = intercept[SparkException] {
+      intercept[SparkUpgradeException] {
         check("exception", Nil)
-      }.getCause
-      assert(err.isInstanceOf[SparkUpgradeException])
+      }
     }
   }
 
@@ -3402,7 +3578,7 @@ abstract class JsonSuite
           if (enablePartialResults) {
             checkAnswer(
               df,
-              Seq(Row(null, Row(1)), Row(Row(2, null), Row(2)))
+              Seq(Row(Row(1, null), Row(1)), Row(Row(2, null), Row(2)))
             )
           } else {
             checkAnswer(
@@ -3415,8 +3591,176 @@ abstract class JsonSuite
     }
   }
 
+  test("SPARK-44940: fully parse the record except f1 if partial results are enabled") {
+    withTempPath { path =>
+      Seq(
+        """{"a1": "AAA", "a2": [{"f1": "", "f2": ""}], "a3": "id1", "a4": "XXX"}""",
+        """{"a1": "BBB", "a2": [{"f1": 12, "f2": ""}], "a3": "id2", "a4": "YYY"}""").toDF()
+        .repartition(1)
+        .write.text(path.getAbsolutePath)
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "true") {
+        val df = spark.read.json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", Seq(Row(null, "")), "id1", "XXX"),
+            Row("BBB", Seq(Row(12, "")), "id2", "YYY")
+          )
+        )
+      }
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "false") {
+        val df = spark.read.json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", null, null, null),
+            Row("BBB", Seq(Row(12, "")), "id2", "YYY")
+          )
+        )
+      }
+    }
+  }
+
+  test("SPARK-44940: fully parse primitive map if partial results are enabled") {
+    withTempPath { path =>
+      Seq(
+        """{"a1": "AAA", "a2": {"f1": "", "f2": ""}, "a3": "id1"}""",
+        """{"a1": "BBB", "a2": {"f1": 12, "f2": ""}, "a3": "id2"}""").toDF()
+        .repartition(1)
+        .write.text(path.getAbsolutePath)
+
+      val schema = "a1 string, a2 map<string, int>, a3 string"
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "true") {
+        val df = spark.read.schema(schema).json(path.getAbsolutePath)
+        // Although the keys match the string type and some values match the integer type, because
+        // some of the values do not match the type, we mark the entire map as null.
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", null, "id1"),
+            Row("BBB", null, "id2")
+          )
+        )
+      }
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "false") {
+        val df = spark.read.schema(schema).json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", null, null),
+            Row("BBB", null, null)
+          )
+        )
+      }
+    }
+  }
+
+  test("SPARK-44940: fully parse map of structs if partial results are enabled") {
+    withTempPath { path =>
+      Seq(
+        """{"a1": "AAA", "a2": {"key": {"f1": "", "f2": ""}}, "a3": "id1"}""",
+        """{"a1": "BBB", "a2": {"key": {"f1": 12, "f2": ""}}, "a3": "id2"}""").toDF()
+        .repartition(1)
+        .write.text(path.getAbsolutePath)
+
+      val schema = "a1 string, a2 map<string, struct<f1: int, f2: string>>, a3 string"
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "true") {
+        val df = spark.read.schema(schema).json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", Map("key" -> Row(null, "")), "id1"),
+            Row("BBB", Map("key" -> Row(12, "")), "id2")
+          )
+        )
+      }
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "false") {
+        val df = spark.read.schema(schema).json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", null, null),
+            Row("BBB", Map("key" -> Row(12, "")), "id2")
+          )
+        )
+      }
+    }
+  }
+
+  test("SPARK-44940: fully parse primitive arrays if partial results are enabled") {
+    withTempPath { path =>
+      Seq(
+        """{"a1": "AAA", "a2": {"f1": [""]}, "a3": "id1", "a4": "XXX"}""",
+        """{"a1": "BBB", "a2": {"f1": [12]}, "a3": "id2", "a4": "YYY"}""").toDF()
+        .repartition(1)
+        .write.text(path.getAbsolutePath)
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "true") {
+        val df = spark.read.json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", Row(null), "id1", "XXX"),
+            Row("BBB", Row(Seq(12)), "id2", "YYY")
+          )
+        )
+      }
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "false") {
+        val df = spark.read.json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", null, null, null),
+            Row("BBB", Row(Seq(12)), "id2", "YYY")
+          )
+        )
+      }
+    }
+  }
+
+  test("SPARK-44940: fully parse array of arrays if partial results are enabled") {
+    withTempPath { path =>
+      Seq(
+        """{"a1": "AAA", "a2": [[12, ""], [""]], "a3": "id1", "a4": "XXX"}""",
+        """{"a1": "BBB", "a2": [[12, 34], [""]], "a3": "id2", "a4": "YYY"}""").toDF()
+        .repartition(1)
+        .write.text(path.getAbsolutePath)
+
+      // We cannot parse `array<array<int>>` type because one of the inner arrays contains a
+      // mismatched type.
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "true") {
+        val df = spark.read.json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", null, "id1", "XXX"),
+            Row("BBB", null, "id2", "YYY")
+          )
+        )
+      }
+
+      withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> "false") {
+        val df = spark.read.json(path.getAbsolutePath)
+        checkAnswer(
+          df,
+          Seq(
+            Row("AAA", null, "id1", "XXX"),
+            Row("BBB", null, "id2", "YYY")
+          )
+        )
+      }
+    }
+  }
+
   test("SPARK-40667: validate JSON Options") {
-    assert(JSONOptions.getAllOptions.size == 28)
+    assert(JSONOptions.getAllOptions.size == 29)
     // Please add validation on any new Json options here
     assert(JSONOptions.isValidOption("samplingRatio"))
     assert(JSONOptions.isValidOption("primitivesAsString"))
@@ -3444,12 +3788,172 @@ abstract class JsonSuite
     assert(JSONOptions.isValidOption("columnNameOfCorruptRecord"))
     assert(JSONOptions.isValidOption("timeZone"))
     assert(JSONOptions.isValidOption("writeNonAsciiCharacterAsCodePoint"))
+    assert(JSONOptions.isValidOption("singleVariantColumn"))
     assert(JSONOptions.isValidOption("encoding"))
     assert(JSONOptions.isValidOption("charset"))
     // Please add validation on any new Json options with alternative here
     assert(JSONOptions.getAlternativeOption("encoding").contains("charset"))
     assert(JSONOptions.getAlternativeOption("charset").contains("encoding"))
     assert(JSONOptions.getAlternativeOption("dateFormat").isEmpty)
+  }
+
+  test("SPARK-25159: json schema inference should only trigger one job") {
+    withTempPath { path =>
+      // This test is to prove that the `JsonInferSchema` does not use `RDD#toLocalIterator` which
+      // triggers one Spark job per RDD partition.
+      Seq(1 -> "a", 2 -> "b").toDF("i", "p")
+        // The data set has 2 partitions, so Spark will write at least 2 json files.
+        // Use a non-splittable compression (gzip), to make sure the json scan RDD has at least 2
+        // partitions.
+        .write.partitionBy("p")
+        .option("compression", GZIP.lowerCaseName()).json(path.getCanonicalPath)
+
+      val numJobs = new AtomicLong(0)
+      sparkContext.addSparkListener(new SparkListener {
+        override def onJobEnd(jobEnd: SparkListenerJobEnd): Unit = {
+          numJobs.incrementAndGet()
+        }
+      })
+
+      val df = spark.read.json(path.getCanonicalPath)
+      assert(df.columns === Array("i", "p"))
+      spark.sparkContext.listenerBus.waitUntilEmpty()
+      assert(numJobs.get() == 1L)
+    }
+  }
+
+  test("SPARK-35320: Reading JSON with key type different to String in a map should fail") {
+    Seq(
+      (MapType(IntegerType, StringType), """{"1": "test"}"""),
+      (StructType(Seq(StructField("test", MapType(IntegerType, StringType)))),
+        """"test": {"1": "test"}"""),
+      (ArrayType(MapType(IntegerType, StringType)), """[{"1": "test"}]"""),
+      (MapType(StringType, MapType(IntegerType, StringType)), """{"key": {"1" : "test"}}""")
+    ).foreach { case (schema, jsonData) =>
+      withTempDir { dir =>
+        val colName = "col"
+        val jsonDataSchema = StructType(Seq(StructField(colName, schema)))
+
+        checkError(
+          exception = intercept[AnalysisException](
+            spark.read.schema(jsonDataSchema).json(Seq(jsonData).toDS()).collect()
+          ),
+          errorClass = "INVALID_JSON_SCHEMA_MAP_TYPE",
+          parameters = Map("jsonSchema" -> toSQLType(jsonDataSchema)))
+
+        val jsonDir = new File(dir, "json").getCanonicalPath
+        Seq(jsonData).toDF(colName).write.json(jsonDir)
+        val jsonDirSchema = StructType(Seq(StructField(colName, schema)))
+        checkError(
+          exception = intercept[AnalysisException](
+            spark.read.schema(jsonDirSchema).json(jsonDir).collect()
+          ),
+          errorClass = "INVALID_JSON_SCHEMA_MAP_TYPE",
+          parameters = Map("jsonSchema" -> toSQLType(jsonDirSchema)))
+      }
+    }
+  }
+
+  test("SPARK-47704: Handle partial parsing of array<map>") {
+    withTempPath { path =>
+      Seq("""{"a":[{"key":{"b":0}}]}""").toDF()
+        .repartition(1)
+        .write.text(path.getAbsolutePath)
+
+      for (enablePartialResults <- Seq(true, false)) {
+        withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> s"$enablePartialResults") {
+          val df = spark.read
+            .schema("a array<map<string, struct<b boolean>>>")
+            .json(path.getAbsolutePath)
+
+          if (enablePartialResults) {
+            checkAnswer(df, Seq(Row(Array(Map("key" -> Row(null))))))
+          } else {
+            checkAnswer(df, Seq(Row(null)))
+          }
+        }
+      }
+    }
+  }
+
+  test("SPARK-47704: Handle partial parsing of map<string, array>") {
+    withTempPath { path =>
+      Seq("""{"a":{"key":[{"b":0}]}}""").toDF()
+        .repartition(1)
+        .write.text(path.getAbsolutePath)
+
+      for (enablePartialResults <- Seq(true, false)) {
+        withSQLConf(SQLConf.JSON_ENABLE_PARTIAL_RESULTS.key -> s"$enablePartialResults") {
+          val df = spark.read
+            .schema("a map<string, array<struct<b boolean>>>")
+            .json(path.getAbsolutePath)
+
+          if (enablePartialResults) {
+            checkAnswer(df, Seq(Row(Map("key" -> Seq(Row(null))))))
+          } else {
+            checkAnswer(df, Seq(Row(null)))
+          }
+        }
+      }
+    }
+  }
+
+  test("SPARK-48148: values are unchanged when read as string") {
+    withTempPath { path =>
+      def extractData(
+          jsonString: String,
+          expectedInexactData: Seq[String],
+          expectedExactData: Seq[String],
+          multiLine: Boolean = false): Unit = {
+        Seq(jsonString).toDF()
+          .repartition(1)
+          .write
+          .mode("overwrite")
+          .text(path.getAbsolutePath)
+
+        withClue("Exact string parsing") {
+          withSQLConf(SQLConf.JSON_EXACT_STRING_PARSING.key -> "true") {
+            val df = spark.read
+              .schema("data STRING")
+              .option("multiLine", multiLine.toString)
+              .json(path.getAbsolutePath)
+            checkAnswer(df, expectedExactData.map(d => Row(d)))
+          }
+        }
+
+        withClue("Inexact string parsing") {
+          withSQLConf(SQLConf.JSON_EXACT_STRING_PARSING.key -> "false") {
+            val df = spark.read
+              .schema("data STRING")
+              .option("multiLine", multiLine.toString)
+              .json(path.getAbsolutePath)
+            checkAnswer(df, expectedInexactData.map(d => Row(d)))
+          }
+        }
+      }
+      extractData(
+        """{"data": {"white":    "space"}}""",
+        expectedInexactData = Seq("""{"white":"space"}"""),
+        expectedExactData = Seq("""{"white":    "space"}""")
+      )
+      extractData(
+        """{"data": ["white",    "space"]}""",
+        expectedInexactData = Seq("""["white","space"]"""),
+        expectedExactData = Seq("""["white",    "space"]""")
+      )
+      val granularFloat = "-999.99999999999999999999999999999999995"
+      extractData(
+        s"""{"data": {"v": ${granularFloat}}}""",
+        expectedInexactData = Seq("""{"v":-1000.0}"""),
+        expectedExactData = Seq(s"""{"v": ${granularFloat}}""")
+      )
+      extractData(
+        s"""{"data": {"white":\n"space"}}""",
+        expectedInexactData = Seq("""{"white":"space"}"""),
+        expectedExactData = Seq(s"""{"white":\n"space"}"""),
+        multiLine = true
+      )
+    }
   }
 }
 
@@ -3497,8 +4001,17 @@ class JsonV2Suite extends JsonSuite {
 }
 
 class JsonLegacyTimeParserSuite extends JsonSuite {
+
+  override def excluded: Seq[String] =
+    Seq("Write timestamps correctly in ISO8601 format by default")
+
   override protected def sparkConf: SparkConf =
     super
       .sparkConf
       .set(SQLConf.LEGACY_TIME_PARSER_POLICY, "legacy")
+}
+
+class JsonUnsafeRowSuite extends JsonSuite {
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(SQLConf.JSON_USE_UNSAFE_ROW, true)
 }
