@@ -47,8 +47,12 @@ case class StateMetadataTableEntry(
     minBatchId: Long,
     maxBatchId: Long,
     operatorPropertiesJson: String,
+<<<<<<< HEAD
     numColsPrefixKey: Int,
     stateSchemaFilePath: Option[String]) {
+=======
+    numColsPrefixKey: Int) {
+>>>>>>> 0x1CAB5A3
   def toRow(): InternalRow = {
     new GenericInternalRow(
       Array[Any](operatorId,
@@ -231,8 +235,12 @@ class StateMetadataPartitionReader(
               if (batchIds.nonEmpty) batchIds.head else -1,
               if (batchIds.nonEmpty) batchIds.last else -1,
               null,
+<<<<<<< HEAD
               stateStoreMetadata.numColsPrefixKey,
               None
+=======
+              stateStoreMetadata.numColsPrefixKey
+>>>>>>> 0x1CAB5A3
             )
           }
         case v2: OperatorStateMetadataV2 =>
@@ -244,8 +252,12 @@ class StateMetadataPartitionReader(
               if (batchIds.nonEmpty) batchIds.head else -1,
               if (batchIds.nonEmpty) batchIds.last else -1,
               v2.operatorPropertiesJson,
+<<<<<<< HEAD
               -1, // numColsPrefixKey is not available in OperatorStateMetadataV2
               Some(stateStoreMetadata.stateSchemaFilePath)
+=======
+              -1 // numColsPrefixKey is not available in OperatorStateMetadataV2
+>>>>>>> 0x1CAB5A3
             )
           }
         }
