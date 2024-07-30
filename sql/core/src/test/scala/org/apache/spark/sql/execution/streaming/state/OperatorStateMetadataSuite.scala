@@ -42,6 +42,7 @@ class OperatorStateMetadataSuite extends StreamTest with SharedSparkSession {
       expectedMetadata: OperatorStateMetadata,
       expectedVersion: Int = 1): Unit = {
     val statePath = new Path(checkpointDir, s"state/$operatorId")
+<<<<<<< HEAD
     val operatorMetadata = OperatorStateMetadataReader.createReader(statePath,
       hadoopConf, expectedVersion).read()
     assert(operatorMetadata.isDefined)
@@ -63,6 +64,13 @@ class OperatorStateMetadataSuite extends StreamTest with SharedSparkSession {
       assert(stateStoreInfo.storeName == expectedStateStoreInfo.storeName)
       assert(stateStoreInfo.numPartitions == expectedStateStoreInfo.numPartitions)
     }
+=======
+    val operatorMetadata = new OperatorStateMetadataV1Reader(statePath, hadoopConf).read()
+      .asInstanceOf[Option[OperatorStateMetadataV1]]
+    assert(operatorMetadata.isDefined)
+    assert(operatorMetadata.get.operatorInfo == expectedMetadata.operatorInfo &&
+      operatorMetadata.get.stateStoreInfo.sameElements(expectedMetadata.stateStoreInfo))
+>>>>>>> 0x1CAB5A3
   }
 
   test("Serialize and deserialize stateful operator metadata") {
