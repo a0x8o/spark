@@ -156,38 +156,27 @@ class NaiveBayes @Since("1.5.0") (
 
     val validatedWeightCol = checkNonNegativeWeights(get(weightCol))
 
+    val vecCol = col($(featuresCol))
     val validatedfeaturesCol = $(modelType) match {
       case Multinomial | Complement =>
-        val checkNonNegativeVector = udf { vector: Vector =>
-          vector match {
-            case dv: DenseVector => dv.values.forall(v => v >= 0 && !v.isInfinity)
-            case sv: SparseVector => sv.values.forall(v => v >= 0 && !v.isInfinity)
-          }
-        }
-        val vecCol = col($(featuresCol))
         when(vecCol.isNull, raise_error(lit("Vectors MUST NOT be Null")))
-          .when(!checkNonNegativeVector(vecCol),
+          .when(exists(unwrap_udt(vecCol).getField("values"),
+            v => v.isNaN || v < 0 || v === Double.PositiveInfinity),
             raise_error(concat(
               lit("Vector values MUST NOT be Negative, NaN or Infinity, but got "),
               vecCol.cast(StringType))))
           .otherwise(vecCol)
 
       case Bernoulli =>
-        val checkBinaryVector = udf { vector: Vector =>
-          vector match {
-            case dv: DenseVector => dv.values.forall(v => v == 0 || v == 1)
-            case sv: SparseVector => sv.values.forall(v => v == 0 || v == 1)
-          }
-        }
-        val vecCol = col($(featuresCol))
         when(vecCol.isNull, raise_error(lit("Vectors MUST NOT be Null")))
-          .when(!checkBinaryVector(vecCol),
+          .when(exists(unwrap_udt(vecCol).getField("values"),
+            v => v =!= 0 && v =!= 1),
             raise_error(concat(
               lit("Vector values MUST be in {0, 1}, but got "),
               vecCol.cast(StringType))))
           .otherwise(vecCol)
 
-      case _ => checkNonNanVectors($(featuresCol))
+      case _ => checkNonNanVectors(vecCol)
     }
 
     val validated = dataset.select(
@@ -591,7 +580,7 @@ object NaiveBayesModel extends MLReadable[NaiveBayesModel] {
 
     override protected def saveImpl(path: String): Unit = {
       // Save metadata and Params
-      DefaultParamsWriter.saveMetadata(instance, path, sc)
+      DefaultParamsWriter.saveMetadata(instance, path, sparkSession)
       val dataPath = new Path(path, "data").toString
 
       instance.getModelType match {
@@ -602,7 +591,7 @@ object NaiveBayesModel extends MLReadable[NaiveBayesModel] {
       }
 
       val data = Data(instance.pi, instance.theta, instance.sigma)
-      sparkSession.createDataFrame(Seq(data)).repartition(1).write.parquet(dataPath)
+      sparkSession.createDataFrame(Seq(data)).write.parquet(dataPath)
     }
   }
 
@@ -613,7 +602,7 @@ object NaiveBayesModel extends MLReadable[NaiveBayesModel] {
 
     override def load(path: String): NaiveBayesModel = {
       implicit val format = DefaultFormats
-      val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
+      val metadata = DefaultParamsReader.loadMetadata(path, sparkSession, className)
       val (major, minor) = VersionUtils.majorMinorVersion(metadata.sparkVersion)
 
       val dataPath = new Path(path, "data").toString

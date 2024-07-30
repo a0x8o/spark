@@ -495,7 +495,7 @@ test_that("SPARK-17902: collect() with stringsAsFactors enabled", {
   expect_equal(iris$Species, df$Species)
 })
 
-test_that("SPARK-17811: can create DataFrame containing NA as date and time", {
+test_that("SPARK-17811, SPARK-18011: can create DataFrame containing NA as date and time", {
   df <- data.frame(
     id = 1:2,
     time = c(as.POSIXlt("2016-01-10"), NA),
@@ -622,7 +622,7 @@ test_that("read/write json files", {
 
     # Test errorifexists
     expect_error(write.df(df, jsonPath2, "json", mode = "errorifexists"),
-                 "analysis error - Path file:.*already exists")
+                 "Error in save : analysis error - \\[PATH_ALREADY_EXISTS\\].*")
 
     # Test write.json
     jsonPath3 <- tempfile(pattern = "jsonPath3", fileext = ".json")
@@ -1414,7 +1414,7 @@ test_that("test HiveContext", {
 
     # Invalid mode
     expect_error(saveAsTable(df, "parquetest", "parquet", mode = "abc", path = parquetDataPath),
-                 "illegal argument - Unknown save mode: abc")
+                 "Error in mode : analysis error - \\[INVALID_SAVE_MODE\\].*")
     unsetHiveContext()
   }
 })
@@ -1472,6 +1472,10 @@ test_that("column functions", {
   c29 <- acosh(c1) + asinh(c1) + atanh(c1)
   c30 <- product(c1) + product(c1 * 0.5)
   c31 <- sec(c1) + csc(c1) + cot(c1)
+  c32 <- ln(c1) + positive(c2) + negative(c3)
+  c33 <- width_bucket(lit(2.5), lit(2.0), lit(3.0), lit(10L))
+  c34 <- collate(c, "UNICODE")
+  c35 <- collation(c)
 
   # Test if base::is.nan() is exposed
   expect_equal(is.nan(c("a", "b")), c(FALSE, FALSE))
@@ -2060,6 +2064,8 @@ test_that("date functions on a DataFrame", {
   expect_equal(collect(select(df, weekofyear(df$b)))[, 1], c(50, 50, 51))
   expect_equal(collect(select(df, year(df$b)))[, 1], c(2012, 2013, 2014))
   expect_equal(collect(select(df, month(df$b)))[, 1], c(12, 12, 12))
+  expect_equal(collect(select(df, monthname(df$b)))[, 1], c("Dec", "Dec", "Dec"))
+  expect_equal(collect(select(df, dayname(df$b)))[, 1], c("Thu", "Sat", "Mon"))
   expect_equal(collect(select(df, last_day(df$b)))[, 1],
                c(as.Date("2012-12-31"), as.Date("2013-12-31"), as.Date("2014-12-31")))
   expect_equal(collect(select(df, next_day(df$b, "MONDAY")))[, 1],
@@ -2806,6 +2812,12 @@ test_that("test hint", {
     explain(hint(df, "hint1", 1.23456, "aaaaaaaaaa", hintList), TRUE)
   )
   expect_true(any(grepl("1.23456, aaaaaaaaaa", execution_plan_hint)))
+
+  a <- column("id")
+  rebalance_plan_hint <- capture.output(
+      explain(hint(df, "rebalance", as.integer(2), a), TRUE)
+  )
+  expect_true(any(grepl("RebalancePartitions", rebalance_plan_hint)))
 })
 
 test_that("toJSON() on DataFrame", {
@@ -3990,13 +4002,13 @@ test_that("Call DataFrameWriter.save() API in Java without path and check argume
                paste("Error in save : org.apache.spark.SparkIllegalArgumentException:",
                      "Expected exactly one path to be specified"))
   expect_error(write.json(df, jsonPath),
-              "Error in json : analysis error - Path file:.*already exists")
+              "Error in json : analysis error - \\[PATH_ALREADY_EXISTS\\].*")
   expect_error(write.text(df, jsonPath),
-              "Error in text : analysis error - Path file:.*already exists")
+              "Error in text : analysis error - \\[PATH_ALREADY_EXISTS\\].*")
   expect_error(write.orc(df, jsonPath),
-              "Error in orc : analysis error - Path file:.*already exists")
+              "Error in orc : analysis error - \\[PATH_ALREADY_EXISTS\\].*")
   expect_error(write.parquet(df, jsonPath),
-              "Error in parquet : analysis error - Path file:.*already exists")
+              "Error in parquet : analysis error - \\[PATH_ALREADY_EXISTS\\].*")
   expect_error(write.parquet(df, jsonPath, mode = 123), "mode should be character or omitted.")
 
   # Arguments checking in R side.
@@ -4014,8 +4026,7 @@ test_that("Call DataFrameWriter.load() API in Java without path and check argume
   # It makes sure that we can omit path argument in read.df API and then it calls
   # DataFrameWriter.load() without path.
   expect_error(read.df(source = "json"),
-               paste("Error in load : analysis error - Unable to infer schema for JSON.",
-                     "It must be specified manually"))
+               "Error in load : analysis error - \\[UNABLE_TO_INFER_SCHEMA\\].*")
   expect_error(read.df("arbitrary_path"),
                "Error in load : analysis error - \\[PATH_NOT_FOUND\\].*")
   expect_error(read.json("arbitrary_path"),
@@ -4096,10 +4107,7 @@ test_that("catalog APIs, listCatalogs, setCurrentCatalog, currentCatalog", {
   expect_equal(currentCatalog(), "spark_catalog")
   expect_error(setCurrentCatalog("spark_catalog"), NA)
   expect_error(setCurrentCatalog("zxwtyswklpf"),
-               paste0("Error in setCurrentCatalog : ",
-               "org.apache.spark.sql.connector.catalog.CatalogNotFoundException: ",
-               "Catalog 'zxwtyswklpf' plugin class not found: ",
-               "spark.sql.catalog.zxwtyswklpf is not defined"))
+               "[CATALOG_NOT_FOUND]*`zxwtyswklpf`*")
   catalogs <- collect(listCatalogs())
 })
 
@@ -4144,7 +4152,8 @@ test_that("catalog APIs, listTables, getTable, listColumns, listFunctions, funct
   c <- listColumns("cars")
   expect_equal(nrow(c), 2)
   expect_equal(colnames(c),
-               c("name", "description", "dataType", "nullable", "isPartition", "isBucket"))
+               c("name", "description", "dataType", "nullable", "isPartition", "isBucket",
+                 "isCluster"))
   expect_equal(collect(c)[[1]][[1]], "speed")
   expect_error(listColumns("zxwtyswklpf", "default"),
                "[TABLE_OR_VIEW_NOT_FOUND]*`spark_catalog`.`default`.`zxwtyswklpf`*")
@@ -4192,8 +4201,7 @@ test_that("catalog APIs, listTables, getTable, listColumns, listFunctions, funct
 
   # recoverPartitions does not work with temporary view
   expect_error(recoverPartitions("cars"),
-               paste("Error in recoverPartitions : analysis error - cars is a temp view.",
-                     "'recoverPartitions()' expects a table"), fixed = TRUE)
+               "[EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE]*`cars`*")
   expect_error(refreshTable("cars"), NA)
   expect_error(refreshByPath("/"), NA)
 
@@ -4235,6 +4243,54 @@ test_that("assert_true, raise_error", {
 
   expect_error(collect(select(filtered, raise_error("error message"))), "error message")
   expect_error(collect(select(filtered, raise_error(filtered$name))), "Justin")
+})
+
+test_that("SPARK-41937: check class column for multi-class object works", {
+  .originalTimeZone <- Sys.getenv("TZ")
+  Sys.setenv(TZ = "")
+  temp_time <- as.POSIXlt("2015-03-11 12:13:04.043", tz = "")
+  sdf <- createDataFrame(
+    data.frame(x = temp_time + c(-1, 1, -1, 1, -1)),
+    schema = structType("x timestamp")
+  )
+  expect_warning(collect(filter(sdf, column("x") > temp_time)), NA)
+  expect_equal(collect(filter(sdf, column("x") > temp_time)), data.frame(x = temp_time + c(1, 1)))
+  expect_warning(collect(filter(sdf, contains(column("x"), temp_time + 5))), NA)
+  expect_warning(
+    collect(
+      mutate(
+        sdf,
+        newcol = otherwise(when(column("x") > lit(temp_time), temp_time), temp_time + 1)
+      )
+    ),
+    NA
+  )
+  expect_equal(
+    collect(
+      mutate(
+        sdf,
+        newcol = otherwise(when(column("x") > lit(temp_time), temp_time), temp_time + 1)
+      )
+    ),
+    data.frame(x = temp_time + c(-1, 1, -1, 1, -1), newcol = temp_time + c(1, 0, 1, 0, 1))
+  )
+  expect_error(
+    collect(fillna(sdf, temp_time)),
+    "value should be an integer, numeric, character or named list"
+  )
+  expect_error(
+    collect(fillna(sdf, list(x = temp_time))),
+    "value should be an integer, numeric or character"
+  )
+  expect_warning(
+    collect(mutate(sdf, x2 = ifelse(column("x") > temp_time, temp_time + 5, temp_time - 5))),
+    NA
+  )
+  expect_equal(
+    collect(mutate(sdf, x2 = ifelse(column("x") > temp_time, temp_time + 5, temp_time - 5))),
+    data.frame(x = temp_time + c(-1, 1, -1, 1, -1), x2 = temp_time + c(-5, 5, -5, 5, -5))
+  )
+  Sys.setenv(TZ = .originalTimeZone)
 })
 
 compare_list <- function(list1, list2) {

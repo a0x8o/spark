@@ -28,6 +28,11 @@ class StateStoreConf(
   def this() = this(new SQLConf)
 
   /**
+   * Size of MaintenanceThreadPool to perform maintenance tasks for StateStore
+   */
+  val numStateStoreMaintenanceThreads: Int = sqlConf.numStateStoreMaintenanceThreads
+
+  /**
    * Minimum number of delta files in a chain after which HDFSBackedStateStore will
    * consider generating a snapshot.
    */
@@ -35,6 +40,14 @@ class StateStoreConf(
 
   /** Minimum versions a State Store implementation should retain to allow rollbacks */
   val minVersionsToRetain: Int = sqlConf.minBatchesToRetain
+
+  /**
+   * Minimum number of stale checkpoint versions that need to be present in the DFS
+   * checkpoint directory for old state checkpoint version deletion to be invoked.
+   * This is to amortize the cost of discovering and deleting old checkpoint versions.
+   */
+  val minVersionsToDelete: Long =
+    Math.round(sqlConf.ratioExtraSpaceAllowedInCheckpoint * sqlConf.minBatchesToRetain)
 
   /** Maximum count of versions a State Store implementation should retain in memory */
   val maxVersionsToRetainInMemory: Int = sqlConf.maxBatchesToRetainInMemory

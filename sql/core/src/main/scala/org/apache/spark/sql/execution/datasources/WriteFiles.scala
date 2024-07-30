@@ -23,12 +23,14 @@ import org.apache.spark.{SparkException, TaskContext}
 import org.apache.spark.internal.io.{FileCommitProtocol, SparkHadoopWriterUtils}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.catalog.BucketSpec
+import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.write.WriterCommitMessage
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.datasources.FileFormatWriter.ConcurrentOutputWriterSpec
-import org.apache.spark.sql.internal.WriteSpec
+import org.apache.spark.util.ArrayImplicits._
 
 /**
  * The write files spec holds all information of [[V1WriteCommand]] if its provider is
@@ -38,33 +40,49 @@ case class WriteFilesSpec(
     description: WriteJobDescription,
     committer: FileCommitProtocol,
     concurrentOutputWriterSpecFunc: SparkPlan => Option[ConcurrentOutputWriterSpec])
-  extends WriteSpec
 
 /**
  * During Optimizer, [[V1Writes]] injects the [[WriteFiles]] between [[V1WriteCommand]] and query.
  * [[WriteFiles]] must be the root plan as the child of [[V1WriteCommand]].
  */
-case class WriteFiles(child: LogicalPlan) extends UnaryNode {
+case class WriteFiles(
+    child: LogicalPlan,
+    fileFormat: FileFormat,
+    partitionColumns: Seq[Attribute],
+    bucketSpec: Option[BucketSpec],
+    options: Map[String, String],
+    staticPartitions: TablePartitionSpec) extends UnaryNode {
   override def output: Seq[Attribute] = child.output
+  override protected def stringArgs: Iterator[Any] = Iterator(child)
   override protected def withNewChildInternal(newChild: LogicalPlan): WriteFiles =
     copy(child = newChild)
+}
+
+trait WriteFilesExecBase extends UnaryExecNode {
+  override def output: Seq[Attribute] = Seq.empty
+
+  override protected def doExecute(): RDD[InternalRow] = {
+    throw SparkException.internalError(s"$nodeName does not support doExecute")
+  }
 }
 
 /**
  * Responsible for writing files.
  */
-case class WriteFilesExec(child: SparkPlan) extends UnaryExecNode {
-  override def output: Seq[Attribute] = Seq.empty
-
-  override protected def doExecuteWrite(writeSpec: WriteSpec): RDD[WriterCommitMessage] = {
-    assert(writeSpec.isInstanceOf[WriteFilesSpec])
-    val writeFilesSpec: WriteFilesSpec = writeSpec.asInstanceOf[WriteFilesSpec]
-
+case class WriteFilesExec(
+    child: SparkPlan,
+    fileFormat: FileFormat,
+    partitionColumns: Seq[Attribute],
+    bucketSpec: Option[BucketSpec],
+    options: Map[String, String],
+    staticPartitions: TablePartitionSpec) extends WriteFilesExecBase {
+  override protected def doExecuteWrite(
+      writeFilesSpec: WriteFilesSpec): RDD[WriterCommitMessage] = {
     val rdd = child.execute()
     // SPARK-23271 If we are attempting to write a zero partition rdd, create a dummy single
     // partition rdd to make sure we at least set up one write task to write the metadata.
     val rddWithNonEmptyPartitions = if (rdd.partitions.length == 0) {
-      session.sparkContext.parallelize(Array.empty[InternalRow], 1)
+      session.sparkContext.parallelize(Array.empty[InternalRow].toImmutableArraySeq, 1)
     } else {
       rdd
     }
@@ -91,10 +109,6 @@ case class WriteFilesExec(child: SparkPlan) extends UnaryExecNode {
 
       Iterator(ret)
     }
-  }
-
-  override protected def doExecute(): RDD[InternalRow] = {
-    throw SparkException.internalError(s"$nodeName does not support doExecute")
   }
 
   override protected def stringArgs: Iterator[Any] = Iterator(child)

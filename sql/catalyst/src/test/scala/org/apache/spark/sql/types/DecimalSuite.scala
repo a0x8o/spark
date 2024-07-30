@@ -19,14 +19,16 @@ package org.apache.spark.sql.types
 
 import org.scalatest.PrivateMethodTester
 
-import org.apache.spark.{SparkArithmeticException, SparkFunSuite, SparkNumberFormatException}
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.{SparkArithmeticException, SparkException, SparkFunSuite, SparkNumberFormatException}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.Decimal._
 import org.apache.spark.unsafe.types.UTF8String
 
 class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper {
+
+  val allSupportedRoundModes = Seq(ROUND_HALF_UP, ROUND_HALF_EVEN, ROUND_CEILING, ROUND_FLOOR)
+
   /** Check that a Decimal has the given string representation, precision and scale */
   private def checkDecimal(d: Decimal, string: String, precision: Int, scale: Int): Unit = {
     assert(d.toString === string)
@@ -63,7 +65,7 @@ class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper
 
     checkError(
       exception = intercept[SparkArithmeticException](Decimal(170L, 2, 1)),
-      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE",
+      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION",
       parameters = Map(
         "value" -> "0",
         "precision" -> "2",
@@ -71,7 +73,7 @@ class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper
         "config" -> "\"spark.sql.ansi.enabled\""))
     checkError(
       exception = intercept[SparkArithmeticException](Decimal(170L, 2, 0)),
-      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE",
+      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION",
       parameters = Map(
         "value" -> "0",
         "precision" -> "2",
@@ -79,15 +81,23 @@ class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper
         "config" -> "\"spark.sql.ansi.enabled\""))
     checkError(
       exception = intercept[SparkArithmeticException](Decimal(BigDecimal("10.030"), 2, 1)),
-      errorClass = "DECIMAL_PRECISION_EXCEEDS_MAX_PRECISION",
-      parameters = Map("precision" -> "3", "maxPrecision" -> "2"))
+      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE.WITHOUT_SUGGESTION",
+      parameters = Map(
+        "roundedValue" -> "10.0",
+        "originalValue" -> "10.030",
+        "precision" -> "2",
+        "scale" -> "1"))
     checkError(
       exception = intercept[SparkArithmeticException](Decimal(BigDecimal("-9.95"), 2, 1)),
-      errorClass = "DECIMAL_PRECISION_EXCEEDS_MAX_PRECISION",
-      parameters = Map("precision" -> "3", "maxPrecision" -> "2"))
+      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE.WITHOUT_SUGGESTION",
+      parameters = Map(
+        "roundedValue" -> "-10.0",
+        "originalValue" -> "-9.95",
+        "precision" -> "2",
+        "scale" -> "1"))
     checkError(
       exception = intercept[SparkArithmeticException](Decimal(1e17.toLong, 17, 0)),
-      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE",
+      errorClass = "NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION",
       parameters = Map(
         "value" -> "0",
         "precision" -> "17",
@@ -108,9 +118,13 @@ class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper
 
   test("SPARK-30252: Negative scale is not allowed by default") {
     def checkNegativeScaleDecimal(d: => Decimal): Unit = {
-      intercept[AnalysisException](d)
-        .getMessage
-        .contains("Negative scale is not allowed under ansi mode")
+      checkError(
+        exception = intercept[SparkException] (d),
+        errorClass = "INTERNAL_ERROR",
+        parameters = Map("message" -> ("Negative scale is not allowed: -3. " +
+          "Set the config \"spark.sql.legacy.allowNegativeScaleOfDecimal\" " +
+          "to \"true\" to allow it."))
+      )
     }
     checkNegativeScaleDecimal(Decimal(BigDecimal("98765"), 5, -3))
     checkNegativeScaleDecimal(Decimal(BigDecimal("98765").underlying(), 5, -3))
@@ -278,7 +292,7 @@ class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper
   }
 
   test("changePrecision/toPrecision on compact decimal should respect rounding mode") {
-    Seq(ROUND_FLOOR, ROUND_CEILING, ROUND_HALF_UP, ROUND_HALF_EVEN).foreach { mode =>
+    allSupportedRoundModes.foreach { mode =>
       Seq("0.4", "0.5", "0.6", "1.0", "1.1", "1.6", "2.5", "5.5").foreach { n =>
         Seq("", "-").foreach { sign =>
           val bd = BigDecimal(sign + n)
@@ -295,6 +309,17 @@ class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper
         }
       }
     }
+  }
+
+  test("Not supported rounding mode: HALF_DOWN") {
+    val d = Decimal(10000L, 100, 80)
+    checkError(
+      exception = intercept[SparkException] {
+        d.toPrecision(5, 50, BigDecimal.RoundingMode.HALF_DOWN)
+      },
+      errorClass = "INTERNAL_ERROR",
+      parameters = Map("message" -> "Not supported rounding mode: HALF_DOWN.")
+    )
   }
 
   test("SPARK-20341: support BigInt's value does not fit in long value range") {
@@ -382,6 +407,53 @@ class DecimalSuite extends SparkFunSuite with PrivateMethodTester with SQLHelper
         assert(Decimal.fromString(UTF8String.fromString(string)) === Decimal(string))
         assert(Decimal.fromStringANSI(UTF8String.fromString(string)) === Decimal(string))
       }
+    }
+  }
+
+  // 18 is a max number of digits in Decimal's compact long
+  test("SPARK-41554: decrease/increase scale by 18 and more on compact decimal") {
+    val unscaledNums = Seq(
+      0L, 1L, 10L, 51L, 123L, 523L,
+      // 18 digits
+      912345678901234567L,
+      112345678901234567L,
+      512345678901234567L
+    )
+    val precision = 38
+    // generate some (from, to) scale pairs, e.g. (38, 18), (-20, -2), etc
+    val scalePairs = for {
+      scale <- Seq(38, 20, 19, 18)
+      delta <- Seq(38, 20, 19, 18)
+      a = scale
+      b = scale - delta
+    } yield {
+      Seq((a, b), (-a, -b), (b, a), (-b, -a))
+    }
+
+    for {
+      unscaled <- unscaledNums
+      mode <- allSupportedRoundModes
+      (scaleFrom, scaleTo) <- scalePairs.flatten
+      sign <- Seq(1L, -1L)
+    } {
+      val unscaledWithSign = unscaled * sign
+      if (scaleFrom < 0 || scaleTo < 0) {
+        withSQLConf(SQLConf.LEGACY_ALLOW_NEGATIVE_SCALE_OF_DECIMAL_ENABLED.key -> "true") {
+          checkScaleChange(unscaledWithSign, scaleFrom, scaleTo, mode)
+        }
+      } else {
+        checkScaleChange(unscaledWithSign, scaleFrom, scaleTo, mode)
+      }
+    }
+
+    def checkScaleChange(unscaled: Long, scaleFrom: Int, scaleTo: Int,
+                         roundMode: BigDecimal.RoundingMode.Value): Unit = {
+      val decimal = Decimal(unscaled, precision, scaleFrom)
+      checkCompact(decimal, true)
+      decimal.changePrecision(precision, scaleTo, roundMode)
+      val bd = BigDecimal(unscaled, scaleFrom).setScale(scaleTo, roundMode)
+      assert(decimal.toBigDecimal === bd,
+        s"unscaled: $unscaled, scaleFrom: $scaleFrom, scaleTo: $scaleTo, mode: $roundMode")
     }
   }
 }

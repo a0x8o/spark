@@ -17,10 +17,9 @@
 
 package org.apache.spark.sql.hive.orc
 
-import java.net.URI
 import java.util.Properties
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
 
 import com.esotericsoftware.kryo.Kryo
@@ -28,7 +27,6 @@ import com.esotericsoftware.kryo.io.Output
 import org.apache.commons.codec.binary.Base64
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-import org.apache.hadoop.hive.conf.HiveConf.ConfVars
 import org.apache.hadoop.hive.ql.io.orc._
 import org.apache.hadoop.hive.ql.io.sarg.SearchArgument
 import org.apache.hadoop.hive.serde2.objectinspector
@@ -141,7 +139,7 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
       // Sets pushed predicates
       OrcFilters.createFilter(requiredSchema, filters).foreach { f =>
         hadoopConf.set(OrcFileFormat.SARG_PUSHDOWN, toKryo(f))
-        hadoopConf.setBoolean(ConfVars.HIVEOPTINDEXFILTER.varname, true)
+        hadoopConf.setBoolean("hive.optimize.index.filter", true)
       }
     }
 
@@ -152,7 +150,7 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
     (file: PartitionedFile) => {
       val conf = broadcastedHadoopConf.value.value
 
-      val filePath = new Path(new URI(file.filePath))
+      val filePath = file.toPath
 
       // SPARK-8501: Empty ORC files always have an empty schema stored in their footer. In this
       // case, `OrcFileOperator.readSchema` returns `None`, and we can't read the underlying file
@@ -166,7 +164,7 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
 
         val orcRecordReader = {
           val job = Job.getInstance(conf)
-          FileInputFormat.setInputPaths(job, file.filePath)
+          FileInputFormat.setInputPaths(job, file.urlEncodedPath)
 
           // Custom OrcRecordReader is used to get
           // ObjectInspector during recordReader creation itself and can
@@ -192,6 +190,8 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
   }
 
   override def supportDataType(dataType: DataType): Boolean = dataType match {
+    case _: VariantType => false
+
     case _: AnsiIntervalType => false
 
     case _: AtomicType => true

@@ -17,20 +17,24 @@
 
 package org.apache.spark.ml.feature
 
+import java.util.ArrayList
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.annotation.Since
+import org.apache.spark.internal.{LogKeys, MDC}
 import org.apache.spark.ml.{Estimator, Model, Transformer}
 import org.apache.spark.ml.attribute.{Attribute, NominalAttribute}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util._
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, Encoders, Row}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Encoder, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{If, Literal}
 import org.apache.spark.sql.expressions.Aggregator
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
+import org.apache.spark.util.ArrayImplicits._
 import org.apache.spark.util.ThreadUtils
 import org.apache.spark.util.VersionUtils.majorMinorVersion
 import org.apache.spark.util.collection.OpenHashMap
@@ -101,8 +105,8 @@ private[feature] trait StringIndexerBase extends Params with HasHandleInvalid wi
   private def validateAndTransformField(
       schema: StructType,
       inputColName: String,
+      inputDataType: DataType,
       outputColName: String): StructField = {
-    val inputDataType = schema(inputColName).dataType
     require(inputDataType == StringType || inputDataType.isInstanceOf[NumericType],
       s"The input column $inputColName must be either string type or numeric type, " +
         s"but got $inputDataType.")
@@ -120,12 +124,22 @@ private[feature] trait StringIndexerBase extends Params with HasHandleInvalid wi
     require(outputColNames.distinct.length == outputColNames.length,
       s"Output columns should not be duplicate.")
 
+    val sparkSession = SparkSession.getActiveSession.get
+    val transformDataset = sparkSession.createDataFrame(new ArrayList[Row](), schema = schema)
     val outputFields = inputColNames.zip(outputColNames).flatMap {
       case (inputColName, outputColName) =>
-        schema.fieldNames.contains(inputColName) match {
-          case true => Some(validateAndTransformField(schema, inputColName, outputColName))
-          case false if skipNonExistsCol => None
-          case _ => throw new SparkException(s"Input column $inputColName does not exist.")
+        try {
+          val dtype = transformDataset.col(inputColName).expr.dataType
+          Some(
+            validateAndTransformField(schema, inputColName, dtype, outputColName)
+          )
+        } catch {
+          case _: AnalysisException =>
+            if (skipNonExistsCol) {
+              None
+            } else {
+              throw new SparkException(s"Input column $inputColName does not exist.")
+            }
         }
     }
     StructType(schema.fields ++ outputFields)
@@ -197,9 +211,9 @@ class StringIndexer @Since("1.4.0") (
     val aggregator = new StringIndexerAggregator(inputCols.length)
     implicit val encoder = Encoders.kryo[Array[OpenHashMap[String, Long]]]
 
-    val selectedCols = getSelectedCols(dataset, inputCols)
+    val selectedCols = getSelectedCols(dataset, inputCols.toImmutableArraySeq)
     dataset.select(selectedCols: _*)
-      .toDF
+      .toDF()
       .agg(aggregator.toColumn)
       .as[Array[OpenHashMap[String, Long]]]
       .collect()(0)
@@ -209,7 +223,7 @@ class StringIndexer @Since("1.4.0") (
     val (inputCols, _) = getInOutCols()
 
     val sortFunc = StringIndexer.getSortFunc(ascending = ascending)
-    val orgStrings = countByValue(dataset, inputCols).toSeq
+    val orgStrings = countByValue(dataset, inputCols).toImmutableArraySeq
     ThreadUtils.parmap(orgStrings, "sortingStringLabels", 8) { counts =>
       counts.toSeq.sortWith(sortFunc).map(_._1).toArray
     }.toArray
@@ -218,9 +232,9 @@ class StringIndexer @Since("1.4.0") (
   private def sortByAlphabet(dataset: Dataset[_], ascending: Boolean): Array[Array[String]] = {
     val (inputCols, _) = getInOutCols()
 
-    val selectedCols = getSelectedCols(dataset, inputCols).map(collect_set(_))
+    val selectedCols = getSelectedCols(dataset, inputCols.toImmutableArraySeq).map(collect_set)
     val allLabels = dataset.select(selectedCols: _*)
-      .collect().toSeq.flatMap(_.toSeq)
+      .collect().toImmutableArraySeq.flatMap(_.toSeq)
       .asInstanceOf[scala.collection.Seq[scala.collection.Seq[String]]].toSeq
     ThreadUtils.parmap(allLabels, "sortingStringLabels", 8) { labels =>
       val sorted = labels.filter(_ != null).sorted
@@ -418,7 +432,7 @@ class StringIndexerModel (
 
     // Skips invalid rows if `handleInvalid` is set to `StringIndexer.SKIP_INVALID`.
     val filteredDataset = if (getHandleInvalid == StringIndexer.SKIP_INVALID) {
-      filterInvalidData(dataset, inputColNames)
+      filterInvalidData(dataset, inputColNames.toImmutableArraySeq)
     } else {
       dataset
     }
@@ -429,11 +443,8 @@ class StringIndexerModel (
       val labelToIndex = labelsToIndexArray(i)
       val labels = labelsArray(i)
 
-      if (!dataset.schema.fieldNames.contains(inputColName)) {
-        logWarning(s"Input column ${inputColName} does not exist during transformation. " +
-          "Skip StringIndexerModel for this column.")
-        outputColNames(i) = null
-      } else {
+      try {
+        dataset.col(inputColName)
         val filteredLabels = getHandleInvalid match {
           case StringIndexer.KEEP_INVALID => labels :+ "__unknown"
           case _ => labels
@@ -443,19 +454,24 @@ class StringIndexerModel (
           .withValues(filteredLabels)
           .toMetadata()
 
-        val indexer = getIndexer(labels, labelToIndex)
+        val indexer = getIndexer(labels.toImmutableArraySeq, labelToIndex)
 
         outputColumns(i) = indexer(dataset(inputColName).cast(StringType))
           .as(outputColName, metadata)
+      } catch {
+        case _: AnalysisException =>
+          logWarning(log"Input column ${MDC(LogKeys.COLUMN_NAME, inputColName)} does not exist " +
+            log"during transformation. Skip StringIndexerModel for this column.")
+          outputColNames(i) = null
       }
     }
-
     val filteredOutputColNames = outputColNames.filter(_ != null)
     val filteredOutputColumns = outputColumns.filter(_ != null)
 
     require(filteredOutputColNames.length == filteredOutputColumns.length)
     if (filteredOutputColNames.length > 0) {
-      filteredDataset.withColumns(filteredOutputColNames, filteredOutputColumns)
+      filteredDataset.withColumns(
+        filteredOutputColNames.toImmutableArraySeq, filteredOutputColumns.toImmutableArraySeq)
     } else {
       filteredDataset.toDF()
     }
@@ -493,10 +509,10 @@ object StringIndexerModel extends MLReadable[StringIndexerModel] {
     private case class Data(labelsArray: Array[Array[String]])
 
     override protected def saveImpl(path: String): Unit = {
-      DefaultParamsWriter.saveMetadata(instance, path, sc)
+      DefaultParamsWriter.saveMetadata(instance, path, sparkSession)
       val data = Data(instance.labelsArray)
       val dataPath = new Path(path, "data").toString
-      sparkSession.createDataFrame(Seq(data)).repartition(1).write.parquet(dataPath)
+      sparkSession.createDataFrame(Seq(data)).write.parquet(dataPath)
     }
   }
 
@@ -505,7 +521,7 @@ object StringIndexerModel extends MLReadable[StringIndexerModel] {
     private val className = classOf[StringIndexerModel].getName
 
     override def load(path: String): StringIndexerModel = {
-      val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
+      val metadata = DefaultParamsReader.loadMetadata(path, sparkSession, className)
       val dataPath = new Path(path, "data").toString
 
       // We support loading old `StringIndexerModel` saved by previous Spark versions.

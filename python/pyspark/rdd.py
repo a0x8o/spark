@@ -87,11 +87,15 @@ from pyspark.shuffle import (
 )
 from pyspark.traceback_utils import SCCallSiteSync
 from pyspark.util import fail_on_stopiteration, _parse_memory
+from pyspark.errors import PySparkRuntimeError
 
 
 if TYPE_CHECKING:
     import socket
     import io
+
+    from py4j.java_gateway import JavaObject
+    from py4j.java_collections import JavaArray
 
     from pyspark._typing import NonUDFType
     from pyspark._typing import S, NumberOrArray
@@ -106,13 +110,19 @@ if TYPE_CHECKING:
         PandasCogroupedMapUDFType,
         ArrowMapIterUDFType,
         PandasGroupedMapUDFWithStateType,
+        ArrowGroupedMapUDFType,
+        ArrowCogroupedMapUDFType,
     )
     from pyspark.sql.dataframe import DataFrame
     from pyspark.sql.types import AtomicType, StructType
-    from pyspark.sql._typing import AtomicValue, RowLike, SQLBatchedUDFType
-
-    from py4j.java_gateway import JavaObject
-    from py4j.java_collections import JavaArray
+    from pyspark.sql._typing import (
+        AtomicValue,
+        RowLike,
+        SQLArrowBatchedUDFType,
+        SQLArrowTableUDFType,
+        SQLBatchedUDFType,
+        SQLTableUDFType,
+    )
 
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
@@ -139,6 +149,7 @@ class PythonEvalType:
     NON_UDF: "NonUDFType" = 0
 
     SQL_BATCHED_UDF: "SQLBatchedUDFType" = 100
+    SQL_ARROW_BATCHED_UDF: "SQLArrowBatchedUDFType" = 101
 
     SQL_SCALAR_PANDAS_UDF: "PandasScalarUDFType" = 200
     SQL_GROUPED_MAP_PANDAS_UDF: "PandasGroupedMapUDFType" = 201
@@ -149,6 +160,11 @@ class PythonEvalType:
     SQL_COGROUPED_MAP_PANDAS_UDF: "PandasCogroupedMapUDFType" = 206
     SQL_MAP_ARROW_ITER_UDF: "ArrowMapIterUDFType" = 207
     SQL_GROUPED_MAP_PANDAS_UDF_WITH_STATE: "PandasGroupedMapUDFWithStateType" = 208
+    SQL_GROUPED_MAP_ARROW_UDF: "ArrowGroupedMapUDFType" = 209
+    SQL_COGROUPED_MAP_ARROW_UDF: "ArrowCogroupedMapUDFType" = 210
+
+    SQL_TABLE_UDF: "SQLTableUDFType" = 300
+    SQL_ARROW_TABLE_UDF: "SQLArrowTableUDFType" = 301
 
 
 def portable_hash(x: Hashable) -> int:
@@ -167,7 +183,10 @@ def portable_hash(x: Hashable) -> int:
     """
 
     if "PYTHONHASHSEED" not in os.environ:
-        raise RuntimeError("Randomness of hash of string should be disabled via PYTHONHASHSEED")
+        raise PySparkRuntimeError(
+            error_class="PYTHON_HASH_SEED_NOT_SET",
+            message_parameters={},
+        )
 
     if x is None:
         return 0
@@ -275,7 +294,6 @@ def _local_iterator_from_socket(sock_info: "JavaArray", serializer: Serializer) 
                 # If response is 1 then there is a partition to read, if 0 then fully consumed
                 self._read_status = read_int(self._sockfile)
                 if self._read_status == 1:
-
                     # Load the partition data as a stream and read each item
                     self._read_iter = self._serializer.load_stream(self._sockfile)
                     for item in self._read_iter:
@@ -368,13 +386,9 @@ class RDD(Generic[T_co]):
 
     def __getnewargs__(self) -> NoReturn:
         # This method is called when attempting to pickle an RDD, which is always an error:
-        raise RuntimeError(
-            "It appears that you are attempting to broadcast an RDD or reference an RDD from an "
-            "action or transformation. RDD transformations and actions can only be invoked by the "
-            "driver, not inside of other transformations; for example, "
-            "rdd1.map(lambda x: rdd2.values.count() * x) is invalid because the values "
-            "transformation and count action cannot be performed inside of the rdd1.map "
-            "transformation. For more information, see SPARK-5063."
+        raise PySparkRuntimeError(
+            error_class="RDD_TRANSFORM_ONLY_VALID_ON_DRIVER",
+            message_parameters={},
         )
 
     @property
@@ -719,6 +733,7 @@ class RDD(Generic[T_co]):
         preservesPartitioning : bool, optional, default False
             indicates whether the input function preserves the partitioner,
             which should be False unless this is a pair RDD and the input
+            function doesn't modify the keys
 
         Returns
         -------
@@ -760,6 +775,7 @@ class RDD(Generic[T_co]):
         preservesPartitioning : bool, optional, default False
             indicates whether the input function preserves the partitioner,
             which should be False unless this is a pair RDD and the input
+            function doesn't modify the keys
 
         Returns
         -------
@@ -802,6 +818,7 @@ class RDD(Generic[T_co]):
         preservesPartitioning : bool, optional, default False
             indicates whether the input function preserves the partitioner,
             which should be False unless this is a pair RDD and the input
+            function doesn't modify the keys
 
         Returns
         -------
@@ -820,6 +837,7 @@ class RDD(Generic[T_co]):
         --------
         >>> rdd = sc.parallelize([1, 2, 3, 4], 2)
         >>> def f(iterator): yield sum(iterator)
+        ...
         >>> rdd.mapPartitions(f).collect()
         [3, 7]
         """
@@ -847,6 +865,7 @@ class RDD(Generic[T_co]):
         preservesPartitioning : bool, optional, default False
             indicates whether the input function preserves the partitioner,
             which should be False unless this is a pair RDD and the input
+            function doesn't modify the keys
 
         Returns
         -------
@@ -865,6 +884,7 @@ class RDD(Generic[T_co]):
         --------
         >>> rdd = sc.parallelize([1, 2, 3, 4], 4)
         >>> def f(splitIndex, iterator): yield splitIndex
+        ...
         >>> rdd.mapPartitionsWithIndex(f).sum()
         6
         """
@@ -891,6 +911,7 @@ class RDD(Generic[T_co]):
         preservesPartitioning : bool, optional, default False
             indicates whether the input function preserves the partitioner,
             which should be False unless this is a pair RDD and the input
+            function doesn't modify the keys
 
         Returns
         -------
@@ -908,6 +929,7 @@ class RDD(Generic[T_co]):
         --------
         >>> rdd = sc.parallelize([1, 2, 3, 4], 4)
         >>> def f(splitIndex, iterator): yield splitIndex
+        ...
         >>> rdd.mapPartitionsWithSplit(f).sum()
         6
         """
@@ -1106,7 +1128,7 @@ class RDD(Generic[T_co]):
 
         Parameters
         ----------
-        withReplacement : list
+        withReplacement : bool
             whether sampling is done with replacement
         num : int
             size of the returned sample
@@ -1512,7 +1534,7 @@ class RDD(Generic[T_co]):
             if ascending:
                 return p
             else:
-                return numPartitions - 1 - p  # type: ignore[operator]
+                return numPartitions - 1 - p
 
         return self.partitionBy(numPartitions, rangePartitioner).mapPartitions(sortPartition, True)
 
@@ -1699,9 +1721,12 @@ class RDD(Generic[T_co]):
             def check_return_code() -> Iterable[int]:
                 pipe.wait()
                 if checkCode and pipe.returncode:
-                    raise RuntimeError(
-                        "Pipe function `%s' exited "
-                        "with error code %d" % (command, pipe.returncode)
+                    raise PySparkRuntimeError(
+                        error_class="PIPE_FUNCTION_EXITED",
+                        message_parameters={
+                            "func_name": command,
+                            "error_code": str(pipe.returncode),
+                        },
                     )
                 else:
                     for i in range(0):
@@ -1725,7 +1750,7 @@ class RDD(Generic[T_co]):
         Parameters
         ----------
         f : function
-            a function applyed to each element
+            a function applied to each element
 
         See Also
         --------
@@ -1736,6 +1761,7 @@ class RDD(Generic[T_co]):
         Examples
         --------
         >>> def f(x): print(x)
+        ...
         >>> sc.parallelize([1, 2, 3, 4, 5]).foreach(f)
         """
         f = fail_on_stopiteration(f)
@@ -1769,6 +1795,7 @@ class RDD(Generic[T_co]):
         >>> def f(iterator):
         ...     for x in iterator:
         ...          print(x)
+        ...
         >>> sc.parallelize([1, 2, 3, 4, 5]).foreachPartition(f)
         """
 
@@ -2206,7 +2233,7 @@ class RDD(Generic[T_co]):
         """
         if key is None:
             return self.reduce(max)  # type: ignore[arg-type]
-        return self.reduce(lambda a, b: max(a, b, key=key))  # type: ignore[arg-type]
+        return self.reduce(lambda a, b: max(a, b, key=key))
 
     @overload
     def min(self: "RDD[S]") -> "S":
@@ -2246,7 +2273,7 @@ class RDD(Generic[T_co]):
         """
         if key is None:
             return self.reduce(min)  # type: ignore[arg-type]
-        return self.reduce(lambda a, b: min(a, b, key=key))  # type: ignore[arg-type]
+        return self.reduce(lambda a, b: min(a, b, key=key))
 
     def sum(self: "RDD[NumberOrArray]") -> "NumberOrArray":
         """
@@ -2459,14 +2486,14 @@ class RDD(Generic[T_co]):
             raise TypeError("buckets should be a list or tuple or number(int or long)")
 
         def histogram(iterator: Iterable["S"]) -> Iterable[List[int]]:
-            counters = [0] * len(buckets)  # type: ignore[arg-type]
+            counters = [0] * len(buckets)
             for i in iterator:
                 if i is None or (isinstance(i, float) and isnan(i)) or i > maxv or i < minv:
                     continue
                 t = (
                     int((i - minv) / inc)  # type: ignore[operator]
                     if even
-                    else bisect.bisect_right(buckets, i) - 1  # type: ignore[arg-type]
+                    else bisect.bisect_right(buckets, i) - 1
                 )
                 counters[t] += 1
             # add last two together
@@ -2943,7 +2970,7 @@ class RDD(Generic[T_co]):
         >>> key_class = "org.apache.hadoop.io.IntWritable"
         >>> value_class = "org.apache.hadoop.io.Text"
 
-        >>> with tempfile.TemporaryDirectory() as d:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsNewAPIHadoopDataset") as d:
         ...     path = os.path.join(d, "new_hadoop_file")
         ...
         ...     # Create the conf for writing
@@ -3032,7 +3059,7 @@ class RDD(Generic[T_co]):
 
         >>> output_format_class = "org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat"
 
-        >>> with tempfile.TemporaryDirectory() as d:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsNewAPIHadoopFile") as d:
         ...     path = os.path.join(d, "hadoop_file")
         ...
         ...     # Write a temporary Hadoop file
@@ -3102,7 +3129,7 @@ class RDD(Generic[T_co]):
         >>> key_class = "org.apache.hadoop.io.IntWritable"
         >>> value_class = "org.apache.hadoop.io.Text"
 
-        >>> with tempfile.TemporaryDirectory() as d:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsHadoopDataset") as d:
         ...     path = os.path.join(d, "old_hadoop_file")
         ...
         ...     # Create the conf for writing
@@ -3197,7 +3224,7 @@ class RDD(Generic[T_co]):
         >>> key_class = "org.apache.hadoop.io.IntWritable"
         >>> value_class = "org.apache.hadoop.io.Text"
 
-        >>> with tempfile.TemporaryDirectory() as d:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsHadoopFile") as d:
         ...     path = os.path.join(d, "old_hadoop_file")
         ...
         ...     # Write a temporary Hadoop file
@@ -3263,7 +3290,7 @@ class RDD(Generic[T_co]):
 
         Set the related classes
 
-        >>> with tempfile.TemporaryDirectory() as d:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsSequenceFile") as d:
         ...     path = os.path.join(d, "sequence_file")
         ...
         ...     # Write a temporary sequence file
@@ -3305,7 +3332,7 @@ class RDD(Generic[T_co]):
         --------
         >>> import os
         >>> import tempfile
-        >>> with tempfile.TemporaryDirectory() as d:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsPickleFile") as d:
         ...     path = os.path.join(d, "pickle_file")
         ...
         ...     # Write a temporary pickled file
@@ -3347,7 +3374,7 @@ class RDD(Generic[T_co]):
         >>> import tempfile
         >>> from fileinput import input
         >>> from glob import glob
-        >>> with tempfile.TemporaryDirectory() as d1:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsTextFile1") as d1:
         ...     path1 = os.path.join(d1, "text_file1")
         ...
         ...     # Write a temporary text file
@@ -3359,7 +3386,7 @@ class RDD(Generic[T_co]):
 
         Empty lines are tolerated when saving to text files.
 
-        >>> with tempfile.TemporaryDirectory() as d2:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsTextFile2") as d2:
         ...     path2 = os.path.join(d2, "text2_file2")
         ...
         ...     # Write another temporary text file
@@ -3372,7 +3399,7 @@ class RDD(Generic[T_co]):
         Using compressionCodecClass
 
         >>> from fileinput import input, hook_compressed
-        >>> with tempfile.TemporaryDirectory() as d3:
+        >>> with tempfile.TemporaryDirectory(prefix="saveAsTextFile3") as d3:
         ...     path3 = os.path.join(d3, "text3")
         ...     codec = "org.apache.hadoop.io.compress.GzipCodec"
         ...
@@ -3824,8 +3851,10 @@ class RDD(Generic[T_co]):
         0
         """
         if numPartitions is None:
-            numPartitions = self._defaultReducePartitions()
-        partitioner = Partitioner(numPartitions, partitionFunc)
+            num_partitions = self._defaultReducePartitions()
+        else:
+            num_partitions = numPartitions
+        partitioner = Partitioner(num_partitions, partitionFunc)
         if self.partitioner == partitioner:
             return self
 
@@ -3840,12 +3869,11 @@ class RDD(Generic[T_co]):
         limit = self._memory_limit() / 2
 
         def add_shuffle_key(split: int, iterator: Iterable[Tuple[K, V]]) -> Iterable[bytes]:
-
             buckets = defaultdict(list)
-            c, batch = 0, min(10 * numPartitions, 1000)  # type: ignore[operator]
+            c, batch = 0, min(10 * num_partitions, 1000)
 
             for k, v in iterator:
-                buckets[partitionFunc(k) % numPartitions].append((k, v))  # type: ignore[operator]
+                buckets[partitionFunc(k) % num_partitions].append((k, v))
                 c += 1
 
                 # check used memory and avg size of chunk of objects
@@ -3876,7 +3904,7 @@ class RDD(Generic[T_co]):
 
         with SCCallSiteSync(self.context):
             pairRDD = self.ctx._jvm.PairwiseRDD(keyed._jrdd.rdd()).asJavaPairRDD()
-            jpartitioner = self.ctx._jvm.PythonPartitioner(numPartitions, id(partitionFunc))
+            jpartitioner = self.ctx._jvm.PythonPartitioner(num_partitions, id(partitionFunc))
         jrdd = self.ctx._jvm.PythonRDD.valueOfPair(pairRDD.partitionBy(jpartitioner))
         rdd: "RDD[Tuple[K, V]]" = RDD(jrdd, self.ctx, BatchedSerializer(outputSerializer))
         rdd.partitioner = partitioner
@@ -4195,6 +4223,7 @@ class RDD(Generic[T_co]):
         --------
         >>> rdd = sc.parallelize([("a", ["x", "y", "z"]), ("b", ["p", "r"])])
         >>> def f(x): return x
+        ...
         >>> rdd.flatMapValues(f).collect()
         [('a', 'x'), ('a', 'y'), ('a', 'z'), ('b', 'p'), ('b', 'r')]
         """
@@ -4231,6 +4260,7 @@ class RDD(Generic[T_co]):
         --------
         >>> rdd = sc.parallelize([("a", ["apple", "banana", "lemon"]), ("b", ["grapes"])])
         >>> def f(x): return len(x)
+        ...
         >>> rdd.mapValues(f).collect()
         [('a', 3), ('b', 1)]
         """
@@ -5215,7 +5245,13 @@ class RDD(Generic[T_co]):
     def toDF(
         self: "RDD[Any]", schema: Optional[Any] = None, sampleRatio: Optional[float] = None
     ) -> "DataFrame":
-        raise RuntimeError("""RDD.toDF was called before SparkSession was initialized.""")
+        raise PySparkRuntimeError(
+            error_class="CALL_BEFORE_INITIALIZE",
+            message_parameters={
+                "func_name": "RDD.toDF",
+                "object": "SparkSession",
+            },
+        )
 
 
 def _prepare_for_python_RDD(sc: "SparkContext", command: Any) -> Tuple[bytes, Any, Any, Any]:
@@ -5285,6 +5321,7 @@ class RDDBarrier(Generic[T]):
         preservesPartitioning : bool, optional, default False
             indicates whether the input function preserves the partitioner,
             which should be False unless this is a pair RDD and the input
+            function doesn't modify the keys
 
         Returns
         -------
@@ -5303,6 +5340,7 @@ class RDDBarrier(Generic[T]):
         --------
         >>> rdd = sc.parallelize([1, 2, 3, 4], 2)
         >>> def f(iterator): yield sum(iterator)
+        ...
         >>> barrier = rdd.barrier()
         >>> barrier
         <pyspark.rdd.RDDBarrier ...>
@@ -5336,6 +5374,7 @@ class RDDBarrier(Generic[T]):
         preservesPartitioning : bool, optional, default False
             indicates whether the input function preserves the partitioner,
             which should be False unless this is a pair RDD and the input
+            function doesn't modify the keys
 
         Returns
         -------
@@ -5354,6 +5393,7 @@ class RDDBarrier(Generic[T]):
         --------
         >>> rdd = sc.parallelize([1, 2, 3, 4], 4)
         >>> def f(splitIndex, iterator): yield splitIndex
+        ...
         >>> barrier = rdd.barrier()
         >>> barrier
         <pyspark.rdd.RDDBarrier ...>

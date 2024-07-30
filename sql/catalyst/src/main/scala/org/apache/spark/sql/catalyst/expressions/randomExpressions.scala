@@ -22,6 +22,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedSeed
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode, FalseLiteral}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.catalyst.trees.TreePattern.{EXPRESSION_WITH_RANDOM_SEED, TreePattern}
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.types._
 import org.apache.spark.util.random.XORShiftRandom
 
@@ -32,13 +33,15 @@ import org.apache.spark.util.random.XORShiftRandom
  *
  * Since this expression is stateful, it cannot be a case object.
  */
-abstract class RDG extends UnaryExpression with ExpectsInputTypes with Stateful
+abstract class RDG extends UnaryExpression with ExpectsInputTypes with Nondeterministic
   with ExpressionWithRandomSeed {
   /**
    * Record ID within each partition. By being transient, the Random Number Generator is
    * reset every time we serialize and deserialize and initialize it.
    */
   @transient protected var rng: XORShiftRandom = _
+
+  override def stateful: Boolean = true
 
   override protected def initializeInternal(partitionIndex: Int): Unit = {
     rng = new XORShiftRandom(seed + partitionIndex)
@@ -67,6 +70,14 @@ trait ExpressionWithRandomSeed extends Expression {
 
   def seedExpression: Expression
   def withNewSeed(seed: Long): Expression
+}
+
+private[catalyst] object ExpressionWithRandomSeed {
+  def expressionToSeed(e: Expression, source: String): Option[Long] = e match {
+    case LongLiteral(seed) => Some(seed)
+    case Literal(null, _) => None
+    case _ => throw QueryCompilationErrors.invalidRandomSeedParameter(source, e)
+  }
 }
 
 /** Generate a random column with i.i.d. uniformly distributed values in [0, 1). */
@@ -107,8 +118,6 @@ case class Rand(child: Expression, hideSeed: Boolean = false) extends RDG {
       final ${CodeGenerator.javaType(dataType)} ${ev.value} = $rngTerm.nextDouble();""",
       isNull = FalseLiteral)
   }
-
-  override def freshCopy(): Rand = Rand(child, hideSeed)
 
   override def flatArguments: Iterator[Any] = Iterator(child)
   override def sql: String = {
@@ -160,8 +169,6 @@ case class Randn(child: Expression, hideSeed: Boolean = false) extends RDG {
       final ${CodeGenerator.javaType(dataType)} ${ev.value} = $rngTerm.nextGaussian();""",
       isNull = FalseLiteral)
   }
-
-  override def freshCopy(): Randn = Randn(child, hideSeed)
 
   override def flatArguments: Iterator[Any] = Iterator(child)
   override def sql: String = {

@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.TypedImperativeAggreg
 import org.apache.spark.sql.catalyst.trees.BinaryLike
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 /**
  * A builder object that provides summary statistics about a given column.
@@ -93,8 +94,8 @@ object Summarizer extends Logging {
    * The following metrics are accepted (case sensitive):
    *  - mean: a vector that contains the coefficient-wise mean.
    *  - sum: a vector that contains the coefficient-wise sum.
-   *  - variance: a vector tha contains the coefficient-wise variance.
-   *  - std: a vector tha contains the coefficient-wise standard deviation.
+   *  - variance: a vector that contains the coefficient-wise variance.
+   *  - std: a vector that contains the coefficient-wise standard deviation.
    *  - count: the count of all vectors seen.
    *  - numNonzeros: a vector with the number of non-zeros for each coefficients
    *  - max: the maximum for each coefficient.
@@ -105,7 +106,7 @@ object Summarizer extends Logging {
    * @return a builder.
    * @throws IllegalArgumentException if one of the metric names is not understood.
    *
-   * Note: Currently, the performance of this interface is about 2x~3x slower then using the RDD
+   * Note: Currently, the performance of this interface is about 2x~3x slower than using the RDD
    * interface.
    */
   @Since("2.3.0")
@@ -397,17 +398,12 @@ private[spark] object SummaryBuilderImpl extends Logging {
 
     override def serialize(state: SummarizerBuffer): Array[Byte] = {
       // TODO: Use ByteBuffer to optimize
-      val bos = new ByteArrayOutputStream()
-      val oos = new ObjectOutputStream(bos)
-      oos.writeObject(state)
-      bos.toByteArray
+      Utils.serialize(state)
     }
 
     override def deserialize(bytes: Array[Byte]): SummarizerBuffer = {
       // TODO: Use ByteBuffer to optimize
-      val bis = new ByteArrayInputStream(bytes)
-      val ois = new ObjectInputStream(bis)
-      ois.readObject().asInstanceOf[SummarizerBuffer]
+      Utils.deserialize(bytes)
     }
 
     override def withNewMutableAggBufferOffset(newMutableAggBufferOffset: Int): MetricsAggregate = {

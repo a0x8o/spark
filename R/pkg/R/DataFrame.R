@@ -3366,7 +3366,7 @@ setMethod("na.omit",
 setMethod("fillna",
           signature(x = "SparkDataFrame"),
           function(x, value, cols = NULL) {
-            if (!(class(value) %in% c("integer", "numeric", "character", "list"))) {
+            if (!(inherits(value, c("integer", "numeric", "character", "list")))) {
               stop("value should be an integer, numeric, character or named list.")
             }
 
@@ -3378,7 +3378,7 @@ setMethod("fillna",
               }
               # Check each item in the named list is of valid type
               lapply(value, function(v) {
-                if (!(class(v) %in% c("integer", "numeric", "character"))) {
+                if (!(inherits(v, c("integer", "numeric", "character")))) {
                   stop("Each item in value should be an integer, numeric or character.")
                 }
               })
@@ -4146,7 +4146,7 @@ setMethod("hint",
           function(x, name, ...) {
             parameters <- list(...)
             if (!all(sapply(parameters, function(y) {
-              if (is.character(y) || is.numeric(y)) {
+              if (is.character(y) || is.numeric(y) || is(class(y), "characterOrColumn")) {
                 TRUE
               } else if (is.list(y)) {
                 all(sapply(y, function(z) { is.character(z) || is.numeric(z) }))
@@ -4156,7 +4156,14 @@ setMethod("hint",
             }))) {
               stop("sql hint should be character, numeric, or list with character or numeric.")
             }
-            jdf <- callJMethod(x@sdf, "hint", name, parameters)
+            jparams <- lapply(parameters, function(c) {
+              if (is.character(c) || is.numeric(c) || is.list(c)) {
+                c
+              } else {
+                c@jc
+              }
+            })
+            jdf <- callJMethod(x@sdf, "hint", name, jparams)
             dataFrame(jdf)
           })
 

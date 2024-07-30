@@ -26,6 +26,8 @@ import org.apache.hadoop.fs.{BlockLocation, FileStatus, Path, RawLocalFileSystem
 import org.apache.hadoop.mapreduce.Job
 
 import org.apache.spark.SparkException
+import org.apache.spark.internal.config
+import org.apache.spark.paths.SparkPath.{fromUrlString => sp}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
@@ -43,7 +45,7 @@ import org.apache.spark.util.Utils
 class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
   import testImplicits._
 
-  protected override def sparkConf = super.sparkConf.set("spark.default.parallelism", "1")
+  protected override def sparkConf = super.sparkConf.set(config.DEFAULT_PARALLELISM.key, "1")
 
   test("unpartitioned table, single partition") {
     val table =
@@ -63,7 +65,7 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
     checkScan(table.select($"c1")) { partitions =>
       // 10 one byte files should fit in a single partition with 10 files.
       assert(partitions.size == 1, "when checking partitions")
-      assert(partitions.head.files.size == 10, "when checking partition 1")
+      assert(partitions.head.files.length == 10, "when checking partition 1")
       // 1 byte files are too small to split so we should read the whole thing.
       assert(partitions.head.files.head.start == 0)
       assert(partitions.head.files.head.length == 1)
@@ -86,8 +88,8 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
       checkScan(table.select($"c1")) { partitions =>
         // 5 byte files should be laid out [(5, 5), (5)]
         assert(partitions.size == 2, "when checking partitions")
-        assert(partitions(0).files.size == 2, "when checking partition 1")
-        assert(partitions(1).files.size == 1, "when checking partition 2")
+        assert(partitions(0).files.length == 2, "when checking partition 1")
+        assert(partitions(1).files.length == 1, "when checking partition 2")
 
         // 5 byte files are too small to split so we should read the whole thing.
         assert(partitions.head.files.head.start == 0)
@@ -111,8 +113,8 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
       checkScan(table.select($"c1")) { partitions =>
         // Files should be laid out [(0-10), (10-15, 4)]
         assert(partitions.size == 2, "when checking partitions")
-        assert(partitions(0).files.size == 1, "when checking partition 1")
-        assert(partitions(1).files.size == 2, "when checking partition 2")
+        assert(partitions(0).files.length == 1, "when checking partition 1")
+        assert(partitions(1).files.length == 2, "when checking partition 2")
 
         // Start by reading 10 bytes of the first file
         assert(partitions.head.files.head.start == 0)
@@ -144,10 +146,10 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
       checkScan(table.select($"c1")) { partitions =>
         // Files should be laid out [(file1), (file2, file3), (file4, file5), (file6)]
         assert(partitions.size == 4, "when checking partitions")
-        assert(partitions(0).files.size == 1, "when checking partition 1")
-        assert(partitions(1).files.size == 2, "when checking partition 2")
-        assert(partitions(2).files.size == 2, "when checking partition 3")
-        assert(partitions(3).files.size == 1, "when checking partition 4")
+        assert(partitions(0).files.length == 1, "when checking partition 1")
+        assert(partitions(1).files.length == 2, "when checking partition 2")
+        assert(partitions(2).files.length == 2, "when checking partition 3")
+        assert(partitions(3).files.length == 1, "when checking partition 4")
 
         // First partition reads (file1)
         assert(partitions(0).files(0).start == 0)
@@ -185,7 +187,7 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
     // Only one file should be read.
     checkScan(table.where("p1 = 1")) { partitions =>
       assert(partitions.size == 1, "when checking partitions")
-      assert(partitions.head.files.size == 1, "when files in partition 1")
+      assert(partitions.head.files.length == 1, "when files in partition 1")
     }
     // We don't need to reevaluate filters that are only on partitions.
     checkDataFilters(Set.empty)
@@ -193,7 +195,7 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
     // Only one file should be read.
     checkScan(table.where("p1 = 1 AND c1 = 1 AND (p1 + c1) = 2")) { partitions =>
       assert(partitions.size == 1, "when checking partitions")
-      assert(partitions.head.files.size == 1, "when checking files in partition 1")
+      assert(partitions.head.files.length == 1, "when checking files in partition 1")
       assert(partitions.head.files.head.partitionValues.getInt(0) == 1,
         "when checking partition values")
     }
@@ -212,7 +214,7 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
       // Only one file should be read.
       checkScan(table.where("P1 = 1")) { partitions =>
         assert(partitions.size == 1, "when checking partitions")
-        assert(partitions.head.files.size == 1, "when files in partition 1")
+        assert(partitions.head.files.length == 1, "when files in partition 1")
       }
       // We don't need to reevaluate filters that are only on partitions.
       checkDataFilters(Set.empty)
@@ -220,7 +222,7 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
       // Only one file should be read.
       checkScan(table.where("P1 = 1 AND C1 = 1 AND (P1 + C1) = 2")) { partitions =>
         assert(partitions.size == 1, "when checking partitions")
-        assert(partitions.head.files.size == 1, "when checking files in partition 1")
+        assert(partitions.head.files.length == 1, "when checking files in partition 1")
         assert(partitions.head.files.head.partitionValues.getInt(0) == 1,
           "when checking partition values")
       }
@@ -266,27 +268,27 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
       // No partition pruning
       checkScan(table) { partitions =>
         assert(partitions.size == 3)
-        assert(partitions(0).files.size == 5)
-        assert(partitions(1).files.size == 0)
-        assert(partitions(2).files.size == 2)
+        assert(partitions(0).files.length == 5)
+        assert(partitions(1).files.length == 0)
+        assert(partitions(2).files.length == 2)
       }
 
       // With partition pruning
       checkScan(table.where("p1=2")) { partitions =>
         assert(partitions.size == 3)
-        assert(partitions(0).files.size == 3)
-        assert(partitions(1).files.size == 0)
-        assert(partitions(2).files.size == 1)
+        assert(partitions(0).files.length == 3)
+        assert(partitions(1).files.length == 0)
+        assert(partitions(2).files.length == 1)
       }
     }
   }
 
   test("Locality support for FileScanRDD") {
     val partition = FilePartition(0, Array(
-      PartitionedFile(InternalRow.empty, "fakePath0", 0, 10, Array("host0", "host1")),
-      PartitionedFile(InternalRow.empty, "fakePath0", 10, 20, Array("host1", "host2")),
-      PartitionedFile(InternalRow.empty, "fakePath1", 0, 5, Array("host3")),
-      PartitionedFile(InternalRow.empty, "fakePath2", 0, 5, Array("host4"))
+      PartitionedFile(InternalRow.empty, sp("fakePath0"), 0, 10, Array("host0", "host1")),
+      PartitionedFile(InternalRow.empty, sp("fakePath0"), 10, 20, Array("host1", "host2")),
+      PartitionedFile(InternalRow.empty, sp("fakePath1"), 0, 5, Array("host3")),
+      PartitionedFile(InternalRow.empty, sp("fakePath2"), 0, 5, Array("host4"))
     ))
 
     val fakeRDD = new FileScanRDD(
@@ -361,8 +363,8 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
         SQLConf.FILES_OPEN_COST_IN_BYTES.key -> "0") {
         checkScan(table.select($"c1")) { partitions =>
           assert(partitions.size == 2)
-          assert(partitions(0).files.size == 1)
-          assert(partitions(1).files.size == 2)
+          assert(partitions(0).files.length == 1)
+          assert(partitions(1).files.length == 2)
         }
       }
     }
@@ -377,9 +379,9 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
         SQLConf.FILES_OPEN_COST_IN_BYTES.key -> "0") {
         checkScan(table.select($"c1")) { partitions =>
           assert(partitions.size == 3)
-          assert(partitions(0).files.size == 1)
-          assert(partitions(1).files.size == 2)
-          assert(partitions(2).files.size == 1)
+          assert(partitions(0).files.length == 1)
+          assert(partitions(1).files.length == 2)
+          assert(partitions(2).files.length == 1)
         }
       }
     }
@@ -479,8 +481,8 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
         val e = intercept[SparkException] {
           spark.read.text(inputFile.toURI.toString).collect()
         }
-        assert(e.getCause.getCause.isInstanceOf[EOFException])
-        assert(e.getCause.getCause.getMessage === "Unexpected end of input stream")
+        assert(e.getCause.isInstanceOf[EOFException])
+        assert(e.getCause.getMessage === "Unexpected end of input stream")
       }
       withSQLConf(SQLConf.IGNORE_CORRUPT_FILES.key -> "true") {
         assert(spark.read.text(inputFile.toURI.toString).collect().isEmpty)
@@ -599,6 +601,29 @@ class FileSourceStrategySuite extends QueryTest with SharedSparkSession {
       assert(partitions.size == 1, "when checking partitions")
     }
     checkDataFilters(Set.empty)
+  }
+
+  test(s"SPARK-44021: Test ${SQLConf.FILES_MAX_PARTITION_NUM.key} works as expected") {
+    val files =
+      Range(0, 300000).map(p => PartitionedFile(InternalRow.empty, sp(s"$p"), 0, 50000000))
+    val maxPartitionBytes = conf.filesMaxPartitionBytes
+    val defaultPartitions = FilePartition.getFilePartitions(spark, files, maxPartitionBytes)
+    assert(defaultPartitions.size === 150000)
+
+    withSQLConf(SQLConf.FILES_MAX_PARTITION_NUM.key -> "20000") {
+      val partitions = FilePartition.getFilePartitions(spark, files, maxPartitionBytes)
+      assert(partitions.size === 20000)
+    }
+
+    withSQLConf(SQLConf.FILES_MAX_PARTITION_NUM.key -> "50000") {
+      val partitions = FilePartition.getFilePartitions(spark, files, maxPartitionBytes)
+      assert(partitions.size === 50000)
+    }
+
+    withSQLConf(SQLConf.FILES_MAX_PARTITION_NUM.key -> "200000") {
+      val partitions = FilePartition.getFilePartitions(spark, files, maxPartitionBytes)
+      assert(partitions.size === defaultPartitions.size)
+    }
   }
 
   // Helpers for checking the arguments passed to the FileFormat.

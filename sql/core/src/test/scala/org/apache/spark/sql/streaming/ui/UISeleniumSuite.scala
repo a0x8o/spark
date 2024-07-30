@@ -26,6 +26,7 @@ import org.scalatest.time.SpanSugar._
 import org.scalatestplus.selenium.WebBrowser
 
 import org.apache.spark._
+import org.apache.spark.internal.config.Status.LIVE_UI_LOCAL_STORE_DIR
 import org.apache.spark.internal.config.UI.{UI_ENABLED, UI_PORT}
 import org.apache.spark.sql.LocalSparkSession.withSparkSession
 import org.apache.spark.sql.SparkSession
@@ -34,8 +35,12 @@ import org.apache.spark.sql.functions.{window => windowFn, _}
 import org.apache.spark.sql.internal.SQLConf.SHUFFLE_PARTITIONS
 import org.apache.spark.sql.internal.StaticSQLConf.ENABLED_STREAMING_UI_CUSTOM_METRIC_LIST
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
+import org.apache.spark.tags.{SlowSQLTest, WebBrowserTest}
 import org.apache.spark.ui.SparkUICssErrorHandler
+import org.apache.spark.util.Utils
 
+@WebBrowserTest
+@SlowSQLTest
 class UISeleniumSuite extends SparkFunSuite with WebBrowser with Matchers {
 
   implicit var webDriver: WebDriver = _
@@ -47,16 +52,20 @@ class UISeleniumSuite extends SparkFunSuite with WebBrowser with Matchers {
     }
   }
 
-  private def newSparkSession(
-      master: String = "local",
-      additionalConfs: Map[String, String] = Map.empty): SparkSession = {
-    val conf = new SparkConf()
+  def getSparkConf(master: String): SparkConf = {
+    new SparkConf()
       .setMaster(master)
       .setAppName("ui-test")
       .set(SHUFFLE_PARTITIONS, 5)
       .set(UI_ENABLED, true)
       .set(UI_PORT, 0)
       .set(ENABLED_STREAMING_UI_CUSTOM_METRIC_LIST, Seq("stateOnCurrentVersionSizeBytes"))
+  }
+
+  private def newSparkSession(
+      master: String = "local",
+      additionalConfs: Map[String, String] = Map.empty): SparkSession = {
+    val conf = getSparkConf(master)
     additionalConfs.foreach { case (k, v) => conf.set(k, v) }
     val spark = SparkSession.builder().master(master).config(conf).getOrCreate()
     assert(spark.sparkContext.ui.isDefined)
@@ -128,7 +137,7 @@ class UISeleniumSuite extends SparkFunSuite with WebBrowser with Matchers {
 
             // Check the query statistics page
             val activeQueryLink =
-              findAll(cssSelector("""#active-table td a""")).flatMap(_.attribute("href")).next
+              findAll(cssSelector("""#active-table td a""")).flatMap(_.attribute("href")).next()
             go to activeQueryLink
 
             findAll(cssSelector("h3"))
@@ -148,8 +157,9 @@ class UISeleniumSuite extends SparkFunSuite with WebBrowser with Matchers {
             summaryText should contain ("Global Watermark Gap (?)")
             summaryText should contain ("Aggregated Number Of Total State Rows (?)")
             summaryText should contain ("Aggregated Number Of Updated State Rows (?)")
+            summaryText should contain ("Aggregated Number Of Removed State Rows (?)")
             summaryText should contain ("Aggregated State Memory Used In Bytes (?)")
-            summaryText should contain ("Aggregated Number Of Rows Dropped By Watermark (?)")
+            summaryText should contain ("Aggregated Number Of Late Rows Dropped By Watermark (?)")
             summaryText should contain ("Aggregated Custom Metric stateOnCurrentVersionSizeBytes" +
               " (?)")
             summaryText should not contain ("Aggregated Custom Metric loadedMapCacheHitCount (?)")
@@ -169,6 +179,23 @@ class UISeleniumSuite extends SparkFunSuite with WebBrowser with Matchers {
       }
     } finally {
       super.afterAll()
+    }
+  }
+}
+
+@WebBrowserTest
+@SlowSQLTest
+class UISeleniumWithRocksDBBackendSuite extends UISeleniumSuite {
+  private val storePath = Utils.createTempDir()
+
+  override def getSparkConf(master: String): SparkConf = {
+    super.getSparkConf(master).set(LIVE_UI_LOCAL_STORE_DIR, storePath.getCanonicalPath)
+  }
+
+  override def afterAll(): Unit = {
+    super.afterAll()
+    if (storePath.exists()) {
+      Utils.deleteRecursively(storePath)
     }
   }
 }

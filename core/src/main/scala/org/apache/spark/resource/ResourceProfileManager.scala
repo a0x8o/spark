@@ -23,7 +23,8 @@ import scala.collection.mutable.HashMap
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.annotation.Evolving
-import org.apache.spark.internal.{config, Logging}
+import org.apache.spark.internal.{config, Logging, MDC}
+import org.apache.spark.internal.LogKeys
 import org.apache.spark.internal.config.Tests._
 import org.apache.spark.scheduler.{LiveListenerBus, SparkListenerResourceProfileAdded}
 import org.apache.spark.util.Utils
@@ -45,18 +46,20 @@ private[spark] class ResourceProfileManager(sparkConf: SparkConf,
     (lock.readLock(), lock.writeLock())
   }
 
-  private val defaultProfile = ResourceProfile.getOrCreateDefaultProfile(sparkConf)
-  addResourceProfile(defaultProfile)
-
-  def defaultResourceProfile: ResourceProfile = defaultProfile
-
   private val dynamicEnabled = Utils.isDynamicAllocationEnabled(sparkConf)
   private val master = sparkConf.getOption("spark.master")
   private val isYarn = master.isDefined && master.get.equals("yarn")
   private val isK8s = master.isDefined && master.get.startsWith("k8s://")
-  private val isStandalone = master.isDefined && master.get.startsWith("spark://")
+  private val isStandaloneOrLocalCluster = master.isDefined && (
+      master.get.startsWith("spark://") || master.get.startsWith("local-cluster")
+    )
   private val notRunningUnitTests = !isTesting
   private val testExceptionThrown = sparkConf.get(RESOURCE_PROFILE_MANAGER_TESTING)
+
+  private val defaultProfile = ResourceProfile.getOrCreateDefaultProfile(sparkConf)
+  addResourceProfile(defaultProfile)
+
+  def defaultResourceProfile: ResourceProfile = defaultProfile
 
   /**
    * If we use anything except the default profile, it's supported on YARN, Kubernetes and
@@ -64,17 +67,19 @@ private[spark] class ResourceProfileManager(sparkConf: SparkConf,
    * disabled on Standalone. Throw an exception if not supported.
    */
   private[spark] def isSupported(rp: ResourceProfile): Boolean = {
+    assert(master != null)
     if (rp.isInstanceOf[TaskResourceProfile] && !dynamicEnabled) {
-      if ((notRunningUnitTests || testExceptionThrown) && !isStandalone) {
-        throw new SparkException("TaskResourceProfiles are only supported for Standalone " +
-          "cluster for now when dynamic allocation is disabled.")
+      if ((notRunningUnitTests || testExceptionThrown) &&
+        !(isStandaloneOrLocalCluster || isYarn || isK8s)) {
+        throw new SparkException("TaskResourceProfiles are only supported for Standalone, " +
+          "Yarn and Kubernetes cluster for now when dynamic allocation is disabled.")
       }
     } else {
       val isNotDefaultProfile = rp.id != ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID
       val notYarnOrK8sOrStandaloneAndNotDefaultProfile =
-        isNotDefaultProfile && !(isYarn || isK8s || isStandalone)
+        isNotDefaultProfile && !(isYarn || isK8s || isStandaloneOrLocalCluster)
       val YarnOrK8sOrStandaloneNotDynAllocAndNotDefaultProfile =
-        isNotDefaultProfile && (isYarn || isK8s || isStandalone) && !dynamicEnabled
+        isNotDefaultProfile && (isYarn || isK8s || isStandaloneOrLocalCluster) && !dynamicEnabled
 
       // We want the exception to be thrown only when we are specifically testing for the
       // exception or in a real application. Otherwise in all other testing scenarios we want
@@ -86,7 +91,7 @@ private[spark] class ResourceProfileManager(sparkConf: SparkConf,
           "and Standalone with dynamic allocation enabled.")
       }
 
-      if (isStandalone && dynamicEnabled && rp.getExecutorCores.isEmpty &&
+      if (isStandaloneOrLocalCluster && dynamicEnabled && rp.getExecutorCores.isEmpty &&
         sparkConf.getOption(config.EXECUTOR_CORES.key).isEmpty) {
         logWarning("Neither executor cores is set for resource profile, nor spark.executor.cores " +
           "is explicitly set, you may get more executors allocated than expected. " +
@@ -136,7 +141,7 @@ private[spark] class ResourceProfileManager(sparkConf: SparkConf,
     if (putNewProfile) {
       // force the computation of maxTasks and limitingResource now so we don't have cost later
       rp.limitingResource(sparkConf)
-      logInfo(s"Added ResourceProfile id: ${rp.id}")
+      logInfo(log"Added ResourceProfile id: ${MDC(LogKeys.RESOURCE_PROFILE_ID, rp.id)}")
       listenerBus.post(SparkListenerResourceProfileAdded(rp))
     }
   }

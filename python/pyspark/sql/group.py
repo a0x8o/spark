@@ -19,20 +19,19 @@ import sys
 
 from typing import Callable, List, Optional, TYPE_CHECKING, overload, Dict, Union, cast, Tuple
 
-from py4j.java_gateway import JavaObject
-
-from pyspark.sql.column import Column, _to_seq
+from pyspark.sql.column import Column
 from pyspark.sql.session import SparkSession
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.pandas.group_ops import PandasGroupedOpsMixin
 
 if TYPE_CHECKING:
+    from py4j.java_gateway import JavaObject
     from pyspark.sql._typing import LiteralType
 
 __all__ = ["GroupedData"]
 
 
-def dfapi(f: Callable) -> Callable:
+def dfapi(f: Callable[..., DataFrame]) -> Callable[..., DataFrame]:
     def _api(self: "GroupedData") -> DataFrame:
         name = f.__name__
         jdf = getattr(self._jgd, name)()
@@ -43,8 +42,10 @@ def dfapi(f: Callable) -> Callable:
     return _api
 
 
-def df_varargs_api(f: Callable) -> Callable:
+def df_varargs_api(f: Callable[..., DataFrame]) -> Callable[..., DataFrame]:
     def _api(self: "GroupedData", *cols: str) -> DataFrame:
+        from pyspark.sql.classic.column import _to_seq
+
         name = f.__name__
         jdf = getattr(self._jgd, name)(_to_seq(self.session._sc, cols))
         return DataFrame(jdf, self.session)
@@ -62,13 +63,21 @@ class GroupedData(PandasGroupedOpsMixin):
     .. versionadded:: 1.3.0
 
     .. versionchanged:: 3.4.0
-        Support Spark Connect.
+        Supports Spark Connect.
     """
 
-    def __init__(self, jgd: JavaObject, df: DataFrame):
+    def __init__(self, jgd: "JavaObject", df: DataFrame):
         self._jgd = jgd
         self._df = df
         self.session: SparkSession = df.sparkSession
+
+    def __repr__(self) -> str:
+        index = 26  # index to truncate string from the JVM side
+        jvm_string = self._jgd.toString()
+        if jvm_string is not None and len(jvm_string) > index and jvm_string[index] == "[":
+            return f"GroupedData{jvm_string[index:]}"
+        else:
+            return super().__repr__()
 
     @overload
     def agg(self, *exprs: Column) -> DataFrame:
@@ -78,8 +87,6 @@ class GroupedData(PandasGroupedOpsMixin):
     def agg(self, __exprs: Dict[str, str]) -> DataFrame:
         ...
 
-    # TODO(SPARK-41279): Enable the doctest with supporting the star in Spark Connect.
-    # TODO(SPARK-41743): groupBy(...).agg(...).sort does not actually sort the output
     def agg(self, *exprs: Union[Column, Dict[str, str]]) -> DataFrame:
         """Compute aggregates and returns the result as a :class:`DataFrame`.
 
@@ -104,7 +111,7 @@ class GroupedData(PandasGroupedOpsMixin):
         .. versionadded:: 1.3.0
 
         .. versionchanged:: 3.4.0
-            Support Spark Connect.
+            Supports Spark Connect.
 
         Parameters
         ----------
@@ -119,7 +126,7 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Examples
         --------
-        >>> from pyspark.sql import functions as F
+        >>> from pyspark.sql import functions as sf
         >>> from pyspark.sql.functions import pandas_udf, PandasUDFType
         >>> df = spark.createDataFrame(
         ...      [(2, "Alice"), (3, "Alice"), (5, "Bob"), (10, "Bob")], ["age", "name"])
@@ -135,7 +142,10 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Group-by name, and count each group.
 
-        >>> df.groupBy(df.name).agg({"*": "count"}).sort("name").show()  # doctest: +SKIP
+        >>> df.groupBy(df.name)
+        GroupedData[grouping...: [name...], value: [age: bigint, name: string], type: GroupBy]
+
+        >>> df.groupBy(df.name).agg({"*": "count"}).sort("name").show()
         +-----+--------+
         | name|count(1)|
         +-----+--------+
@@ -145,7 +155,7 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Group-by name, and calculate the minimum age.
 
-        >>> df.groupBy(df.name).agg(F.min(df.age)).sort("name").show()  # doctest: +SKIP
+        >>> df.groupBy(df.name).agg(sf.min(df.age)).sort("name").show()
         +-----+--------+
         | name|min(age)|
         +-----+--------+
@@ -167,6 +177,8 @@ class GroupedData(PandasGroupedOpsMixin):
         |  Bob|           5|
         +-----+------------+
         """
+        from pyspark.sql.classic.column import _to_seq
+
         assert exprs, "exprs should not be empty"
         if len(exprs) == 1 and isinstance(exprs[0], dict):
             jdf = self._jgd.agg(exprs[0])
@@ -177,15 +189,14 @@ class GroupedData(PandasGroupedOpsMixin):
             jdf = self._jgd.agg(exprs[0]._jc, _to_seq(self.session._sc, [c._jc for c in exprs[1:]]))
         return DataFrame(jdf, self.session)
 
-    # TODO(SPARK-41743): groupBy(...).agg(...).sort does not actually sort the output
     @dfapi
-    def count(self) -> DataFrame:
+    def count(self) -> DataFrame:  # type: ignore[empty-body]
         """Counts the number of records for each group.
 
         .. versionadded:: 1.3.0
 
         .. versionchanged:: 3.4.0
-            Support Spark Connect.
+            Supports Spark Connect.
 
         Examples
         --------
@@ -203,7 +214,7 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Group-by name, and count each group.
 
-        >>> df.groupBy(df.name).count().sort("name").show()  # doctest: +SKIP
+        >>> df.groupBy(df.name).count().sort("name").show()
         +-----+-----+
         | name|count|
         +-----+-----+
@@ -213,7 +224,7 @@ class GroupedData(PandasGroupedOpsMixin):
         """
 
     @df_varargs_api
-    def mean(self, *cols: str) -> DataFrame:
+    def mean(self, *cols: str) -> DataFrame:  # type: ignore[empty-body]
         """Computes average values for each numeric columns for each group.
 
         :func:`mean` is an alias for :func:`avg`.
@@ -221,7 +232,7 @@ class GroupedData(PandasGroupedOpsMixin):
         .. versionadded:: 1.3.0
 
         .. versionchanged:: 3.4.0
-            Support Spark Connect.
+            Supports Spark Connect.
 
         Parameters
         ----------
@@ -229,9 +240,8 @@ class GroupedData(PandasGroupedOpsMixin):
             column names. Non-numeric columns are ignored.
         """
 
-    # TODO(SPARK-41743): groupBy(...).agg(...).sort does not actually sort the output
     @df_varargs_api
-    def avg(self, *cols: str) -> DataFrame:
+    def avg(self, *cols: str) -> DataFrame:  # type: ignore[empty-body]
         """Computes average values for each numeric columns for each group.
 
         :func:`mean` is an alias for :func:`avg`.
@@ -239,7 +249,7 @@ class GroupedData(PandasGroupedOpsMixin):
         .. versionadded:: 1.3.0
 
         .. versionchanged:: 3.4.0
-            Support Spark Connect.
+            Supports Spark Connect.
 
         Parameters
         ----------
@@ -263,7 +273,7 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Group-by name, and calculate the mean of the age in each group.
 
-        >>> df.groupBy("name").avg('age').sort("name").show()  # doctest: +SKIP
+        >>> df.groupBy("name").avg('age').sort("name").show()
         +-----+--------+
         | name|avg(age)|
         +-----+--------+
@@ -281,15 +291,14 @@ class GroupedData(PandasGroupedOpsMixin):
         +--------+-----------+
         """
 
-    # TODO(SPARK-41743): groupBy(...).agg(...).sort does not actually sort the output
     @df_varargs_api
-    def max(self, *cols: str) -> DataFrame:
+    def max(self, *cols: str) -> DataFrame:  # type: ignore[empty-body]
         """Computes the max value for each numeric columns for each group.
 
         .. versionadded:: 1.3.0
 
         .. versionchanged:: 3.4.0
-            Support Spark Connect.
+            Supports Spark Connect.
 
         Examples
         --------
@@ -308,7 +317,7 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Group-by name, and calculate the max of the age in each group.
 
-        >>> df.groupBy("name").max("age").sort("name").show()  # doctest: +SKIP
+        >>> df.groupBy("name").max("age").sort("name").show()
         +-----+--------+
         | name|max(age)|
         +-----+--------+
@@ -326,15 +335,14 @@ class GroupedData(PandasGroupedOpsMixin):
         +--------+-----------+
         """
 
-    # TODO(SPARK-41743): groupBy(...).agg(...).sort does not actually sort the output
     @df_varargs_api
-    def min(self, *cols: str) -> DataFrame:
+    def min(self, *cols: str) -> DataFrame:  # type: ignore[empty-body]
         """Computes the min value for each numeric column for each group.
 
         .. versionadded:: 1.3.0
 
         .. versionchanged:: 3.4.0
-            Support Spark Connect.
+            Supports Spark Connect.
 
         Parameters
         ----------
@@ -358,7 +366,7 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Group-by name, and calculate the min of the age in each group.
 
-        >>> df.groupBy("name").min("age").sort("name").show()  # doctest: +SKIP
+        >>> df.groupBy("name").min("age").sort("name").show()
         +-----+--------+
         | name|min(age)|
         +-----+--------+
@@ -376,15 +384,14 @@ class GroupedData(PandasGroupedOpsMixin):
         +--------+-----------+
         """
 
-    # TODO(SPARK-41743): groupBy(...).agg(...).sort does not actually sort the output
     @df_varargs_api
-    def sum(self, *cols: str) -> DataFrame:
+    def sum(self, *cols: str) -> DataFrame:  # type: ignore[empty-body]
         """Computes the sum for each numeric columns for each group.
 
         .. versionadded:: 1.3.0
 
         .. versionchanged:: 3.4.0
-            Support Spark Connect.
+            Supports Spark Connect.
 
         Parameters
         ----------
@@ -408,7 +415,7 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Group-by name, and calculate the sum of the age in each group.
 
-        >>> df.groupBy("name").sum("age").sort("name").show()  # doctest: +SKIP
+        >>> df.groupBy("name").sum("age").sort("name").show()
         +-----+--------+
         | name|sum(age)|
         +-----+--------+
@@ -426,17 +433,14 @@ class GroupedData(PandasGroupedOpsMixin):
         +--------+-----------+
         """
 
-    # TODO(SPARK-41745): SparkSession.createDataFrame does not respect the column names in the row
-    # TODO(SPARK-41746): SparkSession.createDataFrame does not support nested datatypes
     def pivot(self, pivot_col: str, values: Optional[List["LiteralType"]] = None) -> "GroupedData":
         """
-        Pivots a column of the current :class:`DataFrame` and perform the specified aggregation.
-        There are two versions of the pivot function: one that requires the caller
-        to specify the list of distinct values to pivot on, and one that does not.
-        The latter is more concise but less efficient,
-        because Spark needs to first compute the list of distinct values internally.
+        Pivots a column of the current :class:`DataFrame` and performs the specified aggregation.
 
         .. versionadded:: 1.6.0
+
+        .. versionchanged:: 3.4.0
+            Supports Spark Connect.
 
         Parameters
         ----------
@@ -444,6 +448,10 @@ class GroupedData(PandasGroupedOpsMixin):
             Name of the column to pivot.
         values : list, optional
             List of values that will be translated to columns in the output DataFrame.
+
+            If ``values`` is not provided, Spark will eagerly compute the distinct values in
+            ``pivot_col`` so it can determine the resulting schema of the transformation. To avoid
+            any eager computations, provide an explicit list of values.
 
         Examples
         --------
@@ -455,7 +463,7 @@ class GroupedData(PandasGroupedOpsMixin):
         ...     Row(course="dotNET", year=2013, earnings=48000),
         ...     Row(course="Java", year=2013, earnings=30000),
         ... ])
-        >>> df1.show()  # doctest: +SKIP
+        >>> df1.show()
         +------+----+--------+
         |course|year|earnings|
         +------+----+--------+
@@ -485,8 +493,8 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Compute the sum of earnings for each year by course with each course as a separate column
 
-        >>> df1.groupBy("year").pivot("course", ["dotNET", "Java"]).sum("earnings").show()
-        ... # doctest: +SKIP
+        >>> df1.groupBy("year").pivot(
+        ...     "course", ["dotNET", "Java"]).sum("earnings").sort("year").show()
         +----+------+-----+
         |year|dotNET| Java|
         +----+------+-----+
@@ -496,14 +504,15 @@ class GroupedData(PandasGroupedOpsMixin):
 
         Or without specifying column values (less efficient)
 
-        >>> df1.groupBy("year").pivot("course").sum("earnings").show()  # doctest: +SKIP
+        >>> df1.groupBy("year").pivot("course").sum("earnings").sort("year").show()
         +----+-----+------+
         |year| Java|dotNET|
         +----+-----+------+
         |2012|20000| 15000|
         |2013|30000| 48000|
         +----+-----+------+
-        >>> df2.groupBy("sales.year").pivot("sales.course").sum("sales.earnings").show()
+        >>> df2.groupBy(
+        ...     "sales.year").pivot("sales.course").sum("sales.earnings").sort("year").show()
         ... # doctest: +SKIP
         +----+-----+------+
         |year| Java|dotNET|

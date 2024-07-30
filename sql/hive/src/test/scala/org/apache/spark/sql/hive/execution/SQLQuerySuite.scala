@@ -27,6 +27,7 @@ import com.google.common.io.Files
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.{SparkException, TestUtils}
+import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
@@ -34,10 +35,11 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTableType, CatalogUtils, Hi
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
-import org.apache.spark.sql.execution.TestUncaughtExceptionHandler
+import org.apache.spark.sql.execution.{SparkPlanInfo, TestUncaughtExceptionHandler}
 import org.apache.spark.sql.execution.adaptive.{DisableAdaptiveExecutionSuite, EnableAdaptiveExecutionSuite}
 import org.apache.spark.sql.execution.command.{InsertIntoDataSourceDirCommand, LoadDataCommand}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.hive.{HiveExternalCatalog, HiveUtils}
 import org.apache.spark.sql.hive.test.{HiveTestJars, TestHiveSingleton}
@@ -147,8 +149,8 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
         Order(1, "Atlas", "MTB", 434, "2015-01-07", "John D", "Pacifica", "CA", 20151),
         Order(11, "Swift", "YFlikr", 137, "2015-01-23", "John D", "Hayward", "CA", 20151))
 
-      orders.toDF.createOrReplaceTempView("orders1")
-      orderUpdates.toDF.createOrReplaceTempView("orderupdates1")
+      orders.toDF().createOrReplaceTempView("orders1")
+      orderUpdates.toDF().createOrReplaceTempView("orderupdates1")
 
       withTable("orders", "orderupdates") {
         sql(
@@ -176,24 +178,24 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
             |PARTITIONED BY (state STRING, month INT)
             |STORED AS PARQUET
           """.stripMargin)
+        withSQLConf("hive.exec.dynamic.partition.mode" -> "nonstrict") {
+          sql("INSERT INTO TABLE orders PARTITION(state, month) SELECT * FROM orders1")
+          sql("INSERT INTO TABLE orderupdates PARTITION(state, month) SELECT * FROM orderupdates1")
 
-        sql("set hive.exec.dynamic.partition.mode=nonstrict")
-        sql("INSERT INTO TABLE orders PARTITION(state, month) SELECT * FROM orders1")
-        sql("INSERT INTO TABLE orderupdates PARTITION(state, month) SELECT * FROM orderupdates1")
-
-        checkAnswer(
-          sql(
-            """
-              |select orders.state, orders.month
-              |from orders
-              |join (
-              |  select distinct orders.state,orders.month
-              |  from orders
-              |  join orderupdates
-              |    on orderupdates.id = orders.id) ao
-              |  on ao.state = orders.state and ao.month = orders.month
+          checkAnswer(
+            sql(
+              """
+                |select orders.state, orders.month
+                |from orders
+                |join (
+                |  select distinct orders.state,orders.month
+                |  from orders
+                |  join orderupdates
+                |    on orderupdates.id = orders.id) ao
+                |  on ao.state = orders.state and ao.month = orders.month
             """.stripMargin),
-          (1 to 6).map(_ => Row("CA", 20151)))
+            (1 to 6).map(_ => Row("CA", 20151)))
+        }
       }
     }
   }
@@ -224,8 +226,8 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
         "routineName" -> "`abcadf`",
         "searchPath" -> "[`system`.`builtin`, `system`.`session`, `spark_catalog`.`default`]"),
       context = ExpectedContext(
-        fragment = sqlText,
-        start = 0,
+        fragment = "abcadf",
+        start = 18,
         stop = 23))
 
     checkKeywordsExist(sql("describe functioN  `~`"),
@@ -244,8 +246,8 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
 
     checkKeywordsExist(sql("describe function  `between`"),
       "Function: between",
-      "Usage: expr1 [NOT] BETWEEN expr2 AND expr3 - " +
-        "evaluate if `expr1` is [not] in between `expr2` and `expr3`")
+      "Usage: input [NOT] BETWEEN lower AND upper - " +
+        "evaluate if `input` is [not] in between `lower` and `upper`")
 
     checkKeywordsExist(sql("describe function  `case`"),
       "Function: case",
@@ -354,7 +356,7 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
 
   test("explode nested Field") {
     withTempView("nestedArray") {
-      Seq(NestedArray1(NestedArray2(Seq(1, 2, 3)))).toDF.createOrReplaceTempView("nestedArray")
+      Seq(NestedArray1(NestedArray2(Seq(1, 2, 3)))).toDF().createOrReplaceTempView("nestedArray")
       checkAnswer(
         sql("SELECT ints FROM nestedArray LATERAL VIEW explode(a.b) a AS ints"),
         Row(1) :: Row(2) :: Row(3) :: Nil)
@@ -692,14 +694,14 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
       }
 
       withTable("gen__tmp") {
-        val e = intercept[AnalysisException] {
+        val e = intercept[ParseException] {
           sql("create table gen__tmp(a int, b string) as select key, value from mytable1")
         }.getMessage
         assert(e.contains("Schema may not be specified in a Create Table As Select (CTAS)"))
       }
 
       withTable("gen__tmp") {
-        val e = intercept[AnalysisException] {
+        val e = intercept[ParseException] {
           sql(
             """
               |CREATE TABLE gen__tmp
@@ -713,21 +715,23 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
   }
 
   test("command substitution") {
-    sql("set tbl=src")
-    checkAnswer(
-      sql("SELECT key FROM ${hiveconf:tbl} ORDER BY key, value limit 1"),
-      sql("SELECT key FROM src ORDER BY key, value limit 1").collect().toSeq)
-
-    sql("set spark.sql.variable.substitute=false") // disable the substitution
-    sql("set tbl2=src")
-    intercept[Exception] {
-      sql("SELECT key FROM ${hiveconf:tbl2} ORDER BY key, value limit 1").collect()
+    withSQLConf("tbl" -> "src") {
+      checkAnswer(
+        sql("SELECT key FROM ${hiveconf:tbl} ORDER BY key, value limit 1"),
+        sql("SELECT key FROM src ORDER BY key, value limit 1").collect().toSeq)
     }
 
-    sql("set spark.sql.variable.substitute=true") // enable the substitution
-    checkAnswer(
-      sql("SELECT key FROM ${hiveconf:tbl2} ORDER BY key, value limit 1"),
-      sql("SELECT key FROM src ORDER BY key, value limit 1").collect().toSeq)
+    withSQLConf("tbl2" -> "src", "spark.sql.variable.substitute" -> "false") {
+      intercept[Exception] {
+        sql("SELECT key FROM ${hiveconf:tbl2} ORDER BY key, value limit 1").collect()
+      }
+    }
+
+    withSQLConf("tbl2" -> "src", "spark.sql.variable.substitute" -> "true") {
+      checkAnswer(
+        sql("SELECT key FROM ${hiveconf:tbl2} ORDER BY key, value limit 1"),
+        sql("SELECT key FROM src ORDER BY key, value limit 1").collect().toSeq)
+    }
   }
 
   test("ordering not in select") {
@@ -1106,35 +1110,30 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
   }
 
   test("dynamic partition value test") {
-    try {
-      sql("set hive.exec.dynamic.partition.mode=nonstrict")
-      // date
-      sql("drop table if exists dynparttest1")
-      sql("create table dynparttest1 (value int) partitioned by (pdate date)")
-      sql(
-        """
-          |insert into table dynparttest1 partition(pdate)
-          | select count(*), cast('2015-05-21' as date) as pdate from src
-        """.stripMargin)
-      checkAnswer(
-        sql("select * from dynparttest1"),
-        Seq(Row(500, java.sql.Date.valueOf("2015-05-21"))))
+    withTable("dynparttest1", "dynparttest2") {
+      withSQLConf("hive.exec.dynamic.partition.mode" -> "nonstrict") {
+        // date
+        sql("create table dynparttest1 (value int) partitioned by (pdate date)")
+        sql(
+          """
+             |insert into table dynparttest1 partition(pdate)
+             | select count(*), cast('2015-05-21' as date) as pdate from src
+          """.stripMargin)
+        checkAnswer(
+          sql("select * from dynparttest1"),
+          Seq(Row(500, java.sql.Date.valueOf("2015-05-21"))))
 
-      // decimal
-      sql("drop table if exists dynparttest2")
-      sql("create table dynparttest2 (value int) partitioned by (pdec decimal(5, 1))")
-      sql(
-        """
-          |insert into table dynparttest2 partition(pdec)
-          | select count(*), cast('100.12' as decimal(5, 1)) as pdec from src
-        """.stripMargin)
-      checkAnswer(
-        sql("select * from dynparttest2"),
-        Seq(Row(500, new java.math.BigDecimal("100.1"))))
-    } finally {
-      sql("drop table if exists dynparttest1")
-      sql("drop table if exists dynparttest2")
-      sql("set hive.exec.dynamic.partition.mode=strict")
+        // decimal
+        sql("create table dynparttest2 (value int) partitioned by (pdec decimal(5, 1))")
+        sql(
+          """
+             |insert into table dynparttest2 partition(pdec)
+             | select count(*), cast('100.12' as decimal(5, 1)) as pdec from src
+          """.stripMargin)
+        checkAnswer(
+            sql("select * from dynparttest2"),
+            Seq(Row(500, new java.math.BigDecimal("100.1"))))
+      }
     }
   }
 
@@ -1229,7 +1228,7 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
           .save(path)
 
         // We don't support creating a temporary table while specifying a database
-        intercept[AnalysisException] {
+        intercept[ParseException] {
           spark.sql(
             s"""
               |CREATE TEMPORARY VIEW db.t
@@ -1286,7 +1285,7 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
             |) t
             |SELECT c
           """.stripMargin),
-        (0 until 5).map(i => Row(i + "#")))
+        (0 until 5).map(i => Row(s"$i#")))
     }
   }
 
@@ -1309,7 +1308,7 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
           |WITH SERDEPROPERTIES('field.delim' = '|')
         """.stripMargin)
 
-      checkAnswer(df, (0 until 5).map(i => Row(i + "#", i + "#")))
+      checkAnswer(df, (0 until 5).map(i => Row(s"$i#", s"$i#")))
     }
   }
 
@@ -1350,6 +1349,17 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
       checkAnswer(sql(s"select a.id from parquet.`${f.getCanonicalPath}` as a"),
         df)
     })
+  }
+
+  test("SPARK-44520: invalid path for support direct query shall throw correct exception") {
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql(s"select id from parquet.`invalid_path`")
+      },
+      errorClass = "PATH_NOT_FOUND",
+      parameters = Map("path" -> "file.*invalid_path"),
+      matchPVals = true
+    )
   }
 
   test("run sql directly on files - orc") {
@@ -1397,18 +1407,28 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
 
   test("run sql directly on files - hive") {
     withTempPath(f => {
-      spark.range(100).toDF.write.parquet(f.getCanonicalPath)
+      spark.range(100).toDF().write.parquet(f.getCanonicalPath)
 
-      var e = intercept[AnalysisException] {
-        sql(s"select id from hive.`${f.getCanonicalPath}`")
-      }
-      assert(e.message.contains("Unsupported data source type for direct query on files: hive"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"select id from hive.`${f.getCanonicalPath}`")
+        },
+        errorClass = "UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY",
+        parameters = Map("dataSourceType" -> "hive"),
+        context = ExpectedContext(s"hive.`${f.getCanonicalPath}`",
+          15, 21 + f.getCanonicalPath.length)
+      )
 
       // data source type is case insensitive
-      e = intercept[AnalysisException] {
-        sql(s"select id from HIVE.`${f.getCanonicalPath}`")
-      }
-      assert(e.message.contains("Unsupported data source type for direct query on files: HIVE"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"select id from HIVE.`${f.getCanonicalPath}`")
+        },
+        errorClass = "UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY",
+        parameters = Map("dataSourceType" -> "HIVE"),
+        context = ExpectedContext(s"HIVE.`${f.getCanonicalPath}`",
+          15, 21 + f.getCanonicalPath.length)
+      )
     })
   }
 
@@ -1888,14 +1908,14 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
   }
 
   test("SPARK-17354: Partitioning by dates/timestamps works with Parquet vectorized reader") {
-    withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true") {
+    withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true",
+      "hive.exec.dynamic.partition.mode" -> "nonstrict") {
       sql(
         """CREATE TABLE order(id INT)
           |PARTITIONED BY (pd DATE, pt TIMESTAMP)
           |STORED AS PARQUET
         """.stripMargin)
 
-      sql("set hive.exec.dynamic.partition.mode=nonstrict")
       sql(
         """INSERT INTO TABLE order PARTITION(pd, pt)
           |SELECT 1 AS id, CAST('1990-02-24' AS DATE) AS pd, CAST('1990-02-24' AS TIMESTAMP) AS pt
@@ -2118,32 +2138,6 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
     }
   }
 
-  test("Auto alias construction of get_json_object") {
-    val df = Seq(("1", """{"f1": "value1", "f5": 5.23}""")).toDF("key", "jstring")
-    val expectedMsg = "Cannot create a table having a column whose name contains commas " +
-      s"in Hive metastore. Table: `$SESSION_CATALOG_NAME`.`default`.`t`; Column: " +
-      "get_json_object(jstring, $.f1)"
-
-    withTable("t") {
-      val e = intercept[AnalysisException] {
-        df.select($"key", functions.get_json_object($"jstring", "$.f1"))
-          .write.format("hive").saveAsTable("t")
-      }.getMessage
-      assert(e.contains(expectedMsg))
-    }
-
-    withTempView("tempView") {
-      withTable("t") {
-        df.createTempView("tempView")
-        val e = intercept[AnalysisException] {
-          sql("CREATE TABLE t USING hive AS " +
-            "SELECT key, get_json_object(jstring, '$.f1') FROM tempView")
-        }.getMessage
-        assert(e.contains(expectedMsg))
-      }
-    }
-  }
-
   test("SPARK-19912 String literals should be escaped for Hive metastore partition pruning") {
     withTable("spark_19912") {
       Seq(
@@ -2289,47 +2283,6 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
               checkAnswer(
                 sql(s"SELECT * FROM $format WHERE id_type = (SELECT 'b')"),
                 Row("3", "b") :: Row("4", "b") :: Nil)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  test("SPARK-25271: Hive ctas commands should use data source if it is convertible") {
-    withTempView("p") {
-      Seq(1, 2, 3).toDF("id").createOrReplaceTempView("p")
-
-      Seq("orc", "parquet").foreach { format =>
-        Seq(true, false).foreach { isConverted =>
-          withSQLConf(
-            HiveUtils.CONVERT_METASTORE_ORC.key -> s"$isConverted",
-            HiveUtils.CONVERT_METASTORE_PARQUET.key -> s"$isConverted") {
-            Seq(true, false).foreach { isConvertedCtas =>
-              withSQLConf(HiveUtils.CONVERT_METASTORE_CTAS.key -> s"$isConvertedCtas") {
-
-                val targetTable = "targetTable"
-                withTable(targetTable) {
-                  val df = sql(s"CREATE TABLE $targetTable STORED AS $format AS SELECT id FROM p")
-                  checkAnswer(sql(s"SELECT id FROM $targetTable"),
-                    Row(1) :: Row(2) :: Row(3) :: Nil)
-
-                  val ctasDSCommand = df.queryExecution.analyzed.collect {
-                    case _: OptimizedCreateHiveTableAsSelectCommand => true
-                  }.headOption
-                  val ctasCommand = df.queryExecution.analyzed.collect {
-                    case _: CreateHiveTableAsSelectCommand => true
-                  }.headOption
-
-                  if (isConverted && isConvertedCtas) {
-                    assert(ctasDSCommand.nonEmpty)
-                    assert(ctasCommand.isEmpty)
-                  } else {
-                    assert(ctasDSCommand.isEmpty)
-                    assert(ctasCommand.nonEmpty)
-                  }
-                }
-              }
             }
           }
         }
@@ -2678,13 +2631,92 @@ abstract class SQLQuerySuiteBase extends QueryTest with SQLTestUtils with TestHi
       checkAnswer(df, Seq.empty[Row])
     }
   }
+
+  test("SPARK-46388: HiveAnalysis convert InsertIntoStatement to InsertIntoHiveTable " +
+    "iff child resolved") {
+    withTable("t") {
+      sql("CREATE TABLE t (a STRING)")
+      checkError(
+        exception = intercept[AnalysisException](sql("INSERT INTO t SELECT a*2 FROM t where b=1")),
+        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        sqlState = None,
+        parameters = Map("objectName" -> "`b`", "proposal" -> "`a`"),
+        context = ExpectedContext(
+          fragment = "b",
+          start = 38,
+          stop = 38) )
+      checkError(
+        exception = intercept[AnalysisException](
+          sql("INSERT INTO t SELECT cast(a as short) FROM t where b=1")),
+        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        sqlState = None,
+        parameters = Map("objectName" -> "`b`", "proposal" -> "`a`"),
+        context = ExpectedContext(
+          fragment = "b",
+          start = 51,
+          stop = 51))
+    }
+  }
 }
 
 @SlowHiveTest
 class SQLQuerySuite extends SQLQuerySuiteBase with DisableAdaptiveExecutionSuite {
+  import spark.implicits._
+
   test("SPARK-36421: Validate all SQL configs to prevent from wrong use for ConfigEntry") {
     val df = spark.sql("set -v").select("Meaning")
     assert(df.collect().forall(!_.getString(0).contains("ConfigEntry")))
+  }
+
+  test("SPARK-25271: Hive ctas commands should use data source if it is convertible") {
+    withTempView("p") {
+      Seq(1, 2, 3).toDF("id").createOrReplaceTempView("p")
+
+      Seq("orc", "parquet").foreach { format =>
+        Seq(true, false).foreach { isConverted =>
+          withSQLConf(
+            HiveUtils.CONVERT_METASTORE_ORC.key -> s"$isConverted",
+            HiveUtils.CONVERT_METASTORE_PARQUET.key -> s"$isConverted") {
+            Seq(true, false).foreach { isConvertedCtas =>
+              withSQLConf(HiveUtils.CONVERT_METASTORE_CTAS.key -> s"$isConvertedCtas") {
+
+                val targetTable = "targetTable"
+                withTable(targetTable) {
+                  var commands: Seq[SparkPlanInfo] = Seq.empty
+                  val listener = new SparkListener {
+                    override def onOtherEvent(event: SparkListenerEvent): Unit = {
+                      event match {
+                        case start: SparkListenerSQLExecutionStart =>
+                          commands = commands ++ Seq(start.sparkPlanInfo)
+                        case _ => // ignore other events
+                      }
+                    }
+                  }
+                  spark.sparkContext.addSparkListener(listener)
+                  try {
+                    sql(s"CREATE TABLE $targetTable STORED AS $format AS SELECT id FROM p")
+                    checkAnswer(sql(s"SELECT id FROM $targetTable"),
+                      Row(1) :: Row(2) :: Row(3) :: Nil)
+                    spark.sparkContext.listenerBus.waitUntilEmpty()
+                    assert(commands.size == 3)
+                    assert(commands.head.nodeName == "Execute CreateHiveTableAsSelectCommand")
+
+                    val v1WriteCommand = commands(1)
+                    if (isConverted && isConvertedCtas) {
+                      assert(v1WriteCommand.nodeName == "Execute InsertIntoHadoopFsRelationCommand")
+                    } else {
+                      assert(v1WriteCommand.nodeName == "Execute InsertIntoHiveTable")
+                    }
+                  } finally {
+                    spark.sparkContext.removeSparkListener(listener)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 @SlowHiveTest

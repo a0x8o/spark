@@ -158,7 +158,7 @@ class LibSVMRelationSuite
       StructField("labelFoo", DoubleType, false),
       StructField("featuresBar", VectorType, false))
     )
-    val df = spark.sqlContext.createDataFrame(rawData, struct)
+    val df = spark.createDataFrame(rawData, struct)
 
     val writePath = Utils.createTempDir().getPath
 
@@ -173,8 +173,8 @@ class LibSVMRelationSuite
 
   test("select features from libsvm relation") {
     val df = spark.read.format("libsvm").load(path)
-    df.select("features").rdd.map { case Row(d: Vector) => d }.first
-    df.select("features").collect
+    df.select("features").rdd.map { case Row(d: Vector) => d }.first()
+    df.select("features").collect()
   }
 
   test("create libsvmTable table without schema") {

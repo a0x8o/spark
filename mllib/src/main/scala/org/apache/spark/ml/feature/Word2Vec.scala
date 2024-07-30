@@ -31,6 +31,7 @@ import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.{Utils, VersionUtils}
+import org.apache.spark.util.ArrayImplicits._
 
 /**
  * Params for [[Word2Vec]] and [[Word2VecModel]].
@@ -217,7 +218,7 @@ class Word2VecModel private[ml] (
   @Since("1.5.0")
   @transient lazy val getVectors: DataFrame = {
     val spark = SparkSession.builder().getOrCreate()
-    val wordVec = wordVectors.getVectors.mapValues(vec => Vectors.dense(vec.map(_.toDouble)))
+    val wordVec = wordVectors.getVectors.transform((_, vec) => Vectors.dense(vec.map(_.toDouble)))
     spark.createDataFrame(wordVec.toSeq).toDF("word", "vector")
   }
 
@@ -230,7 +231,8 @@ class Word2VecModel private[ml] (
   @Since("1.5.0")
   def findSynonyms(word: String, num: Int): DataFrame = {
     val spark = SparkSession.builder().getOrCreate()
-    spark.createDataFrame(findSynonymsArray(word, num)).toDF("word", "similarity")
+    spark.createDataFrame(findSynonymsArray(word, num).toImmutableArraySeq)
+      .toDF("word", "similarity")
   }
 
   /**
@@ -243,7 +245,8 @@ class Word2VecModel private[ml] (
   @Since("2.0.0")
   def findSynonyms(vec: Vector, num: Int): DataFrame = {
     val spark = SparkSession.builder().getOrCreate()
-    spark.createDataFrame(findSynonymsArray(vec, num)).toDF("word", "similarity")
+    spark.createDataFrame(findSynonymsArray(vec, num).toImmutableArraySeq)
+      .toDF("word", "similarity")
   }
 
   /**
@@ -349,7 +352,7 @@ object Word2VecModel extends MLReadable[Word2VecModel] {
   class Word2VecModelWriter(instance: Word2VecModel) extends MLWriter {
 
     override protected def saveImpl(path: String): Unit = {
-      DefaultParamsWriter.saveMetadata(instance, path, sc)
+      DefaultParamsWriter.saveMetadata(instance, path, sparkSession)
 
       val wordVectors = instance.wordVectors.getVectors
       val dataPath = new Path(path, "data").toString
@@ -404,7 +407,7 @@ object Word2VecModel extends MLReadable[Word2VecModel] {
       val spark = sparkSession
       import spark.implicits._
 
-      val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
+      val metadata = DefaultParamsReader.loadMetadata(path, sparkSession, className)
       val (major, minor) = VersionUtils.majorMinorVersion(metadata.sparkVersion)
 
       val dataPath = new Path(path, "data").toString

@@ -15,6 +15,7 @@
 # limitations under the License.
 #
 
+# This include enables functions like `cd` and `cp_r`.
 require 'fileutils'
 include FileUtils
 
@@ -37,7 +38,7 @@ if not (ENV['SKIP_API'] == '1')
 
     # Copy over the unified ScalaDoc for all projects to api/scala.
     # This directory will be copied over to _site when `jekyll` command is run.
-    source = "../target/scala-2.12/unidoc"
+    source = "../target/scala-2.13/unidoc"
     dest = "api/scala"
 
     puts "Making directory " + dest

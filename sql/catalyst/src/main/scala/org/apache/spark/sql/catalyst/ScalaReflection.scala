@@ -26,30 +26,16 @@ import scala.util.{Failure, Success}
 
 import org.apache.commons.lang3.reflect.ConstructorUtils
 
+import org.apache.spark.SPARK_DOC_ROOT
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.DeserializerBuildHelper._
-import org.apache.spark.sql.catalyst.SerializerBuildHelper._
-import org.apache.spark.sql.catalyst.analysis.GetColumnByOrdinal
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoder
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoders._
-import org.apache.spark.sql.catalyst.expressions.{Expression, _}
-import org.apache.spark.sql.catalyst.expressions.objects._
-import org.apache.spark.sql.catalyst.util.{ArrayData, MapData}
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
-
-
-/**
- * A helper trait to create [[org.apache.spark.sql.catalyst.encoders.ExpressionEncoder]]s
- * for classes whose fields are entirely defined by constructor params but should not be
- * case classes.
- */
-trait DefinedByConstructorParams
-
+import org.apache.spark.unsafe.types.CalendarInterval
 
 private[catalyst] object ScalaSubtypeLock
-
 
 /**
  * A default version of ScalaReflection that uses the runtime universe.
@@ -82,319 +68,10 @@ object ScalaReflection extends ScalaReflection {
     }
   }
 
-  // TODO this name is slightly misleading. This returns the input
-  //  data type we expect to see during serialization.
-  private[catalyst] def dataTypeFor(enc: AgnosticEncoder[_]): DataType = {
-    // DataType can be native.
-    if (isNativeEncoder(enc)) {
-      enc.dataType
-    } else {
-      ObjectType(enc.clsTag.runtimeClass)
-    }
-  }
-
-  /**
-   * Returns true if the value of this data type is same between internal and external.
-   */
-  def isNativeType(dt: DataType): Boolean = dt match {
-    case NullType | BooleanType | ByteType | ShortType | IntegerType | LongType |
-         FloatType | DoubleType | BinaryType | CalendarIntervalType => true
-    case _ => false
-  }
-
   private def baseType(tpe: `Type`): `Type` = {
     tpe.dealias match {
       case annotatedType: AnnotatedType => annotatedType.underlying
       case other => other
-    }
-  }
-
-  /**
-   * Returns true if the encoders' internal and external data type is the same.
-   */
-  private def isNativeEncoder(enc: AgnosticEncoder[_]): Boolean = enc match {
-    case PrimitiveBooleanEncoder => true
-    case PrimitiveByteEncoder => true
-    case PrimitiveShortEncoder => true
-    case PrimitiveIntEncoder => true
-    case PrimitiveLongEncoder => true
-    case PrimitiveFloatEncoder => true
-    case PrimitiveDoubleEncoder => true
-    case NullEncoder => true
-    case CalendarIntervalEncoder => true
-    case BinaryEncoder => true
-    case SparkDecimalEncoder => true
-    case _ => false
-  }
-
-  private def toArrayMethodName(enc: AgnosticEncoder[_]): String = enc match {
-    case PrimitiveBooleanEncoder => "toBooleanArray"
-    case PrimitiveByteEncoder => "toByteArray"
-    case PrimitiveShortEncoder => "toShortArray"
-    case PrimitiveIntEncoder => "toIntArray"
-    case PrimitiveLongEncoder => "toLongArray"
-    case PrimitiveFloatEncoder => "toFloatArray"
-    case PrimitiveDoubleEncoder => "toDoubleArray"
-    case _ => "array"
-  }
-
-  /**
-   * Returns an expression for deserializing the Spark SQL representation of an object into its
-   * external form. The mapping between the internal and external representations is
-   * described by encoder `enc`. The Spark SQL representation is located at ordinal 0 of
-   * a row, i.e., `GetColumnByOrdinal(0, _)`. Nested classes will have their fields accessed using
-   * `UnresolvedExtractValue`.
-   *
-   * The returned expression is used by `ExpressionEncoder`. The encoder will resolve and bind this
-   * deserializer expression when using it.
-   *
-   * @param enc encoder that describes the mapping between the Spark SQL representation and the
-   *            external representation.
-   */
-  def deserializerFor[T](enc: AgnosticEncoder[T]): Expression = {
-    val walkedTypePath = WalkedTypePath().recordRoot(enc.clsTag.runtimeClass.getName)
-    // Assumes we are deserializing the first column of a row.
-    val input = GetColumnByOrdinal(0, enc.dataType)
-    val deserializer = deserializerFor(
-      enc,
-      upCastToExpectedType(input, enc.dataType, walkedTypePath),
-      walkedTypePath)
-    expressionWithNullSafety(deserializer, enc.nullable, walkedTypePath)
-  }
-
-  /**
-   * Returns an expression for deserializing the value of an input expression into its external
-   * representation. The mapping between the internal and external representations is
-   * described by encoder `enc`.
-   *
-   * @param enc encoder that describes the mapping between the Spark SQL representation and the
-   *            external representation.
-   * @param path The expression which can be used to extract serialized value.
-   * @param walkedTypePath The paths from top to bottom to access current field when deserializing.
-   */
-  private def deserializerFor(
-      enc: AgnosticEncoder[_],
-      path: Expression,
-      walkedTypePath: WalkedTypePath): Expression = enc match {
-    case _ if isNativeEncoder(enc) =>
-      path
-    case BoxedBooleanEncoder =>
-      createDeserializerForTypesSupportValueOf(path, enc.clsTag.runtimeClass)
-    case BoxedByteEncoder =>
-      createDeserializerForTypesSupportValueOf(path, enc.clsTag.runtimeClass)
-    case BoxedShortEncoder =>
-      createDeserializerForTypesSupportValueOf(path, enc.clsTag.runtimeClass)
-    case BoxedIntEncoder =>
-      createDeserializerForTypesSupportValueOf(path, enc.clsTag.runtimeClass)
-    case BoxedLongEncoder =>
-      createDeserializerForTypesSupportValueOf(path, enc.clsTag.runtimeClass)
-    case BoxedFloatEncoder =>
-      createDeserializerForTypesSupportValueOf(path, enc.clsTag.runtimeClass)
-    case BoxedDoubleEncoder =>
-      createDeserializerForTypesSupportValueOf(path, enc.clsTag.runtimeClass)
-    case JavaEnumEncoder(tag) =>
-      val toString = createDeserializerForString(path, returnNullable = false)
-      createDeserializerForTypesSupportValueOf(toString, tag.runtimeClass)
-    case ScalaEnumEncoder(parent, tag) =>
-      StaticInvoke(
-        parent,
-        ObjectType(tag.runtimeClass),
-        "withName",
-        createDeserializerForString(path, returnNullable = false) :: Nil,
-        returnNullable = false)
-    case StringEncoder =>
-      createDeserializerForString(path, returnNullable = false)
-    case ScalaDecimalEncoder =>
-      createDeserializerForScalaBigDecimal(path, returnNullable = false)
-    case JavaDecimalEncoder =>
-      createDeserializerForJavaBigDecimal(path, returnNullable = false)
-    case ScalaBigIntEncoder =>
-      createDeserializerForScalaBigInt(path)
-    case JavaBigIntEncoder =>
-      createDeserializerForJavaBigInteger(path, returnNullable = false)
-    case DayTimeIntervalEncoder =>
-      createDeserializerForDuration(path)
-    case YearMonthIntervalEncoder =>
-      createDeserializerForPeriod(path)
-    case DateEncoder =>
-      createDeserializerForSqlDate(path)
-    case LocalDateEncoder =>
-      createDeserializerForLocalDate(path)
-    case TimestampEncoder =>
-      createDeserializerForSqlTimestamp(path)
-    case InstantEncoder =>
-      createDeserializerForInstant(path)
-    case LocalDateTimeEncoder =>
-      createDeserializerForLocalDateTime(path)
-    case UDTEncoder(udt, udtClass) =>
-      val obj = NewInstance(udtClass, Nil, ObjectType(udtClass))
-      Invoke(obj, "deserialize", ObjectType(udt.userClass), path :: Nil)
-    case OptionEncoder(valueEnc) =>
-      val newTypePath = walkedTypePath.recordOption(valueEnc.clsTag.runtimeClass.getName)
-      val deserializer = deserializerFor(valueEnc, path, newTypePath)
-      WrapOption(deserializer, dataTypeFor(valueEnc))
-
-    case ArrayEncoder(elementEnc: AgnosticEncoder[_]) =>
-      val newTypePath = walkedTypePath.recordArray(elementEnc.clsTag.runtimeClass.getName)
-      val mapFunction: Expression => Expression = element => {
-        // upcast the array element to the data type the encoder expected.
-        deserializerForWithNullSafetyAndUpcast(
-          element,
-          elementEnc.dataType,
-          nullable = elementEnc.nullable,
-          newTypePath,
-          deserializerFor(elementEnc, _, newTypePath))
-      }
-      Invoke(
-        UnresolvedMapObjects(mapFunction, path),
-        toArrayMethodName(elementEnc),
-        ObjectType(enc.clsTag.runtimeClass),
-        returnNullable = false)
-
-    case IterableEncoder(clsTag, elementEnc) =>
-      val newTypePath = walkedTypePath.recordArray(elementEnc.clsTag.runtimeClass.getName)
-      val mapFunction: Expression => Expression = element => {
-        // upcast the array element to the data type the encoder expected.
-        deserializerForWithNullSafetyAndUpcast(
-          element,
-          elementEnc.dataType,
-          nullable = elementEnc.nullable,
-          newTypePath,
-          deserializerFor(elementEnc, _, newTypePath))
-      }
-      UnresolvedMapObjects(mapFunction, path, Some(clsTag.runtimeClass))
-
-    case MapEncoder(tag, keyEncoder, valueEncoder) =>
-      val newTypePath = walkedTypePath.recordMap(
-        keyEncoder.clsTag.runtimeClass.getName,
-        valueEncoder.clsTag.runtimeClass.getName)
-      UnresolvedCatalystToExternalMap(
-        path,
-        deserializerFor(keyEncoder, _, newTypePath),
-        deserializerFor(valueEncoder, _, newTypePath),
-        tag.runtimeClass)
-
-    case ProductEncoder(tag, fields) =>
-      val cls = tag.runtimeClass
-      val dt = ObjectType(cls)
-      val isTuple = cls.getName.startsWith("scala.Tuple")
-      val arguments = fields.zipWithIndex.map {
-        case (field, i) =>
-          val newTypePath = walkedTypePath.recordField(
-            field.enc.clsTag.runtimeClass.getName,
-            field.name)
-          // For tuples, we grab the inner fields by ordinal instead of name.
-          val getter = if (isTuple) {
-            addToPathOrdinal(path, i, field.enc.dataType, newTypePath)
-          } else {
-            addToPath(path, field.name, field.enc.dataType, newTypePath)
-          }
-          expressionWithNullSafety(
-            deserializerFor(field.enc, getter, newTypePath),
-            field.enc.nullable,
-            newTypePath)
-      }
-      expressions.If(
-        IsNull(path),
-        expressions.Literal.create(null, dt),
-        NewInstance(cls, arguments, dt, propagateNull = false))
-  }
-
-  /**
-   * Returns an expression for serializing an object into its Spark SQL form. The mapping
-   * between the external and internal representations is described by encoder `enc`. The
-   * input object is located at ordinal 0 of a row, i.e., `BoundReference(0, _)`.
-   */
-  def serializerFor(enc: AgnosticEncoder[_]): Expression = {
-    val input = BoundReference(0, dataTypeFor(enc), nullable = enc.nullable)
-    serializerFor(enc, input)
-  }
-
-  /**
-   * Returns an expression for serializing the value of an input expression into its Spark SQL
-   * representation. The mapping between the external and internal representations is described
-   * by encoder `enc`.
-   */
-  private def serializerFor(enc: AgnosticEncoder[_], input: Expression): Expression = enc match {
-    case _ if isNativeEncoder(enc) => input
-    case BoxedBooleanEncoder => createSerializerForBoolean(input)
-    case BoxedByteEncoder => createSerializerForByte(input)
-    case BoxedShortEncoder => createSerializerForShort(input)
-    case BoxedIntEncoder => createSerializerForInteger(input)
-    case BoxedLongEncoder => createSerializerForLong(input)
-    case BoxedFloatEncoder => createSerializerForFloat(input)
-    case BoxedDoubleEncoder => createSerializerForDouble(input)
-    case JavaEnumEncoder(_) => createSerializerForJavaEnum(input)
-    case ScalaEnumEncoder(_, _) => createSerializerForScalaEnum(input)
-    case StringEncoder => createSerializerForString(input)
-    case ScalaDecimalEncoder => createSerializerForScalaBigDecimal(input)
-    case JavaDecimalEncoder => createSerializerForJavaBigDecimal(input)
-    case ScalaBigIntEncoder => createSerializerForScalaBigInt(input)
-    case JavaBigIntEncoder => createSerializerForJavaBigInteger(input)
-    case DayTimeIntervalEncoder => createSerializerForJavaDuration(input)
-    case YearMonthIntervalEncoder => createSerializerForJavaPeriod(input)
-    case DateEncoder => createSerializerForSqlDate(input)
-    case LocalDateEncoder => createSerializerForJavaLocalDate(input)
-    case TimestampEncoder => createSerializerForSqlTimestamp(input)
-    case InstantEncoder => createSerializerForJavaInstant(input)
-    case LocalDateTimeEncoder => createSerializerForLocalDateTime(input)
-    case UDTEncoder(udt, udtClass) => createSerializerForUserDefinedType(input, udt, udtClass)
-    case OptionEncoder(valueEnc) =>
-      serializerFor(valueEnc, UnwrapOption(dataTypeFor(valueEnc), input))
-
-    case ArrayEncoder(elementEncoder) =>
-      serializerForArray(isArray = true, elementEncoder, input)
-
-    case IterableEncoder(ctag, elementEncoder) =>
-      val getter = if (classOf[scala.collection.Set[_]].isAssignableFrom(ctag.runtimeClass)) {
-        // There's no corresponding Catalyst type for `Set`, we serialize a `Set` to Catalyst array.
-        // Note that the property of `Set` is only kept when manipulating the data as domain object.
-        Invoke(input, "toSeq", ObjectType(classOf[Seq[_]]))
-      } else {
-        input
-      }
-      serializerForArray(isArray = false, elementEncoder, getter)
-
-    case MapEncoder(_, keyEncoder, valueEncoder) =>
-      createSerializerForMap(
-        input,
-        MapElementInformation(
-          dataTypeFor(keyEncoder),
-          nullable = !keyEncoder.isPrimitive,
-          serializerFor(keyEncoder, _)),
-        MapElementInformation(
-          dataTypeFor(valueEncoder),
-          nullable = !valueEncoder.isPrimitive,
-          serializerFor(valueEncoder, _))
-      )
-
-    case ProductEncoder(_, fields) =>
-      val serializedFields = fields.map { field =>
-        // SPARK-26730 inputObject won't be null with If's guard below. And KnownNotNul
-        // is necessary here. Because for a nullable nested inputObject with struct data
-        // type, e.g. StructType(IntegerType, StringType), it will return nullable=true
-        // for IntegerType without KnownNotNull. And that's what we do not expect to.
-        val getter = Invoke(
-          KnownNotNull(input),
-          field.name,
-          dataTypeFor(field.enc),
-          returnNullable = field.enc.nullable)
-        field.name -> serializerFor(field.enc, getter)
-      }
-      createSerializerForObject(input, serializedFields)
-  }
-
-  private def serializerForArray(
-      isArray: Boolean,
-      elementEnc: AgnosticEncoder[_],
-      input: Expression): Expression = {
-    dataTypeFor(elementEnc) match {
-      case dt: ObjectType =>
-        createSerializerForMapObjects(input, dt, serializerFor(elementEnc, _))
-      case dt if isArray && elementEnc.isPrimitive =>
-        createSerializerForPrimitiveArray(input, dt)
-      case dt =>
-        createSerializerForGenericArray(input, dt, elementEnc.nullable)
     }
   }
 
@@ -440,15 +117,6 @@ object ScalaReflection extends ScalaReflection {
     }
   }
 
-  /**
-   * Returns the parameter values for the primary constructor of this class.
-   */
-  def getConstructorParameterValues(obj: DefinedByConstructorParams): Seq[AnyRef] = {
-    getConstructorParameterNames(obj.getClass).map { name =>
-      obj.getClass.getMethod(name).invoke(obj)
-    }
-  }
-
   private def erasure(tpe: Type): Type = {
     // For user-defined AnyVal classes, we should not erasure it. Otherwise, it will
     // resolve to underlying type which wrapped by this class, e.g erasure
@@ -484,13 +152,6 @@ object ScalaReflection extends ScalaReflection {
     mirror.runtimeClass(erasure(tpe).dealias.typeSymbol.asClass)
 
   case class Schema(dataType: DataType, nullable: Boolean)
-
-  /** Returns a Sequence of attributes for the given case class type. */
-  def attributesFor[T: TypeTag]: Seq[Attribute] = schemaFor[T] match {
-    case Schema(s: StructType, _) =>
-      s.toAttributes
-    case others => throw QueryExecutionErrors.attributesForTypeUnsupportedError(others)
-  }
 
   /** Returns a catalyst DataType and its nullability for the given Scala Type using reflection. */
   def schemaFor[T: TypeTag]: Schema = schemaFor(localTypeOf[T])
@@ -547,72 +208,6 @@ object ScalaReflection extends ScalaReflection {
     }
   }
 
-  val typeJavaMapping: Map[DataType, Class[_]] = Map[DataType, Class[_]](
-    BooleanType -> classOf[Boolean],
-    ByteType -> classOf[Byte],
-    ShortType -> classOf[Short],
-    IntegerType -> classOf[Int],
-    LongType -> classOf[Long],
-    FloatType -> classOf[Float],
-    DoubleType -> classOf[Double],
-    StringType -> classOf[UTF8String],
-    DateType -> classOf[DateType.InternalType],
-    TimestampType -> classOf[TimestampType.InternalType],
-    TimestampNTZType -> classOf[TimestampNTZType.InternalType],
-    BinaryType -> classOf[BinaryType.InternalType],
-    CalendarIntervalType -> classOf[CalendarInterval]
-  )
-
-  val typeBoxedJavaMapping: Map[DataType, Class[_]] = Map[DataType, Class[_]](
-    BooleanType -> classOf[java.lang.Boolean],
-    ByteType -> classOf[java.lang.Byte],
-    ShortType -> classOf[java.lang.Short],
-    IntegerType -> classOf[java.lang.Integer],
-    LongType -> classOf[java.lang.Long],
-    FloatType -> classOf[java.lang.Float],
-    DoubleType -> classOf[java.lang.Double],
-    DateType -> classOf[java.lang.Integer],
-    TimestampType -> classOf[java.lang.Long],
-    TimestampNTZType -> classOf[java.lang.Long]
-  )
-
-  def dataTypeJavaClass(dt: DataType): Class[_] = {
-    dt match {
-      case _: DecimalType => classOf[Decimal]
-      case it: DayTimeIntervalType => classOf[it.InternalType]
-      case it: YearMonthIntervalType => classOf[it.InternalType]
-      case _: StructType => classOf[InternalRow]
-      case _: ArrayType => classOf[ArrayData]
-      case _: MapType => classOf[MapData]
-      case ObjectType(cls) => cls
-      case _ => typeJavaMapping.getOrElse(dt, classOf[java.lang.Object])
-    }
-  }
-
-  @scala.annotation.tailrec
-  def javaBoxedType(dt: DataType): Class[_] = dt match {
-    case _: DecimalType => classOf[Decimal]
-    case _: DayTimeIntervalType => classOf[java.lang.Long]
-    case _: YearMonthIntervalType => classOf[java.lang.Integer]
-    case BinaryType => classOf[Array[Byte]]
-    case StringType => classOf[UTF8String]
-    case CalendarIntervalType => classOf[CalendarInterval]
-    case _: StructType => classOf[InternalRow]
-    case _: ArrayType => classOf[ArrayType]
-    case _: MapType => classOf[MapType]
-    case udt: UserDefinedType[_] => javaBoxedType(udt.sqlType)
-    case ObjectType(cls) => cls
-    case _ => ScalaReflection.typeBoxedJavaMapping.getOrElse(dt, classOf[java.lang.Object])
-  }
-
-  def expressionJavaClasses(arguments: Seq[Expression]): Seq[Class[_]] = {
-    if (arguments != Nil) {
-      arguments.map(e => dataTypeJavaClass(e.dataType))
-    } else {
-      Seq.empty
-    }
-  }
-
   def encodeFieldNameToIdentifier(fieldName: String): String = {
     TermName(fieldName).encodedName.toString
   }
@@ -634,30 +229,47 @@ object ScalaReflection extends ScalaReflection {
   }
 
   /**
+   * Same as [[encoderFor]] but with extended support to return [[UnboundRowEncoder]] for [[Row]]
+   * type.
+   */
+  def encoderForWithRowEncoderSupport[E: TypeTag]: AgnosticEncoder[E] = {
+    encoderFor(typeTag[E].in(mirror).tpe, isRowEncoderSupported = true)
+      .asInstanceOf[AgnosticEncoder[E]]
+  }
+
+  /**
    * Create an [[AgnosticEncoder]] for a [[Type]].
    */
-  def encoderFor(tpe: `Type`): AgnosticEncoder[_] = cleanUpReflectionObjects {
+  def encoderFor(
+     tpe: `Type`,
+     isRowEncoderSupported: Boolean = false): AgnosticEncoder[_] = cleanUpReflectionObjects {
     val clsName = getClassNameFromType(tpe)
     val walkedTypePath = WalkedTypePath().recordRoot(clsName)
-    encoderFor(tpe, Set.empty, walkedTypePath)
+    encoderFor(tpe, Set.empty, walkedTypePath, isRowEncoderSupported)
   }
 
   private def encoderFor(
       tpe: `Type`,
       seenTypeSet: Set[`Type`],
-      path: WalkedTypePath): AgnosticEncoder[_] = {
+      path: WalkedTypePath,
+      isRowEncoderSupported: Boolean): AgnosticEncoder[_] = {
     def createIterableEncoder(t: `Type`, fallbackClass: Class[_]): AgnosticEncoder[_] = {
       val TypeRef(_, _, Seq(elementType)) = t
       val encoder = encoderFor(
         elementType,
         seenTypeSet,
-        path.recordArray(getClassNameFromType(elementType)))
+        path.recordArray(getClassNameFromType(elementType)),
+        isRowEncoderSupported)
       val companion = t.dealias.typeSymbol.companion.typeSignature
       val targetClass = companion.member(TermName("newBuilder")) match {
         case NoSymbol => fallbackClass
         case _ => mirror.runtimeClass(t.typeSymbol.asClass)
       }
-      IterableEncoder(ClassTag(targetClass), encoder)
+      IterableEncoder(
+        ClassTag(targetClass),
+        encoder,
+        encoder.nullable,
+        lenientSerialization = false)
     }
 
     baseType(tpe) match {
@@ -698,19 +310,20 @@ object ScalaReflection extends ScalaReflection {
 
       // Leaf encoders
       case t if isSubtype(t, localTypeOf[String]) => StringEncoder
-      case t if isSubtype(t, localTypeOf[Decimal]) => SparkDecimalEncoder
-      case t if isSubtype(t, localTypeOf[BigDecimal]) => ScalaDecimalEncoder
-      case t if isSubtype(t, localTypeOf[java.math.BigDecimal]) => JavaDecimalEncoder
+      case t if isSubtype(t, localTypeOf[Decimal]) => DEFAULT_SPARK_DECIMAL_ENCODER
+      case t if isSubtype(t, localTypeOf[BigDecimal]) => DEFAULT_SCALA_DECIMAL_ENCODER
+      case t if isSubtype(t, localTypeOf[java.math.BigDecimal]) => DEFAULT_JAVA_DECIMAL_ENCODER
       case t if isSubtype(t, localTypeOf[BigInt]) => ScalaBigIntEncoder
       case t if isSubtype(t, localTypeOf[java.math.BigInteger]) => JavaBigIntEncoder
       case t if isSubtype(t, localTypeOf[CalendarInterval]) => CalendarIntervalEncoder
       case t if isSubtype(t, localTypeOf[java.time.Duration]) => DayTimeIntervalEncoder
       case t if isSubtype(t, localTypeOf[java.time.Period]) => YearMonthIntervalEncoder
-      case t if isSubtype(t, localTypeOf[java.sql.Date]) => DateEncoder
-      case t if isSubtype(t, localTypeOf[java.time.LocalDate]) => LocalDateEncoder
-      case t if isSubtype(t, localTypeOf[java.sql.Timestamp]) => TimestampEncoder
-      case t if isSubtype(t, localTypeOf[java.time.Instant]) => InstantEncoder
+      case t if isSubtype(t, localTypeOf[java.sql.Date]) => STRICT_DATE_ENCODER
+      case t if isSubtype(t, localTypeOf[java.time.LocalDate]) => STRICT_LOCAL_DATE_ENCODER
+      case t if isSubtype(t, localTypeOf[java.sql.Timestamp]) => STRICT_TIMESTAMP_ENCODER
+      case t if isSubtype(t, localTypeOf[java.time.Instant]) => STRICT_INSTANT_ENCODER
       case t if isSubtype(t, localTypeOf[java.time.LocalDateTime]) => LocalDateTimeEncoder
+      case t if isSubtype(t, localTypeOf[Row]) => UnboundRowEncoder
 
       // UDT encoders
       case t if t.typeSymbol.annotations.exists(_.tree.tpe =:= typeOf[SQLUserDefinedType]) =>
@@ -730,7 +343,8 @@ object ScalaReflection extends ScalaReflection {
         val encoder = encoderFor(
           optType,
           seenTypeSet,
-          path.recordOption(getClassNameFromType(optType)))
+          path.recordOption(getClassNameFromType(optType)),
+          isRowEncoderSupported)
         OptionEncoder(encoder)
 
       case t if isSubtype(t, localTypeOf[Array[_]]) =>
@@ -738,8 +352,9 @@ object ScalaReflection extends ScalaReflection {
         val encoder = encoderFor(
           elementType,
           seenTypeSet,
-          path.recordArray(getClassNameFromType(elementType)))
-        ArrayEncoder(encoder)
+          path.recordArray(getClassNameFromType(elementType)),
+          isRowEncoderSupported)
+        ArrayEncoder(encoder, encoder.nullable)
 
       case t if isSubtype(t, localTypeOf[scala.collection.Seq[_]]) =>
         createIterableEncoder(t, classOf[scala.collection.Seq[_]])
@@ -752,12 +367,14 @@ object ScalaReflection extends ScalaReflection {
         val keyEncoder = encoderFor(
           keyType,
           seenTypeSet,
-          path.recordKeyForMap(getClassNameFromType(keyType)))
+          path.recordKeyForMap(getClassNameFromType(keyType)),
+          isRowEncoderSupported)
         val valueEncoder = encoderFor(
           valueType,
           seenTypeSet,
-          path.recordValueForMap(getClassNameFromType(valueType)))
-        MapEncoder(ClassTag(getClassFromType(t)), keyEncoder, valueEncoder)
+          path.recordValueForMap(getClassNameFromType(valueType)),
+          isRowEncoderSupported)
+        MapEncoder(ClassTag(getClassFromType(t)), keyEncoder, valueEncoder, valueEncoder.nullable)
 
       case t if definedByConstructorParams(t) =>
         if (seenTypeSet.contains(t)) {
@@ -774,12 +391,13 @@ object ScalaReflection extends ScalaReflection {
             val encoder = encoderFor(
               fieldType,
               seenTypeSet + t,
-              path.recordField(getClassNameFromType(fieldType), fieldName))
-            EncoderField(fieldName, encoder)
+              path.recordField(getClassNameFromType(fieldType), fieldName),
+              isRowEncoderSupported)
+            EncoderField(fieldName, encoder, encoder.nullable, Metadata.empty)
         }
         ProductEncoder(ClassTag(getClassFromType(t)), params)
       case _ =>
-        throw QueryExecutionErrors.cannotFindEncoderForTypeError(tpe.toString, path)
+        throw QueryExecutionErrors.cannotFindEncoderForTypeError(tpe.toString, SPARK_DOC_ROOT)
     }
   }
 }

@@ -14,28 +14,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+from enum import Enum
+import inspect
 import functools
 import os
-from typing import Any, Callable, Optional, Sequence, TYPE_CHECKING, cast, TypeVar
-
-import py4j
-from py4j.java_collections import JavaArray
-from py4j.java_gateway import (
-    JavaClass,
-    JavaGateway,
-    JavaObject,
-    is_instance_of,
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Optional,
+    List,
+    Sequence,
+    TYPE_CHECKING,
+    cast,
+    TypeVar,
+    Union,
 )
-from py4j.protocol import Py4JJavaError
 
-from pyspark import SparkContext
+# For backward compatibility.
+from pyspark.errors import (  # noqa: F401
+    AnalysisException,
+    ParseException,
+    IllegalArgumentException,
+    StreamingQueryException,
+    QueryExecutionException,
+    PythonException,
+    UnknownException,
+    SparkUpgradeException,
+    PySparkNotImplementedError,
+    PySparkRuntimeError,
+)
+from pyspark.util import is_remote_only, JVM_INT_MAX
+from pyspark.errors.exceptions.captured import CapturedException  # noqa: F401
 from pyspark.find_spark_home import _find_spark_home
 
 if TYPE_CHECKING:
+    from py4j.java_collections import JavaArray
+    from py4j.java_gateway import (
+        JavaClass,
+        JavaGateway,
+        JavaObject,
+        JVMView,
+    )
+    from pyspark import SparkContext
     from pyspark.sql.session import SparkSession
     from pyspark.sql.dataframe import DataFrame
+    from pyspark.pandas._typing import IndexOpsLike, SeriesOrIndex
 
-has_numpy = False
+has_numpy: bool = False
 try:
     import numpy as np  # noqa: F401
 
@@ -47,191 +73,7 @@ except ImportError:
 FuncT = TypeVar("FuncT", bound=Callable[..., Any])
 
 
-class CapturedException(Exception):
-    def __init__(
-        self,
-        desc: Optional[str] = None,
-        stackTrace: Optional[str] = None,
-        cause: Optional[Py4JJavaError] = None,
-        origin: Optional[Py4JJavaError] = None,
-    ):
-        # desc & stackTrace vs origin are mutually exclusive.
-        # cause is optional.
-        assert (origin is not None and desc is None and stackTrace is None) or (
-            origin is None and desc is not None and stackTrace is not None
-        )
-
-        self.desc = desc if desc is not None else cast(Py4JJavaError, origin).getMessage()
-        assert SparkContext._jvm is not None
-        self.stackTrace = (
-            stackTrace
-            if stackTrace is not None
-            else (SparkContext._jvm.org.apache.spark.util.Utils.exceptionString(origin))
-        )
-        self.cause = convert_exception(cause) if cause is not None else None
-        if self.cause is None and origin is not None and origin.getCause() is not None:
-            self.cause = convert_exception(origin.getCause())
-        self._origin = origin
-
-    def __str__(self) -> str:
-        assert SparkContext._jvm is not None
-
-        jvm = SparkContext._jvm
-        sql_conf = jvm.org.apache.spark.sql.internal.SQLConf.get()
-        debug_enabled = sql_conf.pysparkJVMStacktraceEnabled()
-        desc = self.desc
-        if debug_enabled:
-            desc = desc + "\n\nJVM stacktrace:\n%s" % self.stackTrace
-        return str(desc)
-
-    def getErrorClass(self) -> Optional[str]:
-        assert SparkContext._gateway is not None
-
-        gw = SparkContext._gateway
-        if self._origin is not None and is_instance_of(
-            gw, self._origin, "org.apache.spark.SparkThrowable"
-        ):
-            return self._origin.getErrorClass()
-        else:
-            return None
-
-    def getSqlState(self) -> Optional[str]:
-        assert SparkContext._gateway is not None
-
-        gw = SparkContext._gateway
-        if self._origin is not None and is_instance_of(
-            gw, self._origin, "org.apache.spark.SparkThrowable"
-        ):
-            return self._origin.getSqlState()
-        else:
-            return None
-
-
-class AnalysisException(CapturedException):
-    """
-    Failed to analyze a SQL query plan.
-    """
-
-
-class ParseException(CapturedException):
-    """
-    Failed to parse a SQL command.
-    """
-
-
-class IllegalArgumentException(CapturedException):
-    """
-    Passed an illegal or inappropriate argument.
-    """
-
-
-class StreamingQueryException(CapturedException):
-    """
-    Exception that stopped a :class:`StreamingQuery`.
-    """
-
-
-class QueryExecutionException(CapturedException):
-    """
-    Failed to execute a query.
-    """
-
-
-class PythonException(CapturedException):
-    """
-    Exceptions thrown from Python workers.
-    """
-
-
-class UnknownException(CapturedException):
-    """
-    None of the above exceptions.
-    """
-
-
-class SparkUpgradeException(CapturedException):
-    """
-    Exception thrown because of Spark upgrade
-    """
-
-
-def convert_exception(e: Py4JJavaError) -> CapturedException:
-    assert e is not None
-    assert SparkContext._jvm is not None
-    assert SparkContext._gateway is not None
-
-    jvm = SparkContext._jvm
-    gw = SparkContext._gateway
-
-    if is_instance_of(gw, e, "org.apache.spark.sql.catalyst.parser.ParseException"):
-        return ParseException(origin=e)
-    # Order matters. ParseException inherits AnalysisException.
-    elif is_instance_of(gw, e, "org.apache.spark.sql.AnalysisException"):
-        return AnalysisException(origin=e)
-    elif is_instance_of(gw, e, "org.apache.spark.sql.streaming.StreamingQueryException"):
-        return StreamingQueryException(origin=e)
-    elif is_instance_of(gw, e, "org.apache.spark.sql.execution.QueryExecutionException"):
-        return QueryExecutionException(origin=e)
-    elif is_instance_of(gw, e, "java.lang.IllegalArgumentException"):
-        return IllegalArgumentException(origin=e)
-    elif is_instance_of(gw, e, "org.apache.spark.SparkUpgradeException"):
-        return SparkUpgradeException(origin=e)
-
-    c: Py4JJavaError = e.getCause()
-    stacktrace: str = jvm.org.apache.spark.util.Utils.exceptionString(e)
-    if c is not None and (
-        is_instance_of(gw, c, "org.apache.spark.api.python.PythonException")
-        # To make sure this only catches Python UDFs.
-        and any(
-            map(
-                lambda v: "org.apache.spark.sql.execution.python" in v.toString(), c.getStackTrace()
-            )
-        )
-    ):
-        msg = (
-            "\n  An exception was thrown from the Python worker. "
-            "Please see the stack trace below.\n%s" % c.getMessage()
-        )
-        return PythonException(msg, stacktrace)
-
-    return UnknownException(desc=e.toString(), stackTrace=stacktrace, cause=c)
-
-
-def capture_sql_exception(f: Callable[..., Any]) -> Callable[..., Any]:
-    def deco(*a: Any, **kw: Any) -> Any:
-        try:
-            return f(*a, **kw)
-        except Py4JJavaError as e:
-            converted = convert_exception(e.java_exception)
-            if not isinstance(converted, UnknownException):
-                # Hide where the exception came from that shows a non-Pythonic
-                # JVM exception message.
-                raise converted from None
-            else:
-                raise
-
-    return deco
-
-
-def install_exception_handler() -> None:
-    """
-    Hook an exception handler into Py4j, which could capture some SQL exceptions in Java.
-
-    When calling Java API, it will call `get_return_value` to parse the returned object.
-    If any exception happened in JVM, the result will be Java exception object, it raise
-    py4j.protocol.Py4JJavaError. We replace the original `get_return_value` with one that
-    could capture the Java exception and throw a Python one (with the same error message).
-
-    It's idempotent, could be called multiple times.
-    """
-    original = py4j.protocol.get_return_value
-    # The original `get_return_value` is not patched, it's idempotent.
-    patched = capture_sql_exception(original)
-    # only patch the one used in py4j.java_gateway (call Java API)
-    py4j.java_gateway.get_return_value = patched
-
-
-def toJArray(gateway: JavaGateway, jtype: JavaClass, arr: Sequence[Any]) -> JavaArray:
+def to_java_array(gateway: "JavaGateway", jtype: "JavaClass", arr: Sequence[Any]) -> "JavaArray":
     """
     Convert python list to java type array
 
@@ -244,10 +86,18 @@ def toJArray(gateway: JavaGateway, jtype: JavaClass, arr: Sequence[Any]) -> Java
     arr :
         python type list
     """
-    jarray: JavaArray = gateway.new_array(jtype, len(arr))
+    jarray: "JavaArray" = gateway.new_array(jtype, len(arr))
     for i in range(0, len(arr)):
         jarray[i] = arr[i]
     return jarray
+
+
+def to_scala_map(jvm: "JVMView", dic: Dict) -> "JavaObject":
+    """
+    Convert a dict into a Scala Map.
+    """
+    assert jvm is not None
+    return jvm.PythonUtils.toScalaMap(dic)
 
 
 def require_test_compiled() -> None:
@@ -259,8 +109,9 @@ def require_test_compiled() -> None:
     paths = glob.glob(test_class_path)
 
     if len(paths) == 0:
-        raise RuntimeError(
-            "%s doesn't exist. Spark sql test classes are not compiled." % test_class_path
+        raise PySparkRuntimeError(
+            errorClass="TEST_CLASS_NOT_COMPILED",
+            messageParameters={"test_class_path": test_class_path},
         )
 
 
@@ -275,7 +126,7 @@ class ForeachBatchFunction:
         self.func = func
         self.session = session
 
-    def call(self, jdf: JavaObject, batch_id: int) -> None:
+    def call(self, jdf: "JavaObject", batch_id: int) -> None:
         from pyspark.sql.dataframe import DataFrame
         from pyspark.sql.session import SparkSession
 
@@ -292,6 +143,44 @@ class ForeachBatchFunction:
         implements = ["org.apache.spark.sql.execution.streaming.sources.PythonForeachBatchFunction"]
 
 
+# Python implementation of 'org.apache.spark.sql.catalyst.util.StringConcat'
+class StringConcat:
+    def __init__(self, maxLength: int = JVM_INT_MAX - 15):
+        self.maxLength: int = maxLength
+        self.strings: List[str] = []
+        self.length: int = 0
+
+    def atLimit(self) -> bool:
+        return self.length >= self.maxLength
+
+    def append(self, s: str) -> None:
+        if s is not None:
+            sLen = len(s)
+            if not self.atLimit():
+                available = self.maxLength - self.length
+                stringToAppend = s if available >= sLen else s[0:available]
+                self.strings.append(stringToAppend)
+
+            self.length = min(self.length + sLen, JVM_INT_MAX - 15)
+
+    def toString(self) -> str:
+        # finalLength = self.maxLength if self.atLimit()  else self.length
+        return "".join(self.strings)
+
+
+# Python implementation of 'org.apache.spark.util.SparkSchemaUtils.escapeMetaCharacters'
+def escape_meta_characters(s: str) -> str:
+    return (
+        s.replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+        .replace("\f", "\\f")
+        .replace("\b", "\\b")
+        .replace("\u000B", "\\v")
+        .replace("\u0007", "\\a")
+    )
+
+
 def to_str(value: Any) -> Optional[str]:
     """
     A wrapper over str(), but converts bool values to lower case strings.
@@ -305,19 +194,54 @@ def to_str(value: Any) -> Optional[str]:
         return str(value)
 
 
+def enum_to_value(value: Any) -> Any:
+    """Convert an Enum to its value if it is not None."""
+    return enum_to_value(value.value) if value is not None and isinstance(value, Enum) else value
+
+
 def is_timestamp_ntz_preferred() -> bool:
     """
     Return a bool if TimestampNTZType is preferred according to the SQL configuration set.
     """
-    jvm = SparkContext._jvm
-    return jvm is not None and jvm.PythonSQLUtils.isTimestampNTZPreferred()
+    if is_remote():
+        from pyspark.sql.connect.session import SparkSession as ConnectSparkSession
+
+        session = ConnectSparkSession.getActiveSession()
+        if session is None:
+            return False
+        else:
+            return session.conf.get("spark.sql.timestampType", None) == "TIMESTAMP_NTZ"
+    else:
+        from pyspark import SparkContext
+
+        jvm = SparkContext._jvm
+        return jvm is not None and jvm.PythonSQLUtils.isTimestampNTZPreferred()
 
 
 def is_remote() -> bool:
     """
     Returns if the current running environment is for Spark Connect.
+
+    .. versionadded:: 4.0.0
+
+    Notes
+    -----
+    This will only return ``True`` if there is a remote session running.
+    Otherwise, it returns ``False``.
+
+    This API is unstable, and for developers.
+
+    Returns
+    -------
+    bool
+
+    Examples
+    --------
+    >>> from pyspark.sql import is_remote
+    >>> is_remote()
+    False
     """
-    return "SPARK_REMOTE" in os.environ
+    return ("SPARK_CONNECT_MODE_ENABLED" in os.environ) or is_remote_only()
 
 
 def try_remote_functions(f: FuncT) -> FuncT:
@@ -325,8 +249,7 @@ def try_remote_functions(f: FuncT) -> FuncT:
 
     @functools.wraps(f)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-
-        if is_remote():
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
             from pyspark.sql.connect import functions
 
             return getattr(functions, f.__name__)(*args, **kwargs)
@@ -336,27 +259,180 @@ def try_remote_functions(f: FuncT) -> FuncT:
     return cast(FuncT, wrapped)
 
 
-def try_remote_window(f: FuncT) -> FuncT:
+def try_partitioning_remote_functions(f: FuncT) -> FuncT:
     """Mark API supported from Spark Connect."""
 
     @functools.wraps(f)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        # TODO(SPARK-41292): Support Window functions
-        if is_remote():
-            raise NotImplementedError()
-        return f(*args, **kwargs)
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
+            from pyspark.sql.connect.functions import partitioning
+
+            return getattr(partitioning, f.__name__)(*args, **kwargs)
+        else:
+            return f(*args, **kwargs)
 
     return cast(FuncT, wrapped)
 
 
-def try_remote_observation(f: FuncT) -> FuncT:
+def try_remote_avro_functions(f: FuncT) -> FuncT:
     """Mark API supported from Spark Connect."""
 
     @functools.wraps(f)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        # TODO(SPARK-41527): Add the support of Observation.
-        if is_remote():
-            raise NotImplementedError()
-        return f(*args, **kwargs)
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
+            from pyspark.sql.connect.avro import functions
+
+            return getattr(functions, f.__name__)(*args, **kwargs)
+        else:
+            return f(*args, **kwargs)
 
     return cast(FuncT, wrapped)
+
+
+def try_remote_protobuf_functions(f: FuncT) -> FuncT:
+    """Mark API supported from Spark Connect."""
+
+    @functools.wraps(f)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
+            from pyspark.sql.connect.protobuf import functions
+
+            return getattr(functions, f.__name__)(*args, **kwargs)
+        else:
+            return f(*args, **kwargs)
+
+    return cast(FuncT, wrapped)
+
+
+def get_active_spark_context() -> "SparkContext":
+    """Raise RuntimeError if SparkContext is not initialized,
+    otherwise, returns the active SparkContext."""
+    from pyspark import SparkContext
+
+    sc = SparkContext._active_spark_context
+    if sc is None or sc._jvm is None:
+        raise PySparkRuntimeError(
+            errorClass="SESSION_OR_CONTEXT_NOT_EXISTS",
+            messageParameters={},
+        )
+    return sc
+
+
+def try_remote_session_classmethod(f: FuncT) -> FuncT:
+    """Mark API supported from Spark Connect."""
+
+    @functools.wraps(f)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
+            from pyspark.sql.connect.session import SparkSession
+
+            assert inspect.isclass(args[0])
+            return getattr(SparkSession, f.__name__)(*args[1:], **kwargs)
+        else:
+            return f(*args, **kwargs)
+
+    return cast(FuncT, wrapped)
+
+
+def dispatch_df_method(f: FuncT) -> FuncT:
+    """
+    For the usecases of direct DataFrame.union(df, ...), it checks if self
+    is a Connect DataFrame or Classic DataFrame, and dispatches.
+    """
+
+    @functools.wraps(f)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
+            from pyspark.sql.connect.dataframe import DataFrame as ConnectDataFrame
+
+            if isinstance(args[0], ConnectDataFrame):
+                return getattr(ConnectDataFrame, f.__name__)(*args, **kwargs)
+        else:
+            from pyspark.sql.classic.dataframe import DataFrame as ClassicDataFrame
+
+            if isinstance(args[0], ClassicDataFrame):
+                return getattr(ClassicDataFrame, f.__name__)(*args, **kwargs)
+
+        raise PySparkNotImplementedError(
+            errorClass="NOT_IMPLEMENTED",
+            messageParameters={"feature": f"DataFrame.{f.__name__}"},
+        )
+
+    return cast(FuncT, wrapped)
+
+
+def dispatch_col_method(f: FuncT) -> FuncT:
+    """
+    For the usecases of direct Column.method(col, ...), it checks if self
+    is a Connect DataFrame or Classic DataFrame, and dispatches.
+    """
+
+    @functools.wraps(f)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
+            from pyspark.sql.connect.column import Column as ConnectColumn
+
+            if isinstance(args[0], ConnectColumn):
+                return getattr(ConnectColumn, f.__name__)(*args, **kwargs)
+        else:
+            from pyspark.sql.classic.column import Column as ClassicColumn
+
+            if isinstance(args[0], ClassicColumn):
+                return getattr(ClassicColumn, f.__name__)(*args, **kwargs)
+
+        raise PySparkNotImplementedError(
+            errorClass="NOT_IMPLEMENTED",
+            messageParameters={"feature": f"Column.{f.__name__}"},
+        )
+
+    return cast(FuncT, wrapped)
+
+
+def dispatch_window_method(f: FuncT) -> FuncT:
+    """
+    For the usecases of direct Window.method(col, ...), it checks if self
+    is a Connect Window or Classic Window, and dispatches.
+    """
+
+    @functools.wraps(f)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if is_remote() and "PYSPARK_NO_NAMESPACE_SHARE" not in os.environ:
+            from pyspark.sql.connect.window import Window as ConnectWindow
+
+            return getattr(ConnectWindow, f.__name__)(*args, **kwargs)
+        else:
+            from pyspark.sql.classic.window import Window as ClassicWindow
+
+            return getattr(ClassicWindow, f.__name__)(*args, **kwargs)
+
+        raise PySparkNotImplementedError(
+            errorClass="NOT_IMPLEMENTED",
+            messageParameters={"feature": f"Window.{f.__name__}"},
+        )
+
+    return cast(FuncT, wrapped)
+
+
+def pyspark_column_op(
+    func_name: str, left: "IndexOpsLike", right: Any, fillna: Any = None
+) -> Union["SeriesOrIndex", None]:
+    """
+    Wrapper function for column_op to get proper Column class.
+    """
+    from pyspark.pandas.base import column_op
+    from pyspark.sql.column import Column
+    from pyspark.pandas.data_type_ops.base import _is_extension_dtypes
+
+    result = column_op(getattr(Column, func_name))(left, right)
+    # It works as expected on extension dtype, so we don't need to call `fillna` for this case.
+    if (fillna is not None) and (_is_extension_dtypes(left) or _is_extension_dtypes(right)):
+        fillna = None
+    # TODO(SPARK-43877): Fix behavior difference for compare binary functions.
+    return result.fillna(fillna) if fillna is not None else result
+
+
+def get_lit_sql_str(val: str) -> str:
+    # Equivalent to `lit(val)._jc.expr().sql()` for string typed val
+    # See `sql` definition in `sql/catalyst/src/main/scala/org/apache/spark/
+    # sql/catalyst/expressions/literals.scala`
+    return "'" + val.replace("\\", "\\\\").replace("'", "\\'") + "'"

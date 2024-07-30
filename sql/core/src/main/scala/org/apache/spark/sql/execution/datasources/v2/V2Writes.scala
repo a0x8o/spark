@@ -17,20 +17,23 @@
 
 package org.apache.spark.sql.execution.datasources.v2
 
-import java.util.UUID
+import java.util.{Optional, UUID}
 
 import org.apache.spark.sql.catalyst.expressions.PredicateHelper
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, OverwritePartitionsDynamic, Project, ReplaceData}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, OverwritePartitionsDynamic, Project, ReplaceData, WriteDelta}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.InternalOutputModes._
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.catalyst.util.WriteDeltaProjections
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table}
 import org.apache.spark.sql.connector.expressions.filter.Predicate
-import org.apache.spark.sql.connector.write.{LogicalWriteInfoImpl, SupportsDynamicOverwrite, SupportsOverwriteV2, SupportsTruncate, Write, WriteBuilder}
+import org.apache.spark.sql.connector.write.{DeltaWriteBuilder, LogicalWriteInfoImpl, SupportsDynamicOverwrite, SupportsOverwriteV2, SupportsTruncate, Write, WriteBuilder}
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.execution.streaming.sources.{MicroBatchWrite, WriteToMicroBatchDataSource}
 import org.apache.spark.sql.internal.connector.SupportsStreamingUpdateAsAppend
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.ArrayImplicits._
 
 /**
  * A rule that constructs logical writes.
@@ -89,19 +92,24 @@ object V2Writes extends Rule[LogicalPlan] with PredicateHelper {
       val writeBuilder = newWriteBuilder(table, writeOptions, query.schema, queryId)
       val write = buildWriteForMicroBatch(table, writeBuilder, outputMode)
       val microBatchWrite = new MicroBatchWrite(batchId, write.toStreaming)
-      val customMetrics = write.supportedCustomMetrics.toSeq
+      val customMetrics = write.supportedCustomMetrics.toImmutableArraySeq
       val funCatalogOpt = relation.flatMap(_.funCatalog)
       val newQuery = DistributionAndOrderingUtils.prepareQuery(write, query, funCatalogOpt)
       WriteToDataSourceV2(relation, microBatchWrite, newQuery, customMetrics)
 
-    case rd @ ReplaceData(r: DataSourceV2Relation, _, query, _, None) =>
-      val rowSchema = StructType.fromAttributes(rd.dataInput)
+    case rd @ ReplaceData(r: DataSourceV2Relation, _, query, _, _, None) =>
+      val rowSchema = DataTypeUtils.fromAttributes(rd.dataInput)
       val writeBuilder = newWriteBuilder(r.table, Map.empty, rowSchema)
       val write = writeBuilder.build()
       val newQuery = DistributionAndOrderingUtils.prepareQuery(write, query, r.funCatalog)
       // project away any metadata columns that could be used for distribution and ordering
       rd.copy(write = Some(write), query = Project(rd.dataInput, newQuery))
 
+    case wd @ WriteDelta(r: DataSourceV2Relation, _, query, _, projections, None) =>
+      val deltaWriteBuilder = newDeltaWriteBuilder(r.table, Map.empty, projections)
+      val deltaWrite = deltaWriteBuilder.build()
+      val newQuery = DistributionAndOrderingUtils.prepareQuery(deltaWrite, query, r.funCatalog)
+      wd.copy(write = Some(deltaWrite), query = newQuery)
   }
 
   private def buildWriteForMicroBatch(
@@ -136,5 +144,27 @@ object V2Writes extends Rule[LogicalPlan] with PredicateHelper {
 
     val info = LogicalWriteInfoImpl(queryId, rowSchema, writeOptions.asOptions)
     table.asWritable.newWriteBuilder(info)
+  }
+
+  private def newDeltaWriteBuilder(
+      table: Table,
+      writeOptions: Map[String, String],
+      projections: WriteDeltaProjections,
+      queryId: String = UUID.randomUUID().toString): DeltaWriteBuilder = {
+
+    val rowSchema = projections.rowProjection.map(_.schema).getOrElse(StructType(Nil))
+    val rowIdSchema = projections.rowIdProjection.schema
+    val metadataSchema = projections.metadataProjection.map(_.schema)
+
+    val info = LogicalWriteInfoImpl(
+      queryId,
+      rowSchema,
+      writeOptions.asOptions,
+      Optional.of(rowIdSchema),
+      Optional.ofNullable(metadataSchema.orNull))
+
+    val writeBuilder = table.asWritable.newWriteBuilder(info)
+    assert(writeBuilder.isInstanceOf[DeltaWriteBuilder], s"$writeBuilder must be DeltaWriteBuilder")
+    writeBuilder.asInstanceOf[DeltaWriteBuilder]
   }
 }

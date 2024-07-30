@@ -76,9 +76,10 @@ SELECT CASE WHEN true THEN cast(1 as tinyint) ELSE cast('2' as binary) END FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -99,9 +100,10 @@ SELECT CASE WHEN true THEN cast(1 as tinyint) ELSE cast(2 as boolean) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -122,9 +124,10 @@ SELECT CASE WHEN true THEN cast(1 as tinyint) ELSE cast('2017-12-11 09:30:00.0' 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -145,9 +148,10 @@ SELECT CASE WHEN true THEN cast(1 as tinyint) ELSE cast('2017-12-11 09:30:00' as
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TINYINT\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -232,9 +236,10 @@ SELECT CASE WHEN true THEN cast(1 as smallint) ELSE cast('2' as binary) END FROM
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -255,9 +260,10 @@ SELECT CASE WHEN true THEN cast(1 as smallint) ELSE cast(2 as boolean) END FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -278,9 +284,10 @@ SELECT CASE WHEN true THEN cast(1 as smallint) ELSE cast('2017-12-11 09:30:00.0'
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -301,9 +308,10 @@ SELECT CASE WHEN true THEN cast(1 as smallint) ELSE cast('2017-12-11 09:30:00' a
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"SMALLINT\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -388,9 +396,10 @@ SELECT CASE WHEN true THEN cast(1 as int) ELSE cast('2' as binary) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -411,9 +420,10 @@ SELECT CASE WHEN true THEN cast(1 as int) ELSE cast(2 as boolean) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -434,9 +444,10 @@ SELECT CASE WHEN true THEN cast(1 as int) ELSE cast('2017-12-11 09:30:00.0' as t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -457,9 +468,10 @@ SELECT CASE WHEN true THEN cast(1 as int) ELSE cast('2017-12-11 09:30:00' as dat
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"INT\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -544,9 +556,10 @@ SELECT CASE WHEN true THEN cast(1 as bigint) ELSE cast('2' as binary) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -567,9 +580,10 @@ SELECT CASE WHEN true THEN cast(1 as bigint) ELSE cast(2 as boolean) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -590,9 +604,10 @@ SELECT CASE WHEN true THEN cast(1 as bigint) ELSE cast('2017-12-11 09:30:00.0' a
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -613,9 +628,10 @@ SELECT CASE WHEN true THEN cast(1 as bigint) ELSE cast('2017-12-11 09:30:00' as 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BIGINT\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -700,9 +716,10 @@ SELECT CASE WHEN true THEN cast(1 as float) ELSE cast('2' as binary) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -723,9 +740,10 @@ SELECT CASE WHEN true THEN cast(1 as float) ELSE cast(2 as boolean) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -746,9 +764,10 @@ SELECT CASE WHEN true THEN cast(1 as float) ELSE cast('2017-12-11 09:30:00.0' as
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -769,9 +788,10 @@ SELECT CASE WHEN true THEN cast(1 as float) ELSE cast('2017-12-11 09:30:00' as d
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"FLOAT\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -856,9 +876,10 @@ SELECT CASE WHEN true THEN cast(1 as double) ELSE cast('2' as binary) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -879,9 +900,10 @@ SELECT CASE WHEN true THEN cast(1 as double) ELSE cast(2 as boolean) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -902,9 +924,10 @@ SELECT CASE WHEN true THEN cast(1 as double) ELSE cast('2017-12-11 09:30:00.0' a
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -925,9 +948,10 @@ SELECT CASE WHEN true THEN cast(1 as double) ELSE cast('2017-12-11 09:30:00' as 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DOUBLE\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -1012,9 +1036,10 @@ SELECT CASE WHEN true THEN cast(1 as decimal(10, 0)) ELSE cast('2' as binary) EN
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -1035,9 +1060,10 @@ SELECT CASE WHEN true THEN cast(1 as decimal(10, 0)) ELSE cast(2 as boolean) END
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -1058,9 +1084,10 @@ SELECT CASE WHEN true THEN cast(1 as decimal(10, 0)) ELSE cast('2017-12-11 09:30
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -1081,9 +1108,10 @@ SELECT CASE WHEN true THEN cast(1 as decimal(10, 0)) ELSE cast('2017-12-11 09:30
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DECIMAL(10,0)\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -1168,9 +1196,10 @@ SELECT CASE WHEN true THEN cast(1 as string) ELSE cast('2' as binary) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"STRING\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -1191,9 +1220,10 @@ SELECT CASE WHEN true THEN cast(1 as string) ELSE cast(2 as boolean) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"STRING\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -1230,9 +1260,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as tinyint) END FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"TINYINT\"]",
     "functionName" : "`casewhen`",
@@ -1253,9 +1284,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as smallint) END FROM
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"SMALLINT\"]",
     "functionName" : "`casewhen`",
@@ -1276,9 +1308,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as int) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"INT\"]",
     "functionName" : "`casewhen`",
@@ -1299,9 +1332,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as bigint) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BIGINT\"]",
     "functionName" : "`casewhen`",
@@ -1322,9 +1356,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as float) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"FLOAT\"]",
     "functionName" : "`casewhen`",
@@ -1345,9 +1380,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as double) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"DOUBLE\"]",
     "functionName" : "`casewhen`",
@@ -1368,9 +1404,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as decimal(10, 0)) EN
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"DECIMAL(10,0)\"]",
     "functionName" : "`casewhen`",
@@ -1391,9 +1428,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as string) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"STRING\"]",
     "functionName" : "`casewhen`",
@@ -1422,9 +1460,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast(2 as boolean) END FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -1445,9 +1484,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast('2017-12-11 09:30:00.0'
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -1468,9 +1508,10 @@ SELECT CASE WHEN true THEN cast('1' as binary) ELSE cast('2017-12-11 09:30:00' a
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BINARY\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -1491,9 +1532,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as tinyint) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"TINYINT\"]",
     "functionName" : "`casewhen`",
@@ -1514,9 +1556,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as smallint) END FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"SMALLINT\"]",
     "functionName" : "`casewhen`",
@@ -1537,9 +1580,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as int) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"INT\"]",
     "functionName" : "`casewhen`",
@@ -1560,9 +1604,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as bigint) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BIGINT\"]",
     "functionName" : "`casewhen`",
@@ -1583,9 +1628,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as float) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"FLOAT\"]",
     "functionName" : "`casewhen`",
@@ -1606,9 +1652,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as double) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"DOUBLE\"]",
     "functionName" : "`casewhen`",
@@ -1629,9 +1676,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as decimal(10, 0)) END
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"DECIMAL(10,0)\"]",
     "functionName" : "`casewhen`",
@@ -1652,9 +1700,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast(2 as string) END FROM t
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"STRING\"]",
     "functionName" : "`casewhen`",
@@ -1675,9 +1724,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast('2' as binary) END FROM 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -1706,9 +1756,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast('2017-12-11 09:30:00.0' 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"TIMESTAMP\"]",
     "functionName" : "`casewhen`",
@@ -1729,9 +1780,10 @@ SELECT CASE WHEN true THEN cast(1 as boolean) ELSE cast('2017-12-11 09:30:00' as
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"BOOLEAN\", \"DATE\"]",
     "functionName" : "`casewhen`",
@@ -1752,9 +1804,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"TINYINT\"]",
     "functionName" : "`casewhen`",
@@ -1775,9 +1828,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"SMALLINT\"]",
     "functionName" : "`casewhen`",
@@ -1798,9 +1852,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"INT\"]",
     "functionName" : "`casewhen`",
@@ -1821,9 +1876,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"BIGINT\"]",
     "functionName" : "`casewhen`",
@@ -1844,9 +1900,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"FLOAT\"]",
     "functionName" : "`casewhen`",
@@ -1867,9 +1924,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"DOUBLE\"]",
     "functionName" : "`casewhen`",
@@ -1890,9 +1948,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"DECIMAL(10,0)\"]",
     "functionName" : "`casewhen`",
@@ -1921,9 +1980,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -1944,9 +2004,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00.0' as timestamp) ELSE cast(
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"TIMESTAMP\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",
@@ -1983,9 +2044,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as ti
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"TINYINT\"]",
     "functionName" : "`casewhen`",
@@ -2006,9 +2068,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as sm
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"SMALLINT\"]",
     "functionName" : "`casewhen`",
@@ -2029,9 +2092,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as in
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"INT\"]",
     "functionName" : "`casewhen`",
@@ -2052,9 +2116,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as bi
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"BIGINT\"]",
     "functionName" : "`casewhen`",
@@ -2075,9 +2140,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as fl
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"FLOAT\"]",
     "functionName" : "`casewhen`",
@@ -2098,9 +2164,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as do
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DOUBLE\"]",
     "functionName" : "`casewhen`",
@@ -2121,9 +2188,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as de
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"DECIMAL(10,0)\"]",
     "functionName" : "`casewhen`",
@@ -2152,9 +2220,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast('2' as 
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"BINARY\"]",
     "functionName" : "`casewhen`",
@@ -2175,9 +2244,10 @@ SELECT CASE WHEN true THEN cast('2017-12-12 09:30:00' as date) ELSE cast(2 as bo
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.AnalysisException
+org.apache.spark.sql.catalyst.ExtendedAnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.DATA_DIFF_TYPES",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "dataType" : "[\"DATE\", \"BOOLEAN\"]",
     "functionName" : "`casewhen`",

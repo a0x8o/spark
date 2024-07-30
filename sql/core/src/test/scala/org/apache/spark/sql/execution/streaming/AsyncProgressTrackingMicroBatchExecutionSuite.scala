@@ -147,7 +147,7 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
     def startQuery(): StreamingQuery = {
       ds.writeStream
         .foreachBatch((ds: Dataset[Row], batchId: Long) => {
-          ds.collect.foreach((row: Row) => {
+          ds.collect().foreach((row: Row) => {
             data += row.getInt(0)
           }: Unit)
           countDownLatch.countDown()
@@ -352,7 +352,7 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
       ds.writeStream
         .trigger(trigger)
         .foreachBatch((ds: Dataset[Row], batchId: Long) => {
-          ds.collect.foreach((row: Row) => {
+          ds.collect().foreach((row: Row) => {
             data += row.getInt(0)
           }: Unit)
           countDownLatch.countDown()
@@ -512,7 +512,7 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
       ds.writeStream
         .trigger(trigger)
         .foreachBatch((ds: Dataset[Row], batchId: Long) => {
-          ds.collect.foreach((row: Row) => {
+          ds.collect().foreach((row: Row) => {
             data += row.getInt(0)
           }: Unit)
           countDownLatch.countDown()
@@ -722,36 +722,41 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
     val inputData = new MemoryStream[Int](id = 0, sqlContext = sqlContext)
     val ds = inputData.toDS()
     val checkpointLocation = Utils.createTempDir(namePrefix = "streaming.metadata").getCanonicalPath
+    val commitDir = new File(checkpointLocation + path)
 
-    testStream(
-      ds,
-      extraOptions = Map(
-        ASYNC_PROGRESS_TRACKING_ENABLED -> "true",
-        ASYNC_PROGRESS_TRACKING_CHECKPOINTING_INTERVAL_MS -> "0"
-      )
-    )(
-      StartStream(checkpointLocation = checkpointLocation),
-      AddData(inputData, 0),
-      CheckAnswer(0),
-      Execute { q =>
-        waitPendingOffsetWrites(q)
-        // to simulate write error
-        import java.io._
-        val commitDir = new File(checkpointLocation + path)
-        commitDir.setReadOnly()
+    try {
+      testStream(
+        ds,
+        extraOptions = Map(
+          ASYNC_PROGRESS_TRACKING_ENABLED -> "true",
+          ASYNC_PROGRESS_TRACKING_CHECKPOINTING_INTERVAL_MS -> "0"
+        )
+      )(
+        StartStream(checkpointLocation = checkpointLocation),
+        AddData(inputData, 0),
+        CheckAnswer(0),
+        Execute { q =>
+          waitPendingOffsetWrites(q)
+          // to simulate write error
+          commitDir.setReadOnly()
 
-      },
-      AddData(inputData, 1),
-      Execute {
-        q =>
-          eventually(timeout(Span(5, Seconds))) {
-            val e = intercept[StreamingQueryException] {
-              q.processAllAvailable()
+        },
+        AddData(inputData, 1),
+        Execute {
+          q =>
+            eventually(timeout(Span(5, Seconds))) {
+              val e = intercept[StreamingQueryException] {
+                q.processAllAvailable()
+              }
+              e.getCause.getCause.getMessage should include("Permission denied")
             }
-            e.getCause.getCause.getMessage should include("Permission denied")
-          }
-      }
-    )
+        }
+      )
+    } finally {
+      // SPARK-41894: Restore the write permission of `commitDir`
+      // so that `mvn clean` can run successfully.
+      commitDir.setWritable(true)
+    }
   }
 
     // Tests that errors that occurred during async offset log write gets bubbled up
@@ -780,7 +785,7 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
     def startQuery(): StreamingQuery = {
       ds.writeStream
         .foreachBatch((ds: Dataset[Row], batchId: Long) => {
-          ds.collect.foreach((row: Row) => {
+          ds.collect().foreach((row: Row) => {
             data += row.getInt(0)
           }: Unit)
         })
@@ -1159,11 +1164,11 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
           Execute { q =>
             // offset log and commit log entries for batch 0 should be purged
             waitPendingOffsetWrites(q)
-            getListOfFiles(checkpointLocation + "/offsets")
+            getListOfFiles(s"$checkpointLocation/offsets")
               .filter(file => !file.isHidden)
               .map(file => file.getName.toInt)
               .sorted should equal(Array(3, 7))
-            getListOfFiles(checkpointLocation + "/commits")
+            getListOfFiles(s"$checkpointLocation/commits")
               .filter(file => !file.isHidden)
               .map(file => file.getName.toInt)
               .sorted should equal(Array(3, 7))
@@ -1216,11 +1221,11 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
           Execute { q =>
             // offset log and commit log entries for batch 3 and 7 should be purged
           waitPendingOffsetWrites(q)
-            getListOfFiles(checkpointLocation + "/offsets")
+            getListOfFiles(s"$checkpointLocation/offsets")
               .filter(file => !file.isHidden)
               .map(file => file.getName.toInt)
               .sorted should equal(Array(8, 12))
-            getListOfFiles(checkpointLocation + "/commits")
+            getListOfFiles(s"$checkpointLocation/commits")
               .filter(file => !file.isHidden)
               .map(file => file.getName.toInt)
               .sorted should equal(Array(8, 12))
@@ -1269,12 +1274,12 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
             // wait for async log writes to complete
             waitPendingOffsetWrites(q)
             eventually(timeout(Span(5, Seconds))) {
-              getListOfFiles(checkpointLocation + "/offsets")
+              getListOfFiles(s"$checkpointLocation/offsets")
                 .filter(file => !file.isHidden)
                 .map(file => file.getName.toInt)
                 .sorted should equal(Array(0, 3))
 
-              getListOfFiles(checkpointLocation + "/commits")
+              getListOfFiles(s"$checkpointLocation/commits")
                 .filter(file => !file.isHidden)
                 .map(file => file.getName.toInt)
                 .sorted should equal(Array(0, 3))
@@ -1298,13 +1303,13 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
             waitPendingOffsetWrites(q)
             // can contain batches 0, 3, 7 or 3, 7
             eventually(timeout(Span(5, Seconds))) {
-              getListOfFiles(checkpointLocation + "/offsets")
+              getListOfFiles(s"$checkpointLocation/offsets")
                 .filter(file => !file.isHidden)
                 .map(file => file.getName.toInt)
                 .sorted should contain allElementsOf (Array(3, 7))
 
               // can contain batches 0, 3, 7 or 3, 7
-              getListOfFiles(checkpointLocation + "/commits")
+              getListOfFiles(s"$checkpointLocation/commits")
                 .filter(file => !file.isHidden)
                 .map(file => file.getName.toInt)
                 .sorted should contain allElementsOf (Array(3, 7))
@@ -1325,11 +1330,11 @@ class AsyncProgressTrackingMicroBatchExecutionSuite
               waitPendingPurges(q)
 
               waitPendingOffsetWrites(q)
-              getListOfFiles(checkpointLocation + "/offsets")
+              getListOfFiles(s"$checkpointLocation/offsets")
                 .filter(file => !file.isHidden)
                 .map(file => file.getName.toInt)
                 .sorted should equal(Array(3, 7))
-              getListOfFiles(checkpointLocation + "/commits")
+              getListOfFiles(s"$checkpointLocation/commits")
                 .filter(file => !file.isHidden)
                 .map(file => file.getName.toInt)
                 .sorted should equal(Array(3, 7))
