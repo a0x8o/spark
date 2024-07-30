@@ -121,6 +121,53 @@ class SparkConnectPlanner(
   private lazy val pythonExec =
     sys.env.getOrElse("PYSPARK_PYTHON", sys.env.getOrElse("PYSPARK_DRIVER_PYTHON", "python3"))
 
+<<<<<<< HEAD
+  // The root of the query plan is a relation and we apply the transformations to it.
+  def transformRelation(rel: proto.Relation): LogicalPlan = {
+    rel.getRelTypeCase match {
+      // DataFrame API
+      case proto.Relation.RelTypeCase.SHOW_STRING => transformShowString(rel.getShowString)
+      case proto.Relation.RelTypeCase.READ => transformReadRel(rel.getRead)
+      case proto.Relation.RelTypeCase.PROJECT => transformProject(rel.getProject)
+      case proto.Relation.RelTypeCase.FILTER => transformFilter(rel.getFilter)
+      case proto.Relation.RelTypeCase.LIMIT => transformLimit(rel.getLimit)
+      case proto.Relation.RelTypeCase.OFFSET => transformOffset(rel.getOffset)
+      case proto.Relation.RelTypeCase.TAIL => transformTail(rel.getTail)
+      case proto.Relation.RelTypeCase.JOIN => transformJoin(rel.getJoin)
+      case proto.Relation.RelTypeCase.DEDUPLICATE => transformDeduplicate(rel.getDeduplicate)
+      case proto.Relation.RelTypeCase.SET_OP => transformSetOperation(rel.getSetOp)
+      case proto.Relation.RelTypeCase.SORT => transformSort(rel.getSort)
+      case proto.Relation.RelTypeCase.DROP => transformDrop(rel.getDrop)
+      case proto.Relation.RelTypeCase.AGGREGATE => transformAggregate(rel.getAggregate)
+      case proto.Relation.RelTypeCase.SQL => transformSql(rel.getSql)
+      case proto.Relation.RelTypeCase.LOCAL_RELATION =>
+        transformLocalRelation(rel.getLocalRelation)
+      case proto.Relation.RelTypeCase.SAMPLE => transformSample(rel.getSample)
+      case proto.Relation.RelTypeCase.RANGE => transformRange(rel.getRange)
+      case proto.Relation.RelTypeCase.SUBQUERY_ALIAS =>
+        transformSubqueryAlias(rel.getSubqueryAlias)
+      case proto.Relation.RelTypeCase.REPARTITION => transformRepartition(rel.getRepartition)
+      case proto.Relation.RelTypeCase.FILL_NA => transformNAFill(rel.getFillNa)
+      case proto.Relation.RelTypeCase.DROP_NA => transformNADrop(rel.getDropNa)
+      case proto.Relation.RelTypeCase.REPLACE => transformReplace(rel.getReplace)
+      case proto.Relation.RelTypeCase.SUMMARY => transformStatSummary(rel.getSummary)
+      case proto.Relation.RelTypeCase.DESCRIBE => transformStatDescribe(rel.getDescribe)
+      case proto.Relation.RelTypeCase.COV => transformStatCov(rel.getCov)
+      case proto.Relation.RelTypeCase.CROSSTAB =>
+        transformStatCrosstab(rel.getCrosstab)
+      case proto.Relation.RelTypeCase.TO_SCHEMA => transformToSchema(rel.getToSchema)
+      case proto.Relation.RelTypeCase.RENAME_COLUMNS_BY_SAME_LENGTH_NAMES =>
+        transformRenameColumnsBySamelenghtNames(rel.getRenameColumnsBySameLengthNames)
+      case proto.Relation.RelTypeCase.RENAME_COLUMNS_BY_NAME_TO_NAME_MAP =>
+        transformRenameColumnsByNameToNameMap(rel.getRenameColumnsByNameToNameMap)
+      case proto.Relation.RelTypeCase.WITH_COLUMNS => transformWithColumns(rel.getWithColumns)
+      case proto.Relation.RelTypeCase.HINT => transformHint(rel.getHint)
+      case proto.Relation.RelTypeCase.UNPIVOT => transformUnpivot(rel.getUnpivot)
+      case proto.Relation.RelTypeCase.REPARTITION_BY_EXPRESSION =>
+        transformRepartitionByExpression(rel.getRepartitionByExpression)
+      case proto.Relation.RelTypeCase.RELTYPE_NOT_SET =>
+        throw new IndexOutOfBoundsException("Expected Relation to be set, but is empty.")
+=======
   /**
    * The root of the query plan is a relation and we apply the transformations to it. The resolved
    * logical plan will not get cached. If the result needs to be cached, use
@@ -133,6 +180,7 @@ class SparkConnectPlanner(
   @DeveloperApi
   def transformRelation(rel: proto.Relation): LogicalPlan =
     transformRelation(rel, cachePlan = false)
+>>>>>>> 0x1CAB5A3
 
   /**
    * The root of the query plan is a relation and we apply the transformations to it.
@@ -1165,6 +1213,8 @@ class SparkConnectPlanner(
       numPartitionsOpt)
   }
 
+<<<<<<< HEAD
+=======
   private def transformCollectMetrics(rel: proto.CollectMetrics, planId: Long): LogicalPlan = {
     val metrics = rel.getMetricsList.asScala.toSeq.map { expr =>
       Column(transformExpression(expr))
@@ -1182,6 +1232,7 @@ class SparkConnectPlanner(
     }
   }
 
+>>>>>>> 0x1CAB5A3
   private def transformDeduplicate(rel: proto.Deduplicate): LogicalPlan = {
     if (!rel.hasInput) {
       throw InvalidPlanInput("Deduplicate needs a plan input")

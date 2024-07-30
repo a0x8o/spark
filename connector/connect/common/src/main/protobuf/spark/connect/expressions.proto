@@ -46,6 +46,8 @@ message Expression {
     Window window = 11;
     UnresolvedExtractValue unresolved_extract_value = 12;
     UpdateFields update_fields = 13;
+<<<<<<< HEAD
+=======
     UnresolvedNamedLambdaVariable unresolved_named_lambda_variable = 14;
     CommonInlineUserDefinedFunction common_inline_user_defined_function = 15;
     CallFunction call_function = 16;
@@ -54,6 +56,7 @@ message Expression {
     // This field is used to mark extensions to the protocol. When plugins generate arbitrary
     // relations they can add them here. During the planning the correct resolution is done.
     google.protobuf.Any extension = 999;
+>>>>>>> 0x1CAB5A3
   }
 
 

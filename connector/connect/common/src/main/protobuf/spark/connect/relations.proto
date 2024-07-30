@@ -62,6 +62,8 @@ message Relation {
     Unpivot unpivot = 25;
     ToSchema to_schema = 26;
     RepartitionByExpression repartition_by_expression = 27;
+<<<<<<< HEAD
+=======
     MapPartitions map_partitions = 28;
     CollectMetrics collect_metrics = 29;
     Parse parse = 30;
@@ -76,6 +78,7 @@ message Relation {
     AsOfJoin as_of_join = 39;
     CommonInlineUserDefinedDataSource common_inline_user_defined_data_source = 40;
     WithRelations with_relations = 41;
+>>>>>>> 0x1CAB5A3
 
     // NA functions
     NAFill fill_na = 90;
@@ -899,7 +902,11 @@ message ToSchema {
   DataType schema = 2;
 }
 
+<<<<<<< HEAD
+  message RepartitionByExpression {
+=======
 message RepartitionByExpression {
+>>>>>>> 0x1CAB5A3
   // (Required) The input relation.
   Relation input = 1;
 
@@ -909,6 +916,8 @@ message RepartitionByExpression {
   // (Optional) number of partitions, must be positive.
   optional int32 num_partitions = 3;
 }
+<<<<<<< HEAD
+=======
 
 message MapPartitions {
   // (Required) Input relation for a mapPartitions-equivalent API: mapInPandas, mapInArrow.
@@ -1118,3 +1127,4 @@ message AsOfJoin {
   // (Required) Whether to search for prior, subsequent, or closest matches.
   string direction = 10;
 }
+>>>>>>> 0x1CAB5A3

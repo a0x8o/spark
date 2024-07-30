@@ -19,11 +19,14 @@ package org.apache.spark.sql.connect.planner
 import java.util.UUID
 import java.util.concurrent.Semaphore
 
+<<<<<<< HEAD
+=======
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
 import com.google.protobuf
 import com.google.protobuf.ByteString
+>>>>>>> 0x1CAB5A3
 import io.grpc.StatusRuntimeException
 import io.grpc.stub.StreamObserver
 import org.apache.arrow.memory.RootAllocator
@@ -35,7 +38,10 @@ import org.scalatest.concurrent.Eventually
 import org.scalatest.time.SpanSugar.convertIntToGrainOfTime
 import org.scalatestplus.mockito.MockitoSugar
 
+<<<<<<< HEAD
+=======
 import org.apache.spark.{SparkContext, SparkEnv}
+>>>>>>> 0x1CAB5A3
 import org.apache.spark.connect.proto
 import org.apache.spark.connect.proto.CreateDataFrameViewCommand
 import org.apache.spark.internal.Logging
@@ -685,6 +691,44 @@ class SparkConnectServiceSuite
       assert(failures.isEmpty, s"this should have no failures but got $failures")
       verifyEvents.onCompleted()
     }
+<<<<<<< HEAD
+    session.udf.register("insta_kill", instaKill)
+
+    val connect = new MockRemoteSession()
+    val context = proto.UserContext
+      .newBuilder()
+      .setUserId("c1")
+      .build()
+    val plan = proto.Plan
+      .newBuilder()
+      .setRoot(connect.sql("select insta_kill(id) from range(10)"))
+      .build()
+    val request = proto.ExecutePlanRequest
+      .newBuilder()
+      .setPlan(plan)
+      .setUserContext(context)
+      .setClientId("session")
+      .build()
+
+    // The observer is executed inside this thread. So
+    // we can perform the checks inside the observer.
+    instance.executePlan(
+      request,
+      new StreamObserver[proto.ExecutePlanResponse] {
+        override def onNext(v: proto.ExecutePlanResponse): Unit = {
+          fail("this should not receive responses")
+        }
+
+        override def onError(throwable: Throwable): Unit = {
+          assert(throwable.isInstanceOf[StatusRuntimeException])
+        }
+
+        override def onCompleted(): Unit = {
+          fail("this should not complete")
+        }
+      })
+=======
+>>>>>>> 0x1CAB5A3
   }
 
   test("Test explain mode in analyze response") {
