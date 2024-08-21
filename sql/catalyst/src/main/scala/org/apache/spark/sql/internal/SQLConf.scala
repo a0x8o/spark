@@ -969,6 +969,14 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val EAGER_EVAL_OF_UNRESOLVED_INLINE_TABLE_ENABLED =
+    buildConf("spark.sql.parser.eagerEvalOfUnresolvedInlineTable")
+      .internal()
+      .doc("Controls whether we optimize the ASTree that gets generated when parsing " +
+        "VALUES lists (UnresolvedInlineTable) by eagerly evaluating it in the AST Builder.")
+      .booleanConf
+      .createWithDefault(true)
+
   val ESCAPED_STRING_LITERALS = buildConf("spark.sql.parser.escapedStringLiterals")
     .internal()
     .doc("When true, string literals (including regex patterns) remain escaped in our SQL " +
@@ -3722,7 +3730,7 @@ object SQLConf {
       .doc("Decorrelate subqueries with correlation under LIMIT with OFFSET.")
       .version("4.0.0")
       .booleanConf
-      .createWithDefault(false) // Disabled for now, see SPARK-46446
+      .createWithDefault(true)
 
   val DECORRELATE_EXISTS_IN_SUBQUERY_LEGACY_INCORRECT_COUNT_HANDLING_ENABLED =
     buildConf("spark.sql.optimizer.decorrelateExistsSubqueryLegacyIncorrectCountHandling.enabled")
@@ -4391,8 +4399,8 @@ object SQLConf {
 
   val JSON_USE_UNSAFE_ROW =
     buildConf("spark.sql.json.useUnsafeRow")
-      .internal()
-      .doc("When set to true, use UnsafeRow to represent struct result in the JSON parser.")
+      .doc("When set to true, use UnsafeRow to represent struct result in the JSON parser. It " +
+        "can be overwritten by the JSON option `useUnsafeRow`.")
       .version("4.0.0")
       .booleanConf
       .createWithDefault(false)

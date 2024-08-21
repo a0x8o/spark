@@ -389,26 +389,151 @@ class SqlScriptingInterpreterSuite extends QueryTest with SharedSparkSession {
   }
 
   test("if's condition must return a single row data") {
-    withTable("t") {
-      val commands =
+    withTable("t1", "t2") {
+      // empty row
+      val commands1 =
         """
           |BEGIN
-          |  CREATE TABLE t (a BOOLEAN) USING parquet;
-          |  INSERT INTO t VALUES (true);
-          |  INSERT INTO t VALUES (true);
-          |  IF (select * from t) THEN
+          |  CREATE TABLE t1 (a BOOLEAN) USING parquet;
+          |  IF (SELECT * FROM t1) THEN
+          |    SELECT 46;
+          |  END IF;
+          |END
+          |""".stripMargin
+      checkError(
+        exception = intercept[SqlScriptingException] (
+          runSqlScript(commands1)
+        ),
+        errorClass = "BOOLEAN_STATEMENT_WITH_EMPTY_ROW",
+        parameters = Map("invalidStatement" -> "(SELECT * FROM T1)")
+      )
+
+      // too many rows ( > 1 )
+      val commands2 =
+        """
+          |BEGIN
+          |  CREATE TABLE t2 (a BOOLEAN) USING parquet;
+          |  INSERT INTO t2 VALUES (true);
+          |  INSERT INTO t2 VALUES (true);
+          |  IF (SELECT * FROM t2) THEN
           |    SELECT 46;
           |  END IF;
           |END
           |""".stripMargin
       checkError(
         exception = intercept[SparkException] (
-          runSqlScript(commands)
+          runSqlScript(commands2)
         ),
         errorClass = "SCALAR_SUBQUERY_TOO_MANY_ROWS",
         parameters = Map.empty,
-        context = ExpectedContext(fragment = "(select * from t)", start = 118, stop = 134)
+        context = ExpectedContext(fragment = "(SELECT * FROM t2)", start = 121, stop = 138)
       )
+    }
+  }
+
+  test("while") {
+    val commands =
+      """
+        |BEGIN
+        | DECLARE i = 0;
+        | WHILE i < 3 DO
+        |   SELECT i;
+        |   SET VAR i = i + 1;
+        | END WHILE;
+        |END
+        |""".stripMargin
+
+    val expected = Seq(
+      Seq.empty[Row], // declare i
+      Seq(Row(0)), // select i
+      Seq.empty[Row], // set i
+      Seq(Row(1)), // select i
+      Seq.empty[Row], // set i
+      Seq(Row(2)), // select i
+      Seq.empty[Row], // set i
+      Seq.empty[Row] // drop var
+    )
+    verifySqlScriptResult(commands, expected)
+  }
+
+  test("while: not entering body") {
+    val commands =
+      """
+        |BEGIN
+        | DECLARE i = 3;
+        | WHILE i < 3 DO
+        |   SELECT i;
+        |   SET VAR i = i + 1;
+        | END WHILE;
+        |END
+        |""".stripMargin
+
+    val expected = Seq(
+      Seq.empty[Row], // declare i
+      Seq.empty[Row] // drop i
+    )
+    verifySqlScriptResult(commands, expected)
+  }
+
+  test("nested while") {
+    val commands =
+      """
+        |BEGIN
+        | DECLARE i = 0;
+        | DECLARE j = 0;
+        | WHILE i < 2 DO
+        |   SET VAR j = 0;
+        |   WHILE j < 2 DO
+        |     SELECT i, j;
+        |     SET VAR j = j + 1;
+        |   END WHILE;
+        |   SET VAR i = i + 1;
+        | END WHILE;
+        |END
+        |""".stripMargin
+
+    val expected = Seq(
+      Seq.empty[Row], // declare i
+      Seq.empty[Row], // declare j
+      Seq.empty[Row], // set j to 0
+      Seq(Row(0, 0)), // select i, j
+      Seq.empty[Row], // increase j
+      Seq(Row(0, 1)), // select i, j
+      Seq.empty[Row], // increase j
+      Seq.empty[Row], // increase i
+      Seq.empty[Row], // set j to 0
+      Seq(Row(1, 0)), // select i, j
+      Seq.empty[Row], // increase j
+      Seq(Row(1, 1)), // select i, j
+      Seq.empty[Row], // increase j
+      Seq.empty[Row], // increase i
+      Seq.empty[Row], // drop j
+      Seq.empty[Row] // drop i
+    )
+    verifySqlScriptResult(commands, expected)
+  }
+
+  test("while with count") {
+    withTable("t") {
+      val commands =
+        """
+          |BEGIN
+          |CREATE TABLE t (a INT, b STRING, c DOUBLE) USING parquet;
+          |WHILE (SELECT COUNT(*) < 2 FROM t) DO
+          |  SELECT 42;
+          |  INSERT INTO t VALUES (1, 'a', 1.0);
+          |END WHILE;
+          |END
+          |""".stripMargin
+
+      val expected = Seq(
+        Seq.empty[Row], // create table
+        Seq(Row(42)), // select
+        Seq.empty[Row], // insert
+        Seq(Row(42)), // select
+        Seq.empty[Row] // insert
+      )
+      verifySqlScriptResult(commands, expected)
     }
   }
 }

@@ -60,6 +60,11 @@ abstract class AbstractCommandBuilder {
   // properties files multiple times.
   private Map<String, String> effectiveConfig;
 
+  /**
+   * Indicate if the current app submission has to use Spark Connect.
+   */
+  protected boolean isRemote = System.getenv().containsKey("SPARK_REMOTE");
+
   AbstractCommandBuilder() {
     this.appArgs = new ArrayList<>();
     this.childEnv = new HashMap<>();
@@ -177,6 +182,9 @@ abstract class AbstractCommandBuilder {
           if (project.equals("sql/connect/server") || project.equals("sql/connect/common")) {
             continue;
           }
+          if (isRemote && "1".equals(getenv("SPARK_SCALA_SHELL")) && project.equals("sql/core")) {
+            continue;
+          }
           addToClassPath(cp, String.format("%s/%s/target/scala-%s/classes", sparkHome, project,
             scala));
         }
@@ -206,8 +214,7 @@ abstract class AbstractCommandBuilder {
           addToClassPath(cp, f.toString());
         }
       }
-      boolean isConnectShell = "1".equals(getenv("SPARK_CONNECT_SHELL"));
-      if (isConnectShell) {
+      if (isRemote && "1".equals(getenv("SPARK_SCALA_SHELL"))) {
         for (File f: new File(jarsDir).listFiles()) {
           // Exclude Spark Classic SQL and Spark Connect server jars
           // if we're in Spark Connect Shell. Also exclude Spark SQL API and
