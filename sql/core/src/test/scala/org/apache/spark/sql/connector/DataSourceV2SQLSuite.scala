@@ -840,7 +840,7 @@ class DataSourceV2SQLSuiteV1Filter
           val exception = intercept[SparkRuntimeException] {
             insertNullValueAndCheck()
           }
-          assert(exception.getErrorClass == "NOT_NULL_ASSERT_VIOLATION")
+          assert(exception.getCondition == "NOT_NULL_ASSERT_VIOLATION")
         }
     }
   }
@@ -2885,6 +2885,48 @@ class DataSourceV2SQLSuiteV1Filter
       parameters = Map(
         "catalogName" -> "`not_exist_catalog`",
         "config" -> "\"spark.sql.catalog.not_exist_catalog\""))
+  }
+
+  test("SPARK-49757: SET CATALOG statement with IDENTIFIER should work") {
+    val catalogManager = spark.sessionState.catalogManager
+    assert(catalogManager.currentCatalog.name() == SESSION_CATALOG_NAME)
+
+    sql("SET CATALOG IDENTIFIER('testcat')")
+    assert(catalogManager.currentCatalog.name() == "testcat")
+
+    spark.sql("SET CATALOG IDENTIFIER(:param)", Map("param" -> "testcat2"))
+    assert(catalogManager.currentCatalog.name() == "testcat2")
+
+    checkError(
+      exception = intercept[CatalogNotFoundException] {
+        sql("SET CATALOG IDENTIFIER('not_exist_catalog')")
+      },
+      condition = "CATALOG_NOT_FOUND",
+      parameters = Map(
+        "catalogName" -> "`not_exist_catalog`",
+        "config" -> "\"spark.sql.catalog.not_exist_catalog\"")
+    )
+  }
+
+  test("SPARK-49757: SET CATALOG statement with IDENTIFIER with multipart name should fail") {
+    val catalogManager = spark.sessionState.catalogManager
+    assert(catalogManager.currentCatalog.name() == SESSION_CATALOG_NAME)
+
+    val sqlText = "SET CATALOG IDENTIFIER(:param)"
+    checkError(
+      exception = intercept[ParseException] {
+        spark.sql(sqlText, Map("param" -> "testcat.ns1"))
+      },
+      condition = "INVALID_SQL_SYNTAX.MULTI_PART_NAME",
+      parameters = Map(
+        "name" -> "`testcat`.`ns1`",
+        "statement" -> "SET CATALOG"
+      ),
+      context = ExpectedContext(
+        fragment = sqlText,
+        start = 0,
+        stop = 29)
+    )
   }
 
   test("SPARK-35973: ShowCatalogs") {
