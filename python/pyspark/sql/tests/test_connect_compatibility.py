@@ -28,6 +28,12 @@ from pyspark.sql.catalog import Catalog as ClassicCatalog
 from pyspark.sql.readwriter import DataFrameReader as ClassicDataFrameReader
 from pyspark.sql.readwriter import DataFrameWriter as ClassicDataFrameWriter
 from pyspark.sql.readwriter import DataFrameWriterV2 as ClassicDataFrameWriterV2
+from pyspark.sql.window import Window as ClassicWindow
+from pyspark.sql.window import WindowSpec as ClassicWindowSpec
+import pyspark.sql.functions as ClassicFunctions
+from pyspark.sql.group import GroupedData as ClassicGroupedData
+import pyspark.sql.avro.functions as ClassicAvro
+import pyspark.sql.protobuf.functions as ClassicProtobuf
 
 if should_test_connect:
     from pyspark.sql.connect.dataframe import DataFrame as ConnectDataFrame
@@ -37,6 +43,12 @@ if should_test_connect:
     from pyspark.sql.connect.readwriter import DataFrameReader as ConnectDataFrameReader
     from pyspark.sql.connect.readwriter import DataFrameWriter as ConnectDataFrameWriter
     from pyspark.sql.connect.readwriter import DataFrameWriterV2 as ConnectDataFrameWriterV2
+    from pyspark.sql.connect.window import Window as ConnectWindow
+    from pyspark.sql.connect.window import WindowSpec as ConnectWindowSpec
+    import pyspark.sql.connect.functions as ConnectFunctions
+    from pyspark.sql.connect.group import GroupedData as ConnectGroupedData
+    import pyspark.sql.connect.avro.functions as ConnectAvro
+    import pyspark.sql.connect.protobuf.functions as ConnectProtobuf
 
 
 class ConnectCompatibilityTestsMixin:
@@ -297,6 +309,114 @@ class ConnectCompatibilityTestsMixin:
             ClassicDataFrameWriterV2,
             ConnectDataFrameWriterV2,
             "DataFrameWriterV2",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_window_compatibility(self):
+        """Test Window compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = set()
+        expected_missing_classic_methods = set()
+        self.check_compatibility(
+            ClassicWindow,
+            ConnectWindow,
+            "Window",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_window_spec_compatibility(self):
+        """Test WindowSpec compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = set()
+        expected_missing_classic_methods = set()
+        self.check_compatibility(
+            ClassicWindowSpec,
+            ConnectWindowSpec,
+            "WindowSpec",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_functions_compatibility(self):
+        """Test Functions compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = set()
+        expected_missing_classic_methods = {"check_dependencies"}
+        self.check_compatibility(
+            ClassicFunctions,
+            ConnectFunctions,
+            "Functions",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_grouping_compatibility(self):
+        """Test Grouping compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = {"transformWithStateInPandas"}
+        expected_missing_classic_methods = set()
+        self.check_compatibility(
+            ClassicGroupedData,
+            ConnectGroupedData,
+            "Grouping",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_avro_compatibility(self):
+        """Test Avro compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        # The current supported Avro functions are only `from_avro` and `to_avro`.
+        # The missing methods belows are just util functions that imported to implement them.
+        expected_missing_connect_methods = {
+            "try_remote_avro_functions",
+            "cast",
+            "get_active_spark_context",
+        }
+        expected_missing_classic_methods = {"lit", "check_dependencies"}
+        self.check_compatibility(
+            ClassicAvro,
+            ConnectAvro,
+            "Avro",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_protobuf_compatibility(self):
+        """Test Protobuf compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        # The current supported Avro functions are only `from_protobuf` and `to_protobuf`.
+        # The missing methods belows are just util functions that imported to implement them.
+        expected_missing_connect_methods = {
+            "cast",
+            "try_remote_protobuf_functions",
+            "get_active_spark_context",
+        }
+        expected_missing_classic_methods = {"lit", "check_dependencies"}
+        self.check_compatibility(
+            ClassicProtobuf,
+            ConnectProtobuf,
+            "Protobuf",
             expected_missing_connect_properties,
             expected_missing_classic_properties,
             expected_missing_connect_methods,
