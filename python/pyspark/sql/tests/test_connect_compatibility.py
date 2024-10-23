@@ -34,6 +34,10 @@ import pyspark.sql.functions as ClassicFunctions
 from pyspark.sql.group import GroupedData as ClassicGroupedData
 import pyspark.sql.avro.functions as ClassicAvro
 import pyspark.sql.protobuf.functions as ClassicProtobuf
+from pyspark.sql.streaming.query import StreamingQuery as ClassicStreamingQuery
+from pyspark.sql.streaming.query import StreamingQueryManager as ClassicStreamingQueryManager
+from pyspark.sql.streaming.readwriter import DataStreamReader as ClassicDataStreamReader
+from pyspark.sql.streaming.readwriter import DataStreamWriter as ClassicDataStreamWriter
 
 if should_test_connect:
     from pyspark.sql.connect.dataframe import DataFrame as ConnectDataFrame
@@ -49,6 +53,12 @@ if should_test_connect:
     from pyspark.sql.connect.group import GroupedData as ConnectGroupedData
     import pyspark.sql.connect.avro.functions as ConnectAvro
     import pyspark.sql.connect.protobuf.functions as ConnectProtobuf
+    from pyspark.sql.connect.streaming.query import StreamingQuery as ConnectStreamingQuery
+    from pyspark.sql.connect.streaming.query import (
+        StreamingQueryManager as ConnectStreamingQueryManager,
+    )
+    from pyspark.sql.connect.streaming.readwriter import DataStreamReader as ConnectDataStreamReader
+    from pyspark.sql.connect.streaming.readwriter import DataStreamWriter as ConnectDataStreamWriter
 
 
 class ConnectCompatibilityTestsMixin:
@@ -401,6 +411,22 @@ class ConnectCompatibilityTestsMixin:
             expected_missing_classic_methods,
         )
 
+    def test_streaming_query_compatibility(self):
+        """Test Streaming Query compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = set()
+        expected_missing_classic_methods = set()
+        self.check_compatibility(
+            ClassicStreamingQuery,
+            ConnectStreamingQuery,
+            "StreamingQuery",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
     def test_protobuf_compatibility(self):
         """Test Protobuf compatibility between classic and connect."""
         expected_missing_connect_properties = set()
@@ -417,6 +443,54 @@ class ConnectCompatibilityTestsMixin:
             ClassicProtobuf,
             ConnectProtobuf,
             "Protobuf",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_streaming_query_manager_compatibility(self):
+        """Test Streaming Query Manager compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = set()
+        expected_missing_classic_methods = {"close"}
+        self.check_compatibility(
+            ClassicStreamingQueryManager,
+            ConnectStreamingQueryManager,
+            "StreamingQueryManager",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_streaming_reader_compatibility(self):
+        """Test Data Stream Reader compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = set()
+        expected_missing_classic_methods = set()
+        self.check_compatibility(
+            ClassicDataStreamReader,
+            ConnectDataStreamReader,
+            "DataStreamReader",
+            expected_missing_connect_properties,
+            expected_missing_classic_properties,
+            expected_missing_connect_methods,
+            expected_missing_classic_methods,
+        )
+
+    def test_streaming_writer_compatibility(self):
+        """Test Data Stream Writer compatibility between classic and connect."""
+        expected_missing_connect_properties = set()
+        expected_missing_classic_properties = set()
+        expected_missing_connect_methods = set()
+        expected_missing_classic_methods = set()
+        self.check_compatibility(
+            ClassicDataStreamWriter,
+            ConnectDataStreamWriter,
+            "DataStreamWriter",
             expected_missing_connect_properties,
             expected_missing_classic_properties,
             expected_missing_connect_methods,
