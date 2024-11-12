@@ -14,37 +14,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark
 
-class SparkContext
-class SparkConf {
-  def getAll: Array[(String, String)] = Array.empty
-}
+package org.apache.spark.util
 
-package api.java {
-  class JavaRDD[T]
-}
+import org.apache.spark.{SparkException, SparkFunSuite}
 
-package rdd {
-  class RDD[T]
-}
+class DirectByteBufferOutputStreamSuite extends SparkFunSuite {
+  test("use after close") {
+    val o = new DirectByteBufferOutputStream()
+    val size = 1000
+    o.write(new Array[Byte](size), 0, size)
+    val b = o.toByteBuffer
+    o.close()
 
-package sql {
-  class ExperimentalMethods
-  class SparkSessionExtensions
-  class SQLContext
+    // Using `o` after close should throw an exception rather than crashing.
+    assertThrows[SparkException] { o.write(123) }
+    assertThrows[SparkException] { o.write(new Array[Byte](size), 0, size) }
+    assertThrows[SparkException] { o.reset() }
+    assertThrows[SparkException] { o.size() }
+    assertThrows[SparkException] { o.toByteBuffer }
 
-  package execution {
-    class QueryExecution
-  }
-  package internal {
-    class SharedState
-    class SessionState
-  }
-  package util {
-    class ExecutionListenerManager
-  }
-  package sources {
-    class BaseRelation
+    // Using `b` after `o` is closed may crash.
+    // val arr = new Array[Byte](size)
+    // b.get(arr)
   }
 }
