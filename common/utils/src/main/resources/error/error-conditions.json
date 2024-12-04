@@ -1476,6 +1476,11 @@
         "message" : [
           "Data type mismatches when reading Parquet column <column>. Expected Spark type <expectedType>, actual Parquet type <actualType>."
         ]
+      },
+      "UNSUPPORTED_FILE_SYSTEM" : {
+        "message" : [
+          "The file system <fileSystemClass> hasn't implemented <method>."
+        ]
       }
     },
     "sqlState" : "KD001"
@@ -5186,6 +5191,11 @@
       "CLAUSE_WITH_PIPE_OPERATORS" : {
         "message" : [
           "The SQL pipe operator syntax using |> does not support <clauses>."
+        ]
+      },
+      "COLLATIONS_IN_MAP_KEYS" : {
+        "message" : [
+          "Collated strings for keys of maps"
         ]
       },
       "COMBINATION_QUERY_RESULT_CLAUSES" : {
