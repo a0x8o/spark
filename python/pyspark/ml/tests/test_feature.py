@@ -25,8 +25,11 @@ import numpy as np
 from pyspark.ml.feature import (
     DCT,
     Binarizer,
+    Bucketizer,
     CountVectorizer,
     CountVectorizerModel,
+    OneHotEncoder,
+    OneHotEncoderModel,
     HashingTF,
     IDF,
     NGram,
@@ -42,6 +45,12 @@ from pyspark.ml.feature import (
     MinMaxScalerModel,
     RobustScaler,
     RobustScalerModel,
+    ChiSqSelector,
+    ChiSqSelectorModel,
+    UnivariateFeatureSelector,
+    UnivariateFeatureSelectorModel,
+    VarianceThresholdSelector,
+    VarianceThresholdSelectorModel,
     StopWordsRemover,
     StringIndexer,
     StringIndexerModel,
@@ -391,6 +400,102 @@ class FeatureTestsMixin:
             self.assertEqual(str(model), str(model2))
             self.assertEqual(model2.getOutputCol(), "scaled")
 
+    def test_chi_sq_selector(self):
+        df = self.spark.createDataFrame(
+            [
+                (Vectors.dense([0.0, 0.0, 18.0, 1.0]), 1.0),
+                (Vectors.dense([0.0, 1.0, 12.0, 0.0]), 0.0),
+                (Vectors.dense([1.0, 0.0, 15.0, 0.1]), 0.0),
+            ],
+            ["features", "label"],
+        )
+
+        selector = ChiSqSelector(numTopFeatures=1, outputCol="selectedFeatures")
+        self.assertEqual(selector.getNumTopFeatures(), 1)
+        self.assertEqual(selector.getOutputCol(), "selectedFeatures")
+
+        model = selector.fit(df)
+        self.assertEqual(model.selectedFeatures, [2])
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["features", "label", "selectedFeatures"])
+        self.assertEqual(output.count(), 3)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="chi_sq_selector") as d:
+            selector.write().overwrite().save(d)
+            selector2 = ChiSqSelector.load(d)
+            self.assertEqual(str(selector), str(selector2))
+
+            model.write().overwrite().save(d)
+            model2 = ChiSqSelectorModel.load(d)
+            self.assertEqual(str(model), str(model2))
+
+    def test_univariate_selector(self):
+        df = self.spark.createDataFrame(
+            [
+                (Vectors.dense([0.0, 0.0, 18.0, 1.0]), 1.0),
+                (Vectors.dense([0.0, 1.0, 12.0, 0.0]), 0.0),
+                (Vectors.dense([1.0, 0.0, 15.0, 0.1]), 0.0),
+            ],
+            ["features", "label"],
+        )
+
+        selector = UnivariateFeatureSelector(outputCol="selectedFeatures")
+        selector.setFeatureType("continuous").setLabelType("categorical").setSelectionThreshold(1)
+        self.assertEqual(selector.getFeatureType(), "continuous")
+        self.assertEqual(selector.getLabelType(), "categorical")
+        self.assertEqual(selector.getOutputCol(), "selectedFeatures")
+        self.assertEqual(selector.getSelectionThreshold(), 1)
+
+        model = selector.fit(df)
+        self.assertEqual(model.selectedFeatures, [3])
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["features", "label", "selectedFeatures"])
+        self.assertEqual(output.count(), 3)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="univariate_selector") as d:
+            selector.write().overwrite().save(d)
+            selector2 = UnivariateFeatureSelector.load(d)
+            self.assertEqual(str(selector), str(selector2))
+
+            model.write().overwrite().save(d)
+            model2 = UnivariateFeatureSelectorModel.load(d)
+            self.assertEqual(str(model), str(model2))
+
+    def test_variance_threshold_selector(self):
+        df = self.spark.createDataFrame(
+            [
+                (Vectors.dense([0.0, 0.0, 18.0, 1.0]), 1.0),
+                (Vectors.dense([0.0, 1.0, 12.0, 0.0]), 0.0),
+                (Vectors.dense([1.0, 0.0, 15.0, 0.1]), 0.0),
+            ],
+            ["features", "label"],
+        )
+
+        selector = VarianceThresholdSelector(varianceThreshold=2, outputCol="selectedFeatures")
+        self.assertEqual(selector.getVarianceThreshold(), 2)
+        self.assertEqual(selector.getOutputCol(), "selectedFeatures")
+
+        model = selector.fit(df)
+        self.assertEqual(model.selectedFeatures, [2])
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["features", "label", "selectedFeatures"])
+        self.assertEqual(output.count(), 3)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="variance_threshold_selector") as d:
+            selector.write().overwrite().save(d)
+            selector2 = VarianceThresholdSelector.load(d)
+            self.assertEqual(str(selector), str(selector2))
+
+            model.write().overwrite().save(d)
+            model2 = VarianceThresholdSelectorModel.load(d)
+            self.assertEqual(str(model), str(model2))
+
     def test_word2vec(self):
         sent = ("a b " * 100 + "a c " * 10).split(" ")
         df = self.spark.createDataFrame([(sent,), (sent,)], ["sentence"]).coalesce(1)
@@ -431,6 +536,61 @@ class FeatureTestsMixin:
 
             model.write().overwrite().save(d)
             model2 = Word2VecModel.load(d)
+            self.assertEqual(str(model), str(model2))
+
+    def test_count_vectorizer(self):
+        df = self.spark.createDataFrame(
+            [(0, ["a", "b", "c"]), (1, ["a", "b", "b", "c", "a"])],
+            ["label", "raw"],
+        )
+
+        cv = CountVectorizer()
+        cv.setInputCol("raw")
+        cv.setOutputCol("vectors")
+        self.assertEqual(cv.getInputCol(), "raw")
+        self.assertEqual(cv.getOutputCol(), "vectors")
+
+        model = cv.fit(df)
+        self.assertEqual(sorted(model.vocabulary), ["a", "b", "c"])
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["label", "raw", "vectors"])
+        self.assertEqual(output.count(), 2)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="count_vectorizer") as d:
+            cv.write().overwrite().save(d)
+            cv2 = CountVectorizer.load(d)
+            self.assertEqual(str(cv), str(cv2))
+
+            model.write().overwrite().save(d)
+            model2 = CountVectorizerModel.load(d)
+            self.assertEqual(str(model), str(model2))
+
+    def test_one_hot_encoder(self):
+        df = self.spark.createDataFrame([(0.0,), (1.0,), (2.0,)], ["input"])
+
+        encoder = OneHotEncoder()
+        encoder.setInputCols(["input"])
+        encoder.setOutputCols(["output"])
+        self.assertEqual(encoder.getInputCols(), ["input"])
+        self.assertEqual(encoder.getOutputCols(), ["output"])
+
+        model = encoder.fit(df)
+        self.assertEqual(model.categorySizes, [3])
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["input", "output"])
+        self.assertEqual(output.count(), 3)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="count_vectorizer") as d:
+            encoder.write().overwrite().save(d)
+            encoder2 = OneHotEncoder.load(d)
+            self.assertEqual(str(encoder), str(encoder2))
+
+            model.write().overwrite().save(d)
+            model2 = OneHotEncoderModel.load(d)
             self.assertEqual(str(model), str(model2))
 
     def test_tokenizer(self):
@@ -517,60 +677,7 @@ class FeatureTestsMixin:
             remover2 = StopWordsRemover.load(d)
             self.assertEqual(str(remover), str(remover2))
 
-    def test_binarizer(self):
-        b0 = Binarizer()
-        self.assertListEqual(
-            b0.params,
-            [b0.inputCol, b0.inputCols, b0.outputCol, b0.outputCols, b0.threshold, b0.thresholds],
-        )
-        self.assertTrue(all([~b0.isSet(p) for p in b0.params]))
-        self.assertTrue(b0.hasDefault(b0.threshold))
-        self.assertEqual(b0.getThreshold(), 0.0)
-        b0.setParams(inputCol="input", outputCol="output").setThreshold(1.0)
-        self.assertTrue(not all([b0.isSet(p) for p in b0.params]))
-        self.assertEqual(b0.getThreshold(), 1.0)
-        self.assertEqual(b0.getInputCol(), "input")
-        self.assertEqual(b0.getOutputCol(), "output")
-
-        b0c = b0.copy({b0.threshold: 2.0})
-        self.assertEqual(b0c.uid, b0.uid)
-        self.assertListEqual(b0c.params, b0.params)
-        self.assertEqual(b0c.getThreshold(), 2.0)
-
-        b1 = Binarizer(threshold=2.0, inputCol="input", outputCol="output")
-        self.assertNotEqual(b1.uid, b0.uid)
-        self.assertEqual(b1.getThreshold(), 2.0)
-        self.assertEqual(b1.getInputCol(), "input")
-        self.assertEqual(b1.getOutputCol(), "output")
-
-    def test_idf(self):
-        dataset = self.spark.createDataFrame(
-            [(DenseVector([1.0, 2.0]),), (DenseVector([0.0, 1.0]),), (DenseVector([3.0, 0.2]),)],
-            ["tf"],
-        )
-        idf0 = IDF(inputCol="tf")
-        self.assertListEqual(idf0.params, [idf0.inputCol, idf0.minDocFreq, idf0.outputCol])
-        idf0m = idf0.fit(dataset, {idf0.outputCol: "idf"})
-        self.assertEqual(
-            idf0m.uid, idf0.uid, "Model should inherit the UID from its parent estimator."
-        )
-        output = idf0m.transform(dataset)
-        self.assertIsNotNone(output.head().idf)
-        self.assertIsNotNone(idf0m.docFreq)
-        self.assertEqual(idf0m.numDocs, 3)
-        # Test that parameters transferred to Python Model
-        check_params(self, idf0m)
-
-    def test_ngram(self):
-        dataset = self.spark.createDataFrame([Row(input=["a", "b", "c", "d", "e"])])
-        ngram0 = NGram(n=4, inputCol="input", outputCol="output")
-        self.assertEqual(ngram0.getN(), 4)
-        self.assertEqual(ngram0.getInputCol(), "input")
-        self.assertEqual(ngram0.getOutputCol(), "output")
-        transformedDF = ngram0.transform(dataset)
-        self.assertEqual(transformedDF.head().output, ["a b c d", "b c d e"])
-
-    def test_stopwordsremover(self):
+    def test_stop_words_remover_II(self):
         dataset = self.spark.createDataFrame([Row(input=["a", "panda"])])
         stopWordRemover = StopWordsRemover(inputCol="input", outputCol="output")
         # Default
@@ -600,6 +707,165 @@ class FeatureTestsMixin:
         self.assertEqual(stopWordRemover.getStopWords(), stopwords)
         transformedDF = stopWordRemover.transform(dataset)
         self.assertEqual(transformedDF.head().output, [])
+
+    def test_binarizer(self):
+        b0 = Binarizer()
+        self.assertListEqual(
+            b0.params,
+            [b0.inputCol, b0.inputCols, b0.outputCol, b0.outputCols, b0.threshold, b0.thresholds],
+        )
+        self.assertTrue(all([~b0.isSet(p) for p in b0.params]))
+        self.assertTrue(b0.hasDefault(b0.threshold))
+        self.assertEqual(b0.getThreshold(), 0.0)
+        b0.setParams(inputCol="input", outputCol="output").setThreshold(1.0)
+        self.assertTrue(not all([b0.isSet(p) for p in b0.params]))
+        self.assertEqual(b0.getThreshold(), 1.0)
+        self.assertEqual(b0.getInputCol(), "input")
+        self.assertEqual(b0.getOutputCol(), "output")
+
+        b0c = b0.copy({b0.threshold: 2.0})
+        self.assertEqual(b0c.uid, b0.uid)
+        self.assertListEqual(b0c.params, b0.params)
+        self.assertEqual(b0c.getThreshold(), 2.0)
+
+        b1 = Binarizer(threshold=2.0, inputCol="input", outputCol="output")
+        self.assertNotEqual(b1.uid, b0.uid)
+        self.assertEqual(b1.getThreshold(), 2.0)
+        self.assertEqual(b1.getInputCol(), "input")
+        self.assertEqual(b1.getOutputCol(), "output")
+
+        df = self.spark.createDataFrame(
+            [
+                (0.1, 0.0),
+                (0.4, 1.0),
+                (1.2, 1.3),
+                (1.5, float("nan")),
+                (float("nan"), 1.0),
+                (float("nan"), 0.0),
+            ],
+            ["v1", "v2"],
+        )
+
+        binarizer = Binarizer(threshold=1.0, inputCol="v1", outputCol="f1")
+        output = binarizer.transform(df)
+        self.assertEqual(output.columns, ["v1", "v2", "f1"])
+        self.assertEqual(output.count(), 6)
+        self.assertEqual(
+            [r.f1 for r in output.select("f1").collect()],
+            [0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+        )
+
+        binarizer = Binarizer(threshold=1.0, inputCols=["v1", "v2"], outputCols=["f1", "f2"])
+        output = binarizer.transform(df)
+        self.assertEqual(output.columns, ["v1", "v2", "f1", "f2"])
+        self.assertEqual(output.count(), 6)
+        self.assertEqual(
+            [r.f1 for r in output.select("f1").collect()],
+            [0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+        )
+        self.assertEqual(
+            [r.f2 for r in output.select("f2").collect()],
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        )
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="binarizer") as d:
+            binarizer.write().overwrite().save(d)
+            binarizer2 = Binarizer.load(d)
+            self.assertEqual(str(binarizer), str(binarizer2))
+
+    def test_bucketizer(self):
+        df = self.spark.createDataFrame(
+            [
+                (0.1, 0.0),
+                (0.4, 1.0),
+                (1.2, 1.3),
+                (1.5, float("nan")),
+                (float("nan"), 1.0),
+                (float("nan"), 0.0),
+            ],
+            ["v1", "v2"],
+        )
+
+        splits = [-float("inf"), 0.5, 1.4, float("inf")]
+        bucketizer = Bucketizer()
+        bucketizer.setSplits(splits)
+        bucketizer.setHandleInvalid("keep")
+        bucketizer.setInputCol("v1")
+        bucketizer.setOutputCol("b1")
+
+        self.assertEqual(bucketizer.getSplits(), splits)
+        self.assertEqual(bucketizer.getHandleInvalid(), "keep")
+        self.assertEqual(bucketizer.getInputCol(), "v1")
+        self.assertEqual(bucketizer.getOutputCol(), "b1")
+
+        output = bucketizer.transform(df)
+        self.assertEqual(output.columns, ["v1", "v2", "b1"])
+        self.assertEqual(output.count(), 6)
+        self.assertEqual(
+            [r.b1 for r in output.select("b1").collect()],
+            [0.0, 0.0, 1.0, 2.0, 3.0, 3.0],
+        )
+
+        splitsArray = [
+            [-float("inf"), 0.5, 1.4, float("inf")],
+            [-float("inf"), 0.5, float("inf")],
+        ]
+        bucketizer = Bucketizer(
+            splitsArray=splitsArray,
+            inputCols=["v1", "v2"],
+            outputCols=["b1", "b2"],
+        )
+        bucketizer.setHandleInvalid("keep")
+        self.assertEqual(bucketizer.getSplitsArray(), splitsArray)
+        self.assertEqual(bucketizer.getHandleInvalid(), "keep")
+        self.assertEqual(bucketizer.getInputCols(), ["v1", "v2"])
+        self.assertEqual(bucketizer.getOutputCols(), ["b1", "b2"])
+
+        output = bucketizer.transform(df)
+        self.assertEqual(output.columns, ["v1", "v2", "b1", "b2"])
+        self.assertEqual(output.count(), 6)
+        self.assertEqual(
+            [r.b1 for r in output.select("b1").collect()],
+            [0.0, 0.0, 1.0, 2.0, 3.0, 3.0],
+        )
+        self.assertEqual(
+            [r.b2 for r in output.select("b2").collect()],
+            [0.0, 1.0, 1.0, 2.0, 1.0, 0.0],
+        )
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="bucketizer") as d:
+            bucketizer.write().overwrite().save(d)
+            bucketizer2 = Bucketizer.load(d)
+            self.assertEqual(str(bucketizer), str(bucketizer2))
+
+    def test_idf(self):
+        dataset = self.spark.createDataFrame(
+            [(DenseVector([1.0, 2.0]),), (DenseVector([0.0, 1.0]),), (DenseVector([3.0, 0.2]),)],
+            ["tf"],
+        )
+        idf0 = IDF(inputCol="tf")
+        self.assertListEqual(idf0.params, [idf0.inputCol, idf0.minDocFreq, idf0.outputCol])
+        idf0m = idf0.fit(dataset, {idf0.outputCol: "idf"})
+        self.assertEqual(
+            idf0m.uid, idf0.uid, "Model should inherit the UID from its parent estimator."
+        )
+        output = idf0m.transform(dataset)
+        self.assertIsNotNone(output.head().idf)
+        self.assertIsNotNone(idf0m.docFreq)
+        self.assertEqual(idf0m.numDocs, 3)
+        # Test that parameters transferred to Python Model
+        check_params(self, idf0m)
+
+    def test_ngram(self):
+        dataset = self.spark.createDataFrame([Row(input=["a", "b", "c", "d", "e"])])
+        ngram0 = NGram(n=4, inputCol="input", outputCol="output")
+        self.assertEqual(ngram0.getN(), 4)
+        self.assertEqual(ngram0.getInputCol(), "input")
+        self.assertEqual(ngram0.getOutputCol(), "output")
+        transformedDF = ngram0.transform(dataset)
+        self.assertEqual(transformedDF.head().output, ["a b c d", "b c d e"])
 
     def test_count_vectorizer_with_binary(self):
         dataset = self.spark.createDataFrame(
