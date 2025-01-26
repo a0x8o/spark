@@ -37,7 +37,8 @@ import org.apache.spark.ml.recommendation._
 import org.apache.spark.ml.regression._
 import org.apache.spark.ml.tree.{DecisionTreeModel, TreeEnsembleModel}
 import org.apache.spark.ml.util.{HasTrainingSummary, Identifiable, MLWritable}
-import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.classic.Dataset
 import org.apache.spark.sql.connect.common.LiteralValueProtoConverter
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.SparkConnectPluginRegistry
@@ -581,6 +582,7 @@ private[ml] object MLUtils {
     (classOf[FPGrowthModel], Set("associationRules", "freqItemsets")),
 
     // Feature Models
+    (classOf[ImputerModel], Set("surrogateDF")),
     (classOf[StandardScalerModel], Set("mean", "std")),
     (classOf[MaxAbsScalerModel], Set("maxAbs")),
     (classOf[MinMaxScalerModel], Set("originalMax", "originalMin")),
@@ -591,7 +593,8 @@ private[ml] object MLUtils {
     (classOf[PCAModel], Set("pc", "explainedVariance")),
     (classOf[Word2VecModel], Set("getVectors", "findSynonyms", "findSynonymsArray")),
     (classOf[CountVectorizerModel], Set("vocabulary")),
-    (classOf[OneHotEncoderModel], Set("categorySizes")))
+    (classOf[OneHotEncoderModel], Set("categorySizes")),
+    (classOf[IDFModel], Set("idf", "docFreq", "numDocs")))
 
   private def validate(obj: Any, method: String): Unit = {
     assert(obj != null)

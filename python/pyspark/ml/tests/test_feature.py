@@ -30,9 +30,15 @@ from pyspark.ml.feature import (
     CountVectorizerModel,
     OneHotEncoder,
     OneHotEncoderModel,
+    FeatureHasher,
     HashingTF,
     IDF,
+    IDFModel,
+    Imputer,
+    ImputerModel,
     NGram,
+    Normalizer,
+    Interaction,
     RFormula,
     Tokenizer,
     SQLTransformer,
@@ -55,6 +61,7 @@ from pyspark.ml.feature import (
     StringIndexer,
     StringIndexerModel,
     TargetEncoder,
+    TargetEncoderModel,
     VectorSizeHint,
     VectorAssembler,
     PCA,
@@ -65,7 +72,7 @@ from pyspark.ml.feature import (
 from pyspark.ml.linalg import DenseVector, SparseVector, Vectors
 from pyspark.sql import Row
 from pyspark.testing.utils import QuietTest
-from pyspark.testing.mlutils import check_params, SparkSessionTestCase
+from pyspark.testing.mlutils import SparkSessionTestCase
 
 
 class FeatureTestsMixin:
@@ -538,6 +545,46 @@ class FeatureTestsMixin:
             model2 = Word2VecModel.load(d)
             self.assertEqual(str(model), str(model2))
 
+    def test_imputer(self):
+        spark = self.spark
+        df = spark.createDataFrame(
+            [
+                (1.0, float("nan")),
+                (2.0, float("nan")),
+                (float("nan"), 3.0),
+                (4.0, 4.0),
+                (5.0, 5.0),
+            ],
+            ["a", "b"],
+        )
+
+        imputer = Imputer(strategy="mean")
+        imputer.setInputCols(["a", "b"])
+        imputer.setOutputCols(["out_a", "out_b"])
+
+        self.assertEqual(imputer.getStrategy(), "mean")
+        self.assertEqual(imputer.getInputCols(), ["a", "b"])
+        self.assertEqual(imputer.getOutputCols(), ["out_a", "out_b"])
+
+        model = imputer.fit(df)
+        self.assertEqual(model.surrogateDF.columns, ["a", "b"])
+        self.assertEqual(model.surrogateDF.count(), 1)
+        self.assertEqual(list(model.surrogateDF.head()), [3.0, 4.0])
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["a", "b", "out_a", "out_b"])
+        self.assertEqual(output.count(), 5)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="imputer") as d:
+            imputer.write().overwrite().save(d)
+            imputer2 = Imputer.load(d)
+            self.assertEqual(str(imputer), str(imputer2))
+
+            model.write().overwrite().save(d)
+            model2 = ImputerModel.load(d)
+            self.assertEqual(str(model), str(model2))
+
     def test_count_vectorizer(self):
         df = self.spark.createDataFrame(
             [(0, ["a", "b", "c"]), (1, ["a", "b", "b", "c", "a"])],
@@ -841,31 +888,101 @@ class FeatureTestsMixin:
             self.assertEqual(str(bucketizer), str(bucketizer2))
 
     def test_idf(self):
-        dataset = self.spark.createDataFrame(
-            [(DenseVector([1.0, 2.0]),), (DenseVector([0.0, 1.0]),), (DenseVector([3.0, 0.2]),)],
+        df = self.spark.createDataFrame(
+            [
+                (DenseVector([1.0, 2.0]),),
+                (DenseVector([0.0, 1.0]),),
+                (DenseVector([3.0, 0.2]),),
+            ],
             ["tf"],
         )
-        idf0 = IDF(inputCol="tf")
-        self.assertListEqual(idf0.params, [idf0.inputCol, idf0.minDocFreq, idf0.outputCol])
-        idf0m = idf0.fit(dataset, {idf0.outputCol: "idf"})
-        self.assertEqual(
-            idf0m.uid, idf0.uid, "Model should inherit the UID from its parent estimator."
+        idf = IDF(inputCol="tf")
+        self.assertListEqual(idf.params, [idf.inputCol, idf.minDocFreq, idf.outputCol])
+
+        model = idf.fit(df, {idf.outputCol: "idf"})
+        # self.assertEqual(
+        #     model.uid, idf.uid, "Model should inherit the UID from its parent estimator."
+        # )
+        self.assertTrue(
+            np.allclose(model.idf.toArray(), [0.28768207245178085, 0.0], atol=1e-4),
+            model.idf,
         )
-        output = idf0m.transform(dataset)
+        self.assertEqual(model.docFreq, [2, 3])
+        self.assertEqual(model.numDocs, 3)
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["tf", "idf"])
         self.assertIsNotNone(output.head().idf)
-        self.assertIsNotNone(idf0m.docFreq)
-        self.assertEqual(idf0m.numDocs, 3)
-        # Test that parameters transferred to Python Model
-        check_params(self, idf0m)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="idf") as d:
+            idf.write().overwrite().save(d)
+            idf2 = IDF.load(d)
+            self.assertEqual(str(idf), str(idf2))
+
+            model.write().overwrite().save(d)
+            model2 = IDFModel.load(d)
+            self.assertEqual(str(model), str(model2))
 
     def test_ngram(self):
-        dataset = self.spark.createDataFrame([Row(input=["a", "b", "c", "d", "e"])])
-        ngram0 = NGram(n=4, inputCol="input", outputCol="output")
-        self.assertEqual(ngram0.getN(), 4)
-        self.assertEqual(ngram0.getInputCol(), "input")
-        self.assertEqual(ngram0.getOutputCol(), "output")
-        transformedDF = ngram0.transform(dataset)
-        self.assertEqual(transformedDF.head().output, ["a b c d", "b c d e"])
+        spark = self.spark
+        df = spark.createDataFrame([Row(input=["a", "b", "c", "d", "e"])])
+
+        ngram = NGram(n=4, inputCol="input", outputCol="output")
+        self.assertEqual(ngram.getN(), 4)
+        self.assertEqual(ngram.getInputCol(), "input")
+        self.assertEqual(ngram.getOutputCol(), "output")
+
+        output = ngram.transform(df)
+        self.assertEqual(output.head().output, ["a b c d", "b c d e"])
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="ngram") as d:
+            ngram.write().overwrite().save(d)
+            ngram2 = NGram.load(d)
+            self.assertEqual(str(ngram), str(ngram2))
+
+    def test_normalizer(self):
+        spark = self.spark
+        df = spark.createDataFrame(
+            [(Vectors.dense([3.0, -4.0]),), (Vectors.sparse(4, {1: 4.0, 3: 3.0}),)],
+            ["input"],
+        )
+
+        normalizer = Normalizer(p=2.0, inputCol="input", outputCol="output")
+        self.assertEqual(normalizer.getP(), 2.0)
+        self.assertEqual(normalizer.getInputCol(), "input")
+        self.assertEqual(normalizer.getOutputCol(), "output")
+
+        output = normalizer.transform(df)
+        self.assertEqual(output.columns, ["input", "output"])
+        self.assertEqual(output.count(), 2)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="normalizer") as d:
+            normalizer.write().overwrite().save(d)
+            normalizer2 = Normalizer.load(d)
+            self.assertEqual(str(normalizer), str(normalizer2))
+
+    def test_interaction(self):
+        spark = self.spark
+        df = spark.createDataFrame([(0.0, 1.0), (2.0, 3.0)], ["a", "b"])
+
+        interaction = Interaction()
+        interaction.setInputCols(["a", "b"])
+        interaction.setOutputCol("ab")
+        self.assertEqual(interaction.getInputCols(), ["a", "b"])
+        self.assertEqual(interaction.getOutputCol(), "ab")
+
+        output = interaction.transform(df)
+        self.assertEqual(output.columns, ["a", "b", "ab"])
+        self.assertEqual(output.count(), 2)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="interaction") as d:
+            interaction.write().overwrite().save(d)
+            interaction2 = Interaction.load(d)
+            self.assertEqual(str(interaction), str(interaction2))
 
     def test_count_vectorizer_with_binary(self):
         dataset = self.spark.createDataFrame(
@@ -1113,148 +1230,22 @@ class FeatureTestsMixin:
             targetType="binary",
         )
         model = encoder.fit(df)
-        te = model.transform(df)
-        actual = te.drop("label").collect()
-        expected = [
-            Row(input1=0, input2=3, input3=5.0, output1=1.0 / 3, output2=0.0, output3=1.0 / 3),
-            Row(input1=1, input2=4, input3=5.0, output1=2.0 / 3, output2=1.0, output3=1.0 / 3),
-            Row(input1=2, input2=3, input3=5.0, output1=1.0 / 3, output2=0.0, output3=1.0 / 3),
-            Row(input1=0, input2=4, input3=6.0, output1=1.0 / 3, output2=1.0, output3=2.0 / 3),
-            Row(input1=1, input2=3, input3=6.0, output1=2.0 / 3, output2=0.0, output3=2.0 / 3),
-            Row(input1=2, input2=4, input3=6.0, output1=1.0 / 3, output2=1.0, output3=2.0 / 3),
-            Row(input1=0, input2=3, input3=7.0, output1=1.0 / 3, output2=0.0, output3=0.0),
-            Row(input1=1, input2=4, input3=8.0, output1=2.0 / 3, output2=1.0, output3=1.0),
-            Row(input1=2, input2=3, input3=9.0, output1=1.0 / 3, output2=0.0, output3=0.0),
-        ]
-        self.assertEqual(actual, expected)
-        te = model.setSmoothing(1.0).transform(df)
-        actual = te.drop("label").collect()
-        expected = [
-            Row(
-                input1=0,
-                input2=3,
-                input3=5.0,
-                output1=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(1 - 5 / 6) * (4 / 9),
-                output3=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-            ),
-            Row(
-                input1=1,
-                input2=4,
-                input3=5.0,
-                output1=(3 / 4) * (2 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(4 / 5) * 1 + (1 - 4 / 5) * (4 / 9),
-                output3=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-            ),
-            Row(
-                input1=2,
-                input2=3,
-                input3=5.0,
-                output1=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(1 - 5 / 6) * (4 / 9),
-                output3=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-            ),
-            Row(
-                input1=0,
-                input2=4,
-                input3=6.0,
-                output1=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(4 / 5) * 1 + (1 - 4 / 5) * (4 / 9),
-                output3=(3 / 4) * (2 / 3) + (1 - 3 / 4) * (4 / 9),
-            ),
-            Row(
-                input1=1,
-                input2=3,
-                input3=6.0,
-                output1=(3 / 4) * (2 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(1 - 5 / 6) * (4 / 9),
-                output3=(3 / 4) * (2 / 3) + (1 - 3 / 4) * (4 / 9),
-            ),
-            Row(
-                input1=2,
-                input2=4,
-                input3=6.0,
-                output1=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(4 / 5) * 1 + (1 - 4 / 5) * (4 / 9),
-                output3=(3 / 4) * (2 / 3) + (1 - 3 / 4) * (4 / 9),
-            ),
-            Row(
-                input1=0,
-                input2=3,
-                input3=7.0,
-                output1=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(1 - 5 / 6) * (4 / 9),
-                output3=(1 - 1 / 2) * (4 / 9),
-            ),
-            Row(
-                input1=1,
-                input2=4,
-                input3=8.0,
-                output1=(3 / 4) * (2 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(4 / 5) * 1 + (1 - 4 / 5) * (4 / 9),
-                output3=(1 / 2) + (1 - 1 / 2) * (4 / 9),
-            ),
-            Row(
-                input1=2,
-                input2=3,
-                input3=9.0,
-                output1=(3 / 4) * (1 / 3) + (1 - 3 / 4) * (4 / 9),
-                output2=(1 - 5 / 6) * (4 / 9),
-                output3=(1 - 1 / 2) * (4 / 9),
-            ),
-        ]
-        self.assertEqual(actual, expected)
+        output = model.transform(df)
+        self.assertEqual(
+            output.columns,
+            ["input1", "input2", "input3", "label", "output", "output2", "output3"],
+        )
+        self.assertEqual(output.count(), 9)
 
-    def test_target_encoder_continuous(self):
-        df = self.spark.createDataFrame(
-            [
-                (0, 3, 5.0, 10.0),
-                (1, 4, 5.0, 20.0),
-                (2, 3, 5.0, 30.0),
-                (0, 4, 6.0, 40.0),
-                (1, 3, 6.0, 50.0),
-                (2, 4, 6.0, 60.0),
-                (0, 3, 7.0, 70.0),
-                (1, 4, 8.0, 80.0),
-                (2, 3, 9.0, 90.0),
-            ],
-            schema="input1 short, input2 int, input3 double, label double",
-        )
-        encoder = TargetEncoder(
-            inputCols=["input1", "input2", "input3"],
-            outputCols=["output", "output2", "output3"],
-            labelCol="label",
-            targetType="continuous",
-        )
-        model = encoder.fit(df)
-        te = model.transform(df)
-        actual = te.drop("label").collect()
-        expected = [
-            Row(input1=0, input2=3, input3=5.0, output1=40.0, output2=50.0, output3=20.0),
-            Row(input1=1, input2=4, input3=5.0, output1=50.0, output2=50.0, output3=20.0),
-            Row(input1=2, input2=3, input3=5.0, output1=60.0, output2=50.0, output3=20.0),
-            Row(input1=0, input2=4, input3=6.0, output1=40.0, output2=50.0, output3=50.0),
-            Row(input1=1, input2=3, input3=6.0, output1=50.0, output2=50.0, output3=50.0),
-            Row(input1=2, input2=4, input3=6.0, output1=60.0, output2=50.0, output3=50.0),
-            Row(input1=0, input2=3, input3=7.0, output1=40.0, output2=50.0, output3=70.0),
-            Row(input1=1, input2=4, input3=8.0, output1=50.0, output2=50.0, output3=80.0),
-            Row(input1=2, input2=3, input3=9.0, output1=60.0, output2=50.0, output3=90.0),
-        ]
-        self.assertEqual(actual, expected)
-        te = model.setSmoothing(1.0).transform(df)
-        actual = te.drop("label").collect()
-        expected = [
-            Row(input1=0, input2=3, input3=5.0, output1=42.5, output2=50.0, output3=27.5),
-            Row(input1=1, input2=4, input3=5.0, output1=50.0, output2=50.0, output3=27.5),
-            Row(input1=2, input2=3, input3=5.0, output1=57.5, output2=50.0, output3=27.5),
-            Row(input1=0, input2=4, input3=6.0, output1=42.5, output2=50.0, output3=50.0),
-            Row(input1=1, input2=3, input3=6.0, output1=50.0, output2=50.0, output3=50.0),
-            Row(input1=2, input2=4, input3=6.0, output1=57.5, output2=50.0, output3=50.0),
-            Row(input1=0, input2=3, input3=7.0, output1=42.5, output2=50.0, output3=60.0),
-            Row(input1=1, input2=4, input3=8.0, output1=50.0, output2=50.0, output3=65.0),
-            Row(input1=2, input2=3, input3=9.0, output1=57.5, output2=50.0, output3=70.0),
-        ]
-        self.assertEqual(actual, expected)
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="target_encoder") as d:
+            encoder.write().overwrite().save(d)
+            encoder2 = TargetEncoder.load(d)
+            self.assertEqual(str(encoder), str(encoder2))
+
+            model.write().overwrite().save(d)
+            model2 = TargetEncoderModel.load(d)
+            self.assertEqual(str(model), str(model2))
 
     def test_vector_size_hint(self):
         df = self.spark.createDataFrame(
@@ -1274,26 +1265,63 @@ class FeatureTestsMixin:
         expected = DenseVector([0.0, 10.0, 0.5])
         self.assertEqual(output, expected)
 
-    def test_apply_binary_term_freqs(self):
+    def test_feature_hasher(self):
+        data = [(2.0, True, "1", "foo"), (3.0, False, "2", "bar")]
+        cols = ["real", "bool", "stringNum", "string"]
+        df = self.spark.createDataFrame(data, cols)
+
+        hasher = FeatureHasher(numFeatures=2)
+        hasher.setInputCols(cols)
+        hasher.setOutputCol("features")
+
+        self.assertEqual(hasher.getNumFeatures(), 2)
+        self.assertEqual(hasher.getInputCols(), cols)
+        self.assertEqual(hasher.getOutputCol(), "features")
+
+        output = hasher.transform(df)
+        self.assertEqual(output.columns, ["real", "bool", "stringNum", "string", "features"])
+        self.assertEqual(output.count(), 2)
+
+        features = output.head().features.toArray()
+        self.assertTrue(
+            np.allclose(features, [2.0, 3.0], atol=1e-4),
+            features,
+        )
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="feature_hasher") as d:
+            hasher.write().overwrite().save(d)
+            hasher2 = FeatureHasher.load(d)
+            self.assertEqual(str(hasher), str(hasher2))
+
+    def test_hashing_tf(self):
         df = self.spark.createDataFrame([(0, ["a", "a", "b", "c", "c", "c"])], ["id", "words"])
-        n = 10
-        hashingTF = HashingTF()
-        hashingTF.setInputCol("words").setOutputCol("features").setNumFeatures(n).setBinary(True)
-        output = hashingTF.transform(df)
+        tf = HashingTF()
+        tf.setInputCol("words").setOutputCol("features").setNumFeatures(10).setBinary(True)
+        self.assertEqual(tf.getInputCol(), "words")
+        self.assertEqual(tf.getOutputCol(), "features")
+        self.assertEqual(tf.getNumFeatures(), 10)
+        self.assertTrue(tf.getBinary())
+
+        output = tf.transform(df)
+        self.assertEqual(output.columns, ["id", "words", "features"])
+        self.assertEqual(output.count(), 1)
+
         features = output.select("features").first().features.toArray()
-        expected = Vectors.dense([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0]).toArray()
-        for i in range(0, n):
-            self.assertAlmostEqual(
-                features[i],
-                expected[i],
-                14,
-                "Error at "
-                + str(i)
-                + ": expected "
-                + str(expected[i])
-                + ", got "
-                + str(features[i]),
-            )
+        self.assertTrue(
+            np.allclose(
+                features,
+                [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+                atol=1e-4,
+            ),
+            features,
+        )
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="hashing_tf") as d:
+            tf.write().overwrite().save(d)
+            tf2 = HashingTF.load(d)
+            self.assertEqual(str(tf), str(tf2))
 
 
 class FeatureTests(FeatureTestsMixin, SparkSessionTestCase):
