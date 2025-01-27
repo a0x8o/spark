@@ -68,6 +68,11 @@ from pyspark.ml.feature import (
     PCAModel,
     Word2Vec,
     Word2VecModel,
+    BucketedRandomProjectionLSH,
+    BucketedRandomProjectionLSHModel,
+    MinHashLSH,
+    MinHashLSHModel,
+    IndexToString,
 )
 from pyspark.ml.linalg import DenseVector, SparseVector, Vectors
 from pyspark.sql import Row
@@ -76,6 +81,51 @@ from pyspark.testing.mlutils import SparkSessionTestCase
 
 
 class FeatureTestsMixin:
+    def test_index_string(self):
+        dataset = self.spark.createDataFrame(
+            [
+                (0, "a"),
+                (1, "b"),
+                (2, "c"),
+                (3, "a"),
+                (4, "a"),
+                (5, "c"),
+            ],
+            ["id", "label"],
+        )
+
+        indexer = StringIndexer(inputCol="label", outputCol="labelIndex").fit(dataset)
+        transformed = indexer.transform(dataset)
+        idx2str = (
+            IndexToString()
+            .setInputCol("labelIndex")
+            .setOutputCol("sameLabel")
+            .setLabels(indexer.labels)
+        )
+
+        def check(t: IndexToString) -> None:
+            self.assertEqual(t.getInputCol(), "labelIndex")
+            self.assertEqual(t.getOutputCol(), "sameLabel")
+            self.assertEqual(t.getLabels(), indexer.labels)
+
+        check(idx2str)
+
+        ret = idx2str.transform(transformed)
+        self.assertEqual(
+            sorted(ret.schema.names), sorted(["id", "label", "labelIndex", "sameLabel"])
+        )
+
+        rows = ret.select("label", "sameLabel").collect()
+        for r in rows:
+            self.assertEqual(r.label, r.sameLabel)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="index_string") as d:
+            idx2str.write().overwrite().save(d)
+            idx2str2 = IndexToString.load(d)
+            self.assertEqual(str(idx2str), str(idx2str2))
+            check(idx2str2)
+
     def test_dct(self):
         df = self.spark.createDataFrame([(Vectors.dense([5.0, 8.0, 6.0]),)], ["vec"])
         dct = DCT()
@@ -123,6 +173,8 @@ class FeatureTestsMixin:
         # single input
         si = StringIndexer(inputCol="label1", outputCol="index1")
         model = si.fit(df.select("label1"))
+        self.assertEqual(si.uid, model.uid)
+        self.assertEqual(model.labels, list(model.labelsArray[0]))
 
         # read/write
         with tempfile.TemporaryDirectory(prefix="string_indexer") as tmp_dir:
@@ -183,6 +235,8 @@ class FeatureTestsMixin:
         pca = PCA(k=2, inputCol="features", outputCol="pca_features")
 
         model = pca.fit(df)
+        self.assertTrue(np.allclose(model.pc.toArray()[0], [-0.44859172, -0.28423808], atol=1e-4))
+        self.assertEqual(pca.uid, model.uid)
         self.assertEqual(model.getK(), 2)
         self.assertTrue(
             np.allclose(model.explainedVariance.toArray(), [0.79439, 0.20560], atol=1e-4)
@@ -272,6 +326,7 @@ class FeatureTestsMixin:
         self.assertEqual(scaler.getOutputCol(), "scaled")
 
         model = scaler.fit(df)
+        self.assertEqual(scaler.uid, model.uid)
         self.assertTrue(np.allclose(model.mean.toArray(), [1.66666667], atol=1e-4))
         self.assertTrue(np.allclose(model.std.toArray(), [1.52752523], atol=1e-4))
 
@@ -311,6 +366,7 @@ class FeatureTestsMixin:
         self.assertEqual(scaler.getOutputCol(), "scaled")
 
         model = scaler.fit(df)
+        self.assertEqual(scaler.uid, model.uid)
         self.assertTrue(np.allclose(model.maxAbs.toArray(), [3.0], atol=1e-4))
 
         output = model.transform(df)
@@ -349,6 +405,7 @@ class FeatureTestsMixin:
         self.assertEqual(scaler.getOutputCol(), "scaled")
 
         model = scaler.fit(df)
+        self.assertEqual(scaler.uid, model.uid)
         self.assertTrue(np.allclose(model.originalMax.toArray(), [3.0], atol=1e-4))
         self.assertTrue(np.allclose(model.originalMin.toArray(), [0.0], atol=1e-4))
 
@@ -388,6 +445,7 @@ class FeatureTestsMixin:
         self.assertEqual(scaler.getOutputCol(), "scaled")
 
         model = scaler.fit(df)
+        self.assertEqual(scaler.uid, model.uid)
         self.assertTrue(np.allclose(model.range.toArray(), [3.0], atol=1e-4))
         self.assertTrue(np.allclose(model.median.toArray(), [2.0], atol=1e-4))
 
@@ -422,6 +480,7 @@ class FeatureTestsMixin:
         self.assertEqual(selector.getOutputCol(), "selectedFeatures")
 
         model = selector.fit(df)
+        self.assertEqual(selector.uid, model.uid)
         self.assertEqual(model.selectedFeatures, [2])
 
         output = model.transform(df)
@@ -456,6 +515,7 @@ class FeatureTestsMixin:
         self.assertEqual(selector.getSelectionThreshold(), 1)
 
         model = selector.fit(df)
+        self.assertEqual(selector.uid, model.uid)
         self.assertEqual(model.selectedFeatures, [3])
 
         output = model.transform(df)
@@ -487,6 +547,7 @@ class FeatureTestsMixin:
         self.assertEqual(selector.getOutputCol(), "selectedFeatures")
 
         model = selector.fit(df)
+        self.assertEqual(selector.uid, model.uid)
         self.assertEqual(model.selectedFeatures, [2])
 
         output = model.transform(df)
@@ -516,6 +577,7 @@ class FeatureTestsMixin:
         self.assertEqual(w2v.getMaxIter(), 1)
 
         model = w2v.fit(df)
+        self.assertEqual(w2v.uid, model.uid)
         self.assertEqual(model.getVectors().columns, ["word", "vector"])
         self.assertEqual(model.getVectors().count(), 3)
 
@@ -567,6 +629,7 @@ class FeatureTestsMixin:
         self.assertEqual(imputer.getOutputCols(), ["out_a", "out_b"])
 
         model = imputer.fit(df)
+        self.assertEqual(imputer.uid, model.uid)
         self.assertEqual(model.surrogateDF.columns, ["a", "b"])
         self.assertEqual(model.surrogateDF.count(), 1)
         self.assertEqual(list(model.surrogateDF.head()), [3.0, 4.0])
@@ -598,6 +661,7 @@ class FeatureTestsMixin:
         self.assertEqual(cv.getOutputCol(), "vectors")
 
         model = cv.fit(df)
+        self.assertEqual(cv.uid, model.uid)
         self.assertEqual(sorted(model.vocabulary), ["a", "b", "c"])
 
         output = model.transform(df)
@@ -624,6 +688,7 @@ class FeatureTestsMixin:
         self.assertEqual(encoder.getOutputCols(), ["output"])
 
         model = encoder.fit(df)
+        self.assertEqual(encoder.uid, model.uid)
         self.assertEqual(model.categorySizes, [3])
 
         output = model.transform(df)
@@ -900,6 +965,7 @@ class FeatureTestsMixin:
         self.assertListEqual(idf.params, [idf.inputCol, idf.minDocFreq, idf.outputCol])
 
         model = idf.fit(df, {idf.outputCol: "idf"})
+        self.assertEqual(idf.uid, model.uid)
         # self.assertEqual(
         #     model.uid, idf.uid, "Model should inherit the UID from its parent estimator."
         # )
@@ -1012,6 +1078,7 @@ class FeatureTestsMixin:
         )
         cv = CountVectorizer(binary=True, inputCol="words", outputCol="features")
         model = cv.fit(dataset)
+        self.assertEqual(cv.uid, model.uid)
 
         transformedList = model.transform(dataset).select("features", "expected").collect()
 
@@ -1047,6 +1114,8 @@ class FeatureTestsMixin:
         )
         cv = CountVectorizer(inputCol="words", outputCol="features")
         model1 = cv.setMaxDF(3).fit(dataset)
+        self.assertEqual(cv.uid, model1.uid)
+
         self.assertEqual(model1.vocabulary, ["b", "c", "d"])
 
         transformedList1 = model1.transform(dataset).select("features", "expected").collect()
@@ -1119,6 +1188,8 @@ class FeatureTestsMixin:
         # Does not index label by default since it's numeric type.
         rf = RFormula(formula="y ~ x + s")
         model = rf.fit(df)
+        self.assertEqual(rf.uid, model.uid)
+
         transformedDF = model.transform(df)
         self.assertEqual(transformedDF.head().label, 1.0)
         # Force to index label.
@@ -1322,6 +1393,112 @@ class FeatureTestsMixin:
             tf.write().overwrite().save(d)
             tf2 = HashingTF.load(d)
             self.assertEqual(str(tf), str(tf2))
+
+    def test_bucketed_random_projection_lsh(self):
+        spark = self.spark
+
+        data = [
+            (0, Vectors.dense([-1.0, -1.0])),
+            (1, Vectors.dense([-1.0, 1.0])),
+            (2, Vectors.dense([1.0, -1.0])),
+            (3, Vectors.dense([1.0, 1.0])),
+        ]
+        df = spark.createDataFrame(data, ["id", "features"])
+
+        data2 = [
+            (4, Vectors.dense([2.0, 2.0])),
+            (5, Vectors.dense([2.0, 3.0])),
+            (6, Vectors.dense([3.0, 2.0])),
+            (7, Vectors.dense([3.0, 3.0])),
+        ]
+        df2 = spark.createDataFrame(data2, ["id", "features"])
+
+        brp = BucketedRandomProjectionLSH()
+        brp.setInputCol("features")
+        brp.setOutputCol("hashes")
+        brp.setSeed(12345)
+        brp.setBucketLength(1.0)
+
+        self.assertEqual(brp.getInputCol(), "features")
+        self.assertEqual(brp.getOutputCol(), "hashes")
+        self.assertEqual(brp.getBucketLength(), 1.0)
+        self.assertEqual(brp.getSeed(), 12345)
+
+        model = brp.fit(df)
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["id", "features", "hashes"])
+        self.assertEqual(output.count(), 4)
+
+        output = model.approxNearestNeighbors(df2, Vectors.dense([1.0, 2.0]), 1)
+        self.assertEqual(output.columns, ["id", "features", "hashes", "distCol"])
+        self.assertEqual(output.count(), 1)
+
+        output = model.approxSimilarityJoin(df, df2, 3)
+        self.assertEqual(output.columns, ["datasetA", "datasetB", "distCol"])
+        self.assertEqual(output.count(), 1)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="bucketed_random_projection_lsh") as d:
+            brp.write().overwrite().save(d)
+            brp2 = BucketedRandomProjectionLSH.load(d)
+            self.assertEqual(str(brp), str(brp2))
+
+            model.write().overwrite().save(d)
+            model2 = BucketedRandomProjectionLSHModel.load(d)
+            self.assertEqual(str(model), str(model2))
+
+    def test_min_hash_lsh(self):
+        spark = self.spark
+
+        data = [
+            (0, Vectors.dense([-1.0, -1.0])),
+            (1, Vectors.dense([-1.0, 1.0])),
+            (2, Vectors.dense([1.0, -1.0])),
+            (3, Vectors.dense([1.0, 1.0])),
+        ]
+        df = spark.createDataFrame(data, ["id", "features"])
+
+        data2 = [
+            (4, Vectors.dense([2.0, 2.0])),
+            (5, Vectors.dense([2.0, 3.0])),
+            (6, Vectors.dense([3.0, 2.0])),
+            (7, Vectors.dense([3.0, 3.0])),
+        ]
+        df2 = spark.createDataFrame(data2, ["id", "features"])
+
+        mh = MinHashLSH()
+        mh.setInputCol("features")
+        mh.setOutputCol("hashes")
+        mh.setSeed(12345)
+
+        self.assertEqual(mh.getInputCol(), "features")
+        self.assertEqual(mh.getOutputCol(), "hashes")
+        self.assertEqual(mh.getSeed(), 12345)
+
+        model = mh.fit(df)
+
+        output = model.transform(df)
+        self.assertEqual(output.columns, ["id", "features", "hashes"])
+        self.assertEqual(output.count(), 4)
+
+        output = model.approxNearestNeighbors(df2, Vectors.dense([1.0, 2.0]), 1)
+        self.assertEqual(output.columns, ["id", "features", "hashes", "distCol"])
+        self.assertEqual(output.count(), 1)
+
+        output = model.approxSimilarityJoin(df, df2, 3)
+        self.assertEqual(output.columns, ["datasetA", "datasetB", "distCol"])
+        self.assertEqual(output.count(), 16)
+
+        # save & load
+        with tempfile.TemporaryDirectory(prefix="min_hash_lsh") as d:
+            mh.write().overwrite().save(d)
+            mh2 = MinHashLSH.load(d)
+            self.assertEqual(str(mh), str(mh2))
+
+            model.write().overwrite().save(d)
+            model2 = MinHashLSHModel.load(d)
+            self.assertEqual(str(model), str(model2))
 
 
 class FeatureTests(FeatureTestsMixin, SparkSessionTestCase):

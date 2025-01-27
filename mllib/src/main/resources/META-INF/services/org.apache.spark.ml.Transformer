@@ -32,17 +32,25 @@ org.apache.spark.ml.feature.SQLTransformer
 org.apache.spark.ml.feature.StopWordsRemover
 org.apache.spark.ml.feature.FeatureHasher
 org.apache.spark.ml.feature.HashingTF
+org.apache.spark.ml.feature.IndexToString
 
 ########### Model for loading
 # classification
+org.apache.spark.ml.classification.NaiveBayesModel
 org.apache.spark.ml.classification.LinearSVCModel
 org.apache.spark.ml.classification.LogisticRegressionModel
+org.apache.spark.ml.classification.FMClassificationModel
+org.apache.spark.ml.classification.MultilayerPerceptronClassificationModel
 org.apache.spark.ml.classification.DecisionTreeClassificationModel
 org.apache.spark.ml.classification.RandomForestClassificationModel
 org.apache.spark.ml.classification.GBTClassificationModel
 
 # regression
+org.apache.spark.ml.regression.AFTSurvivalRegressionModel
+org.apache.spark.ml.regression.IsotonicRegressionModel
 org.apache.spark.ml.regression.LinearRegressionModel
+org.apache.spark.ml.regression.GeneralizedLinearRegressionModel
+org.apache.spark.ml.regression.FMRegressionModel
 org.apache.spark.ml.regression.DecisionTreeRegressionModel
 org.apache.spark.ml.regression.RandomForestRegressionModel
 org.apache.spark.ml.regression.GBTRegressionModel
@@ -51,6 +59,8 @@ org.apache.spark.ml.regression.GBTRegressionModel
 org.apache.spark.ml.clustering.KMeansModel
 org.apache.spark.ml.clustering.BisectingKMeansModel
 org.apache.spark.ml.clustering.GaussianMixtureModel
+org.apache.spark.ml.clustering.DistributedLDAModel
+org.apache.spark.ml.clustering.LocalLDAModel
 
 # recommendation
 org.apache.spark.ml.recommendation.ALSModel
@@ -74,3 +84,5 @@ org.apache.spark.ml.feature.Word2VecModel
 org.apache.spark.ml.feature.CountVectorizerModel
 org.apache.spark.ml.feature.OneHotEncoderModel
 org.apache.spark.ml.feature.TargetEncoderModel
+org.apache.spark.ml.feature.BucketedRandomProjectionLSHModel
+org.apache.spark.ml.feature.MinHashLSHModel
