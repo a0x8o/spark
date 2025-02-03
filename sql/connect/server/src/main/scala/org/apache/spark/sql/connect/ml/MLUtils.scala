@@ -510,12 +510,12 @@ private[ml] object MLUtils {
       classOf[TreeEnsembleModel[_]],
       Set(
         "predictLeaf",
-        "trees",
         "treeWeights",
         "javaTreeWeights",
         "getNumTrees",
         "totalNumNodes",
-        "toDebugString")),
+        "toDebugString",
+        "getTree")),
     (classOf[DecisionTreeClassificationModel], Set("featureImportances")),
     (classOf[RandomForestClassificationModel], Set("featureImportances", "evaluate")),
     (classOf[GBTClassificationModel], Set("featureImportances", "evaluateEachIteration")),
@@ -616,7 +616,7 @@ private[ml] object MLUtils {
     (classOf[LocalLDAModel], Set("vocabSize")),
     (
       classOf[DistributedLDAModel],
-      Set("trainingLogLikelihood", "logPrior", "getCheckpointFiles")),
+      Set("trainingLogLikelihood", "logPrior", "getCheckpointFiles", "toLocal")),
 
     // Recommendation Models
     (
@@ -648,6 +648,7 @@ private[ml] object MLUtils {
     (classOf[CountVectorizerModel], Set("vocabulary")),
     (classOf[OneHotEncoderModel], Set("categorySizes")),
     (classOf[StringIndexerModel], Set("labels", "labelsArray")),
+    (classOf[RFormulaModel], Set("resolvedFormulaString")),
     (classOf[IDFModel], Set("idf", "docFreq", "numDocs")))
 
   private def validate(obj: Any, method: String): Unit = {
