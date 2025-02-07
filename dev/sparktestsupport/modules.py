@@ -1110,6 +1110,8 @@ pyspark_ml_connect = Module(
         "python/pyspark/ml/connect",
     ],
     python_test_goals=[
+        # ml doctests
+        "pyspark.ml.connect.functions",
         # ml unittests
         "pyspark.ml.tests.connect.test_connect_function",
         "pyspark.ml.tests.connect.test_parity_torch_distributor",
@@ -1127,9 +1129,11 @@ pyspark_ml_connect = Module(
         "pyspark.ml.tests.connect.test_parity_clustering",
         "pyspark.ml.tests.connect.test_parity_evaluation",
         "pyspark.ml.tests.connect.test_parity_feature",
+        "pyspark.ml.tests.connect.test_parity_functions",
         "pyspark.ml.tests.connect.test_parity_pipeline",
         "pyspark.ml.tests.connect.test_parity_tuning",
         "pyspark.ml.tests.connect.test_parity_ovr",
+        "pyspark.ml.tests.connect.test_parity_stat",
     ],
     excluded_python_implementations=[
         "PyPy"  # Skip these tests under PyPy since they require numpy, pandas, and pyarrow and

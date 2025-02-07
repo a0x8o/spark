@@ -2296,10 +2296,7 @@ class RandomForestClassificationModel(
     def trees(self) -> List[DecisionTreeClassificationModel]:
         """Trees in this ensemble. Warning: These have null parent Estimators."""
         if is_remote():
-            n = self.getNumTrees
-            return [
-                DecisionTreeClassificationModel(self._call_java("getTree", i)) for i in range(n)
-            ]
+            return [DecisionTreeClassificationModel(m) for m in self._call_java("trees").split(",")]
         return [DecisionTreeClassificationModel(m) for m in list(self._call_java("trees"))]
 
     @property
@@ -2789,8 +2786,7 @@ class GBTClassificationModel(
     def trees(self) -> List[DecisionTreeRegressionModel]:
         """Trees in this ensemble. Warning: These have null parent Estimators."""
         if is_remote():
-            n = self.getNumTrees
-            return [DecisionTreeRegressionModel(self._call_java("getTree", i)) for i in range(n)]
+            return [DecisionTreeRegressionModel(m) for m in self._call_java("trees").split(",")]
         return [DecisionTreeRegressionModel(m) for m in list(self._call_java("trees"))]
 
     def evaluateEachIteration(self, dataset: DataFrame) -> List[float]:
@@ -3814,11 +3810,12 @@ class OneVsRestModel(
 
     def __init__(self, models: List[ClassificationModel]):
         super(OneVsRestModel, self).__init__()
-        from pyspark.core.context import SparkContext
-
         self.models = models
         if is_remote() or not isinstance(models[0], JavaMLWritable):
             return
+
+        from pyspark.core.context import SparkContext
+
         # set java instance
         java_models = [cast(_JavaClassificationModel, model)._to_java() for model in self.models]
         sc = SparkContext._active_spark_context
