@@ -33,7 +33,7 @@
   <licenses>
     <license>
       <name>Apache-2.0</name>
-      <url>http://www.apache.org/licenses/LICENSE-2.0.html</url>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.html</url>
       <distribution>repo</distribution>
     </license>
   </licenses>
@@ -226,8 +226,8 @@
     <sbt-jupiter-interface.version>0.13.3</sbt-jupiter-interface.version>
     <!--
     If you are changing Arrow version specification, please check
-    ./python/pyspark/sql/pandas/utils.py, ./python/packaging/classic/setup.py
-    and ./python/packaging/connect/setup.py too.
+    ./python/pyspark/sql/pandas/utils.py, ./python/packaging/classic/setup.py,
+    ./python/packaging/client/setup.py, and ./python/packaging/connect/setup.py too.
     -->
     <arrow.version>18.2.0</arrow.version>
     <ammonite.version>3.0.1</ammonite.version>
@@ -2762,6 +2762,7 @@
               <jvmArg>-Xmx4g</jvmArg>
               <jvmArg>-XX:MaxMetaspaceSize=2g</jvmArg>
               <jvmArg>-XX:ReservedCodeCacheSize=${CodeCacheSize}</jvmArg>
+              <jvmArg>--enable-native-access=ALL-UNNAMED</jvmArg>
             </jvmArgs>
             <javacArgs>
               <javacArg>--release</javacArg>
