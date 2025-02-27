@@ -868,7 +868,7 @@ object SQLConf {
       )
       .version("4.0.0")
       .booleanConf
-      .createWithDefault(Utils.isTesting)
+      .createWithDefault(true)
 
   lazy val TRIM_COLLATION_ENABLED =
     buildConf("spark.sql.collation.trim.enabled")
@@ -2217,6 +2217,19 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val STATE_STORE_INSTANCE_METRICS_REPORT_LIMIT =
+    buildConf("spark.sql.streaming.stateStore.numStateStoreInstanceMetricsToReport")
+      .internal()
+      .doc(
+        "Number of state store instance metrics included in streaming query progress messages " +
+        "per stateful operator. Instance metrics are selected based on metric-specific ordering " +
+        "to minimize noise in the progress report."
+      )
+      .version("4.0.0")
+      .intConf
+      .checkValue(k => k >= 0, "Must be greater than or equal to 0")
+      .createWithDefault(5)
+
   val STATE_STORE_MIN_DELTAS_FOR_SNAPSHOT =
     buildConf("spark.sql.streaming.stateStore.minDeltasForSnapshot")
       .internal()
@@ -3258,7 +3271,7 @@ object SQLConf {
       .doc("(Deprecated since Spark 3.0, please set 'spark.sql.execution.arrow.pyspark.enabled'.)")
       .version("2.3.0")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val ARROW_PYSPARK_EXECUTION_ENABLED =
     buildConf("spark.sql.execution.arrow.pyspark.enabled")
@@ -3384,10 +3397,31 @@ object SQLConf {
       .doc("When using Apache Arrow, limit the maximum number of records that can be written " +
         "to a single ArrowRecordBatch in memory. This configuration is not effective for the " +
         "grouping API such as DataFrame(.cogroup).groupby.applyInPandas because each group " +
-        "becomes each ArrowRecordBatch. If set to zero or negative there is no limit.")
+        "becomes each ArrowRecordBatch. If set to zero or negative there is no limit. " +
+        "See also spark.sql.execution.arrow.maxBytesPerBatch. If both are set, each batch " +
+        "is created when any condition of both is met.")
       .version("2.3.0")
       .intConf
       .createWithDefault(10000)
+
+  val ARROW_EXECUTION_MAX_BYTES_PER_BATCH =
+    buildConf("spark.sql.execution.arrow.maxBytesPerBatch")
+      .internal()
+      .doc("When using Apache Arrow, limit the maximum bytes in each batch that can be written " +
+        "to a single ArrowRecordBatch in memory. This configuration is not effective for the " +
+        "grouping API such as DataFrame(.cogroup).groupby.applyInPandas because each group " +
+        "becomes each ArrowRecordBatch. Unlike 'spark.sql.execution.arrow.maxRecordsPerBatch', " +
+        "this configuration does not work for createDataFrame/toPandas with Arrow/pandas " +
+        "instances. " +
+        "See also spark.sql.execution.arrow.maxRecordsPerBatch. If both are set, each batch " +
+        "is created when any condition of both is met.")
+      .version("4.0.0")
+      .bytesConf(ByteUnit.BYTE)
+      .checkValue(x => x > 0 && x <= Int.MaxValue,
+        errorMsg = "The value of " +
+          "spark.sql.execution.arrow.maxBytesPerBatch should be greater " +
+          "than zero and less than INT_MAX.")
+      .createWithDefaultString("256MB")
 
   val ARROW_TRANSFORM_WITH_STATE_IN_PANDAS_MAX_RECORDS_PER_BATCH =
     buildConf("spark.sql.execution.arrow.transformWithStateInPandas.maxRecordsPerBatch")
@@ -5532,6 +5566,15 @@ object SQLConf {
     .booleanConf
     .createWithDefault(false)
 
+  val LEGACY_DF_WRITER_V2_IGNORE_PATH_OPTION =
+    buildConf("spark.sql.legacy.dataFrameWriterV2IgnorePathOption")
+      .internal()
+      .doc("When set to true, DataFrameWriterV2 ignores the 'path' option and always write data " +
+        "to the default table location.")
+      .version("3.5.6")
+      .booleanConf
+      .createWithDefault(false)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -5726,6 +5769,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def isStateSchemaCheckEnabled: Boolean = getConf(STATE_SCHEMA_CHECK_ENABLED)
 
   def numStateStoreMaintenanceThreads: Int = getConf(NUM_STATE_STORE_MAINTENANCE_THREADS)
+
+  def numStateStoreInstanceMetricsToReport: Int =
+    getConf(STATE_STORE_INSTANCE_METRICS_REPORT_LIMIT)
 
   def stateStoreMinDeltasForSnapshot: Int = getConf(STATE_STORE_MIN_DELTAS_FOR_SNAPSHOT)
 
@@ -6270,6 +6316,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def arrowPySparkFallbackEnabled: Boolean = getConf(ARROW_PYSPARK_FALLBACK_ENABLED)
 
   def arrowMaxRecordsPerBatch: Int = getConf(ARROW_EXECUTION_MAX_RECORDS_PER_BATCH)
+
+  def arrowMaxBytesPerBatch: Long = getConf(ARROW_EXECUTION_MAX_BYTES_PER_BATCH)
 
   def arrowTransformWithStateInPandasMaxRecordsPerBatch: Int =
     getConf(ARROW_TRANSFORM_WITH_STATE_IN_PANDAS_MAX_RECORDS_PER_BATCH)

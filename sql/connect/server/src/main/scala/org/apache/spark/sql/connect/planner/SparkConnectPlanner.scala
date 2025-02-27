@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.connect.planner
 
+import java.util.Properties
 import java.util.UUID
 
 import scala.collection.mutable
@@ -31,7 +32,7 @@ import io.grpc.{Context, Status, StatusRuntimeException}
 import io.grpc.stub.StreamObserver
 import org.apache.commons.lang3.exception.ExceptionUtils
 
-import org.apache.spark.{Partition, SparkEnv, TaskContext}
+import org.apache.spark.{SparkEnv, TaskContext}
 import org.apache.spark.annotation.{DeveloperApi, Since}
 import org.apache.spark.api.python.{PythonEvalType, SimplePythonFunction}
 import org.apache.spark.connect.proto
@@ -72,8 +73,7 @@ import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.aggregate.{ScalaAggregator, TypedAggregateExpression}
 import org.apache.spark.sql.execution.arrow.ArrowConverters
 import org.apache.spark.sql.execution.command.{CreateViewCommand, ExternalCommandExecutor}
-import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.datasources.jdbc.{JDBCOptions, JDBCPartition, JDBCRelation}
+import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
 import org.apache.spark.sql.execution.datasources.v2.python.UserDefinedPythonDataSource
 import org.apache.spark.sql.execution.python.{UserDefinedPythonFunction, UserDefinedPythonTableFunction}
 import org.apache.spark.sql.execution.python.streaming.PythonForeachWriter
@@ -659,6 +659,10 @@ class SparkConnectPlanner(
           case PythonEvalType.SQL_GROUPED_MAP_ARROW_UDF =>
             group.flatMapGroupsInArrow(Column(pythonUdf)).logicalPlan
 
+          case PythonEvalType.SQL_TRANSFORM_WITH_STATE_PANDAS_UDF |
+              PythonEvalType.SQL_TRANSFORM_WITH_STATE_PANDAS_INIT_STATE_UDF =>
+            transformTransformWithStateInPandas(pythonUdf, group, rel)
+
           case _ =>
             throw InvalidPlanInput(
               s"Function with EvalType: ${pythonUdf.evalType} is not supported")
@@ -1034,6 +1038,57 @@ class SparkConnectPlanner(
       .logicalPlan
   }
 
+  private def transformTransformWithStateInPandas(
+      pythonUdf: PythonUDF,
+      groupedDs: RelationalGroupedDataset,
+      rel: proto.GroupMap): LogicalPlan = {
+    val twsInfo = rel.getTransformWithStateInfo
+    val outputSchema: StructType = {
+      transformDataType(twsInfo.getOutputSchema) match {
+        case s: StructType => s
+        case dt =>
+          throw InvalidPlanInput(
+            "Invalid user-defined output schema type for TransformWithStateInPandas. " +
+              s"Expect a struct type, but got ${dt.typeName}.")
+      }
+    }
+
+    if (rel.hasInitialInput) {
+      val initialGroupingCols = rel.getInitialGroupingExpressionsList.asScala.toSeq.map(expr =>
+        Column(transformExpression(expr)))
+
+      val initialStateDs = Dataset
+        .ofRows(session, transformRelation(rel.getInitialInput))
+        .groupBy(initialGroupingCols: _*)
+
+      // Explicitly creating UDF on resolved column to avoid ambiguity of analysis on initial state
+      // columns and the input columns
+      val resolvedPythonUDF = createUserDefinedPythonFunction(rel.getFunc)
+        .builder(groupedDs.df.logicalPlan.output)
+        .asInstanceOf[PythonUDF]
+
+      groupedDs
+        .transformWithStateInPandas(
+          Column(resolvedPythonUDF),
+          outputSchema,
+          rel.getOutputMode,
+          twsInfo.getTimeMode,
+          initialStateDs,
+          twsInfo.getEventTimeColumnName)
+        .logicalPlan
+    } else {
+      groupedDs
+        .transformWithStateInPandas(
+          Column(pythonUdf),
+          outputSchema,
+          rel.getOutputMode,
+          twsInfo.getTimeMode,
+          null,
+          twsInfo.getEventTimeColumnName)
+        .logicalPlan
+    }
+  }
+
   private def transformCommonInlineUserDefinedTableFunction(
       fun: proto.CommonInlineUserDefinedTableFunction): LogicalPlan = {
     fun.getFunctionCase match {
@@ -1383,28 +1438,25 @@ class SparkConnectPlanner(
           isStreaming = rel.getIsStreaming)
 
       case proto.Read.ReadTypeCase.DATA_SOURCE if !rel.getIsStreaming =>
-        val localMap = CaseInsensitiveMap[String](rel.getDataSource.getOptionsMap.asScala.toMap)
         val reader = session.read
-        if (rel.getDataSource.hasFormat) {
-          reader.format(rel.getDataSource.getFormat)
-        }
-        localMap.foreach { case (key, value) => reader.option(key, value) }
         if (rel.getDataSource.getFormat == "jdbc" && rel.getDataSource.getPredicatesCount > 0) {
-          if (!localMap.contains(JDBCOptions.JDBC_URL) ||
-            !localMap.contains(JDBCOptions.JDBC_TABLE_NAME)) {
+          if (!rel.getDataSource.getOptionsMap.containsKey(JDBCOptions.JDBC_URL) ||
+            !rel.getDataSource.getOptionsMap.containsKey(JDBCOptions.JDBC_TABLE_NAME)) {
             throw InvalidPlanInput(s"Invalid jdbc params, please specify jdbc url and table.")
           }
 
           val url = rel.getDataSource.getOptionsMap.get(JDBCOptions.JDBC_URL)
           val table = rel.getDataSource.getOptionsMap.get(JDBCOptions.JDBC_TABLE_NAME)
-          val options = new JDBCOptions(url, table, localMap)
           val predicates = rel.getDataSource.getPredicatesList.asScala.toArray
-          val parts: Array[Partition] = predicates.zipWithIndex.map { case (part, i) =>
-            JDBCPartition(part, i): Partition
-          }
-          val relation = JDBCRelation(parts, options)(session)
-          LogicalRelation(relation)
+          val properties = new Properties()
+          properties.putAll(rel.getDataSource.getOptionsMap)
+          reader.jdbc(url, table, predicates, properties).queryExecution.analyzed
         } else if (rel.getDataSource.getPredicatesCount == 0) {
+          val localMap = CaseInsensitiveMap[String](rel.getDataSource.getOptionsMap.asScala.toMap)
+          if (rel.getDataSource.hasFormat) {
+            reader.format(rel.getDataSource.getFormat)
+          }
+          localMap.foreach { case (key, value) => reader.option(key, value) }
           if (rel.getDataSource.hasSchema && rel.getDataSource.getSchema.nonEmpty) {
             reader.schema(parseSchema(rel.getDataSource.getSchema))
           }
