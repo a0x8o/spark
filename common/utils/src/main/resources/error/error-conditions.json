@@ -82,6 +82,12 @@
     ],
     "sqlState" : "22003"
   },
+  "ARROW_TYPE_MISMATCH" : {
+    "message" : [
+      "Invalid schema from <operation>: expected <outputTypes>, got <actualDataTypes>."
+    ],
+    "sqlState" : "42K0G"
+  },
   "ARTIFACT_ALREADY_EXISTS" : {
     "message" : [
       "The artifact <normalizedRemoteRelativePath> already exists. Please choose a different name for the new artifact because it cannot be overwritten."
@@ -6194,6 +6200,12 @@
       "The table change <change> is not supported for the JDBC catalog on table <tableName>. Supported changes include: AddColumn, RenameColumn, DeleteColumn, UpdateColumnType, UpdateColumnNullability."
     ],
     "sqlState" : "42000"
+  },
+  "UNSUPPORTED_TIME_PRECISION" : {
+    "message" : [
+      "The seconds precision <precision> of the TIME data type is out of the supported range [0, 6]."
+    ],
+    "sqlState" : "0A001"
   },
   "UNSUPPORTED_TYPED_LITERAL" : {
     "message" : [
