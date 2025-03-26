@@ -15,29 +15,21 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.connector.catalog;
+package org.apache.spark.sql.catalyst.optimizer
 
-import org.apache.spark.annotation.Evolving;
-import org.apache.spark.sql.connector.catalog.procedures.UnboundProcedure;
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Offset, Project}
+import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.trees.TreePattern.{OFFSET, PROJECT}
 
 /**
- * A catalog API for working with procedures.
- *
- * @since 4.0.0
+ * Pushes Project operator through Offset operator.
  */
-@Evolving
-public interface ProcedureCatalog extends CatalogPlugin {
-  /**
-   * Load a procedure by {@link Identifier identifier} from the catalog.
-   *
-   * @param ident a procedure identifier
-   * @return the loaded unbound procedure
-   */
-  UnboundProcedure loadProcedure(Identifier ident);
+object PushProjectionThroughOffset extends Rule[LogicalPlan] {
+  def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
+    _.containsAllPatterns(PROJECT, OFFSET)) {
 
-  /**
-   * List all procedures in the specified namespace.
-   *
-   */
-  Identifier[] listProcedures(String[] namespace);
+    case p @ Project(projectList, offset @ Offset(_, child))
+      if projectList.forall(_.deterministic) =>
+      offset.copy(child = p.copy(projectList, child))
+  }
 }
