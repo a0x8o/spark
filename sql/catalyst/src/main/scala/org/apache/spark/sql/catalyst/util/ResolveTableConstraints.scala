@@ -14,26 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.spark.sql.catalyst.util
 
-package org.apache.spark.api.r
+import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, TableCatalogCapability}
+import org.apache.spark.sql.connector.catalog.constraints.Constraint
+import org.apache.spark.sql.errors.QueryCompilationErrors
 
-import java.io.{DataInputStream, DataOutputStream}
-import java.net.Socket
-
-import org.apache.spark.SparkConf
-import org.apache.spark.security.SocketAuthHelper
-
-private[spark] class RAuthHelper(conf: SparkConf) extends SocketAuthHelper(conf) {
-  override val isUnixDomainSock = false
-
-  override protected def readUtf8(s: Socket): String = {
-    SerDe.readString(new DataInputStream(s.getInputStream()))
+object ResolveTableConstraints {
+  // Fails if the given catalog does not support table constraint.
+  def validateCatalogForTableConstraint(
+      constraints: Seq[Constraint],
+      catalog: TableCatalog,
+      ident: Identifier): Unit = {
+    if (constraints.nonEmpty &&
+      !catalog.capabilities().contains(TableCatalogCapability.SUPPORT_TABLE_CONSTRAINT)) {
+      throw QueryCompilationErrors.unsupportedTableOperationError(
+        catalog, ident, "table constraint")
+    }
   }
-
-  override protected def writeUtf8(str: String, s: Socket): Unit = {
-    val out = s.getOutputStream()
-    SerDe.writeString(new DataOutputStream(out), str)
-    out.flush()
-  }
-
 }
