@@ -62,7 +62,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.INFO,
         message = s"Flow ${flow.displayName} is QUEUED.",
@@ -81,7 +81,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(batchFlow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(batchFlow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(batchFlow.origin)
         ),
         level = EventLevel.INFO,
         message = s"Flow ${batchFlow.displayName} is PLANNING.",
@@ -102,7 +102,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flowExecution.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flowExecution.getOrigin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flowExecution.getOrigin)
         ),
         level = EventLevel.INFO,
         message = s"Flow ${flowExecution.displayName} is STARTING.",
@@ -119,7 +119,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.INFO,
         message = s"Flow ${flow.displayName} is RUNNING.",
@@ -147,12 +147,12 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = if (logAsWarn) EventLevel.WARN else EventLevel.ERROR,
         message = eventLogMessage,
         details = FlowProgress(FlowStatus.FAILED),
-        exception = exception
+        exception = Option(exception)
       )
     )
     // Since the flow failed, remove the flow from runningFlows.
@@ -170,7 +170,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.WARN,
         message = s"Flow '${flow.displayName}' SKIPPED due to upstream failure(s).",
@@ -193,7 +193,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.INFO,
         message = {
@@ -213,7 +213,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.INFO,
         message = s"Flow '${flow.displayName}' is EXCLUDED.",
@@ -237,12 +237,12 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.INFO,
         message = message.getOrElse(s"Flow '${flow.displayName}' has STOPPED."),
         details = FlowProgress(FlowStatus.STOPPED),
-        exception = cause.orNull
+        exception = cause
       )
     )
     // Once a flow is stopped, remove it from running and idle.
@@ -257,7 +257,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.INFO,
         message = s"Flow '${flow.displayName}' is IDLE, waiting for new data.",
@@ -282,7 +282,7 @@ class FlowProgressEventLogger(eventBuffer: PipelineRunEventBuffer) extends Loggi
         origin = PipelineEventOrigin(
           flowName = Option(flow.displayName),
           datasetName = None,
-          sourceCodeLocation = Option(flow.origin.toSourceCodeLocation)
+          sourceCodeLocation = Option(flow.origin)
         ),
         level = EventLevel.INFO,
         message = s"Flow ${flow.displayName} has COMPLETED.",

@@ -31,14 +31,16 @@ import org.scalatest.matchers.should.Matchers
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Column, QueryTest, Row, TypedColumn}
-import org.apache.spark.sql.SparkSession.{clearActiveSession, clearDefaultSession, setActiveSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.classic.{DataFrame, Dataset, SparkSession, SQLContext}
+import org.apache.spark.sql.classic.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.execution._
+import org.apache.spark.sql.pipelines.graph.{DataflowGraph, PipelineUpdateContextImpl, SqlGraphRegistrationContext}
 import org.apache.spark.sql.pipelines.utils.PipelineTest.{cleanupMetastore, createTempDir}
+import org.apache.spark.sql.test.SharedSparkSession
 
 abstract class PipelineTest
     extends SparkFunSuite
+    with SharedSparkSession
     with BeforeAndAfterAll
     with BeforeAndAfterEach
     with Matchers
@@ -48,15 +50,20 @@ abstract class PipelineTest
 
   final protected val storageRoot = createTempDir()
 
-  var spark: SparkSession = createAndInitializeSpark()
-  val originalSpark: SparkSession = spark.cloneSession()
-
-
-  implicit def sqlContext: SQLContext = spark.sqlContext
   def sql(text: String): DataFrame = spark.sql(text)
 
-  protected def sparkConf: SparkConf = {
-    new SparkConf()
+  protected def startPipelineAndWaitForCompletion(unresolvedDataflowGraph: DataflowGraph): Unit = {
+    val updateContext = new PipelineUpdateContextImpl(
+      unresolvedDataflowGraph, eventCallback = _ => ())
+    updateContext.pipelineExecution.runPipeline()
+    updateContext.pipelineExecution.awaitCompletion()
+  }
+
+  /**
+   * Spark confs set here will be the default spark confs for all spark sessions created in tests.
+   */
+  override def sparkConf: SparkConf = {
+    super.sparkConf
       .set("spark.sql.shuffle.partitions", "2")
       .set("spark.sql.session.timeZone", "UTC")
   }
@@ -89,38 +96,44 @@ abstract class PipelineTest
     }
   }
 
-  /**
-   * This exists temporarily for compatibility with tests that become invalid when multiple
-   * executors are available.
-   */
-  protected def master = "local[*]"
+  /** Helper class to represent a SQL file by its contents and path. */
+  protected case class TestSqlFile(sqlText: String, sqlFilePath: String)
 
-  /** Creates and returns a initialized spark session. */
-  def createAndInitializeSpark(): SparkSession = {
-    val newSparkSession = SparkSession
-      .builder()
-      .config(sparkConf)
-      .master(master)
-      .getOrCreate()
-    newSparkSession
+  /** Construct an unresolved DataflowGraph object from possibly multiple SQL files. */
+  protected def unresolvedDataflowGraphFromSqlFiles(
+      sqlFiles: Seq[TestSqlFile]
+  ): DataflowGraph = {
+    val graphRegistrationContext = new TestGraphRegistrationContext(spark)
+    sqlFiles.foreach { sqlFile =>
+      new SqlGraphRegistrationContext(graphRegistrationContext).processSqlFile(
+        sqlText = sqlFile.sqlText,
+        sqlFilePath = sqlFile.sqlFilePath,
+        spark = spark
+      )
+    }
+    graphRegistrationContext
+      .toDataflowGraph
   }
 
-  /** Set up the spark session before each test. */
-  protected def initializeSparkBeforeEachTest(): Unit = {
-    clearActiveSession()
-    spark = createAndInitializeSpark()
-    setActiveSession(spark)
+  /** Construct an unresolved DataflowGraph object from a single SQL file, given the file contents
+   * and path. */
+  protected def unresolvedDataflowGraphFromSql(
+      sqlText: String,
+      sqlFilePath: String = "dataset.sql"
+  ): DataflowGraph = {
+    unresolvedDataflowGraphFromSqlFiles(
+      Seq(TestSqlFile(sqlText = sqlText, sqlFilePath = sqlFilePath))
+    )
   }
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    initializeSparkBeforeEachTest()
     cleanupMetastore(spark)
     (catalogInPipelineSpec, databaseInPipelineSpec) match {
       case (Some(catalog), Some(schema)) =>
-        sql(s"CREATE DATABASE IF NOT EXISTS `$catalog`.`$schema`")
+        spark.sql(s"CREATE DATABASE IF NOT EXISTS `$catalog`.`$schema`")
       case _ =>
-        databaseInPipelineSpec.foreach(s => sql(s"CREATE DATABASE IF NOT EXISTS `$s`"))
+        databaseInPipelineSpec.foreach(s => spark.sql(s"CREATE DATABASE IF NOT EXISTS `$s`"))
     }
   }
 
@@ -129,32 +142,12 @@ abstract class PipelineTest
     super.afterEach()
   }
 
-  override def afterAll(): Unit = {
-    try {
-      super.afterAll()
-    } finally {
-      try {
-        if (spark != null) {
-          try {
-            spark.sessionState.catalog.reset()
-          } finally {
-            spark.stop()
-            spark = null
-          }
-        }
-      } finally {
-        clearActiveSession()
-        clearDefaultSession()
-      }
-    }
-  }
-
-  protected def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
+  override protected def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
       testFun: A => Unit): Unit = {
     namedGridTest(testNamePrefix, testTags: _*)(params.map(a => a.toString -> a).toMap)(testFun)
   }
 
-  override def test(testName: String, testTags: Tag*)(testFun: => Any /* Assertion */ )(
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any /* Assertion */ )(
       implicit pos: source.Position): Unit = super.test(testName, testTags: _*) {
     runWithInstrumentation(testFun)
   }
