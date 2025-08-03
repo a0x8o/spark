@@ -19,6 +19,7 @@ package org.apache.spark.sql
 
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 
 import scala.collection.mutable
 
@@ -103,9 +104,9 @@ trait PlanStabilitySuite extends DisableAdaptiveExecutionSuite {
   private def isApproved(
       dir: File, actualSimplifiedPlan: String, actualExplain: String): Boolean = {
     val simplifiedFile = new File(dir, "simplified.txt")
-    val expectedSimplified = FileUtils.readFileToString(simplifiedFile, StandardCharsets.UTF_8)
+    val expectedSimplified = Files.readString(simplifiedFile.toPath)
     lazy val explainFile = new File(dir, "explain.txt")
-    lazy val expectedExplain = FileUtils.readFileToString(explainFile, StandardCharsets.UTF_8)
+    lazy val expectedExplain = Files.readString(explainFile.toPath)
     expectedSimplified == actualSimplifiedPlan && expectedExplain == actualExplain
   }
 
@@ -124,13 +125,13 @@ trait PlanStabilitySuite extends DisableAdaptiveExecutionSuite {
     val foundMatch = dir.exists() && isApproved(dir, simplified, explain)
 
     if (!foundMatch) {
-      FileUtils.deleteDirectory(dir)
+      Utils.deleteRecursively(dir)
       assert(Utils.createDirectory(dir))
 
       val file = new File(dir, "simplified.txt")
-      FileUtils.writeStringToFile(file, simplified, StandardCharsets.UTF_8)
+      Files.writeString(file.toPath(), simplified, StandardCharsets.UTF_8)
       val fileOriginalPlan = new File(dir, "explain.txt")
-      FileUtils.writeStringToFile(fileOriginalPlan, explain, StandardCharsets.UTF_8)
+      Files.writeString(fileOriginalPlan.toPath(), explain, StandardCharsets.UTF_8)
       logDebug(s"APPROVED: $file $fileOriginalPlan")
     }
   }
@@ -149,11 +150,10 @@ trait PlanStabilitySuite extends DisableAdaptiveExecutionSuite {
       val actualSimplifiedFile = new File(tempDir, s"$name.actual.simplified.txt")
       val actualExplainFile = new File(tempDir, s"$name.actual.explain.txt")
 
-      val approvedSimplified = FileUtils.readFileToString(
-        approvedSimplifiedFile, StandardCharsets.UTF_8)
+      val approvedSimplified = Files.readString(approvedSimplifiedFile.toPath)
       // write out for debugging
-      FileUtils.writeStringToFile(actualSimplifiedFile, actualSimplified, StandardCharsets.UTF_8)
-      FileUtils.writeStringToFile(actualExplainFile, explain, StandardCharsets.UTF_8)
+      Files.writeString(actualSimplifiedFile.toPath(), actualSimplified, StandardCharsets.UTF_8)
+      Files.writeString(actualExplainFile.toPath(), explain, StandardCharsets.UTF_8)
 
       fail(
         s"""
@@ -211,7 +211,7 @@ trait PlanStabilitySuite extends DisableAdaptiveExecutionSuite {
      *     Project [c_customer_id]
      */
     def simplifyNode(node: SparkPlan, depth: Int): String = {
-      val padding = "  " * depth
+      val padding = "  ".repeat(depth)
       var thisNode = node.nodeName
       if (node.references.nonEmpty) {
         thisNode += s" [${cleanUpReferences(node.references)}]"

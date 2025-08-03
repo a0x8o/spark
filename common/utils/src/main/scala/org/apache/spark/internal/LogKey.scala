@@ -149,6 +149,7 @@ private[spark] object LogKeys {
   case object COLUMN_DATA_TYPE_TARGET extends LogKey
   case object COLUMN_DEFAULT_VALUE extends LogKey
   case object COLUMN_NAME extends LogKey
+  case object COLUMN_NAMES extends LogKey
   case object COMMAND extends LogKey
   case object COMMAND_OUTPUT extends LogKey
   case object COMMITTED_VERSION extends LogKey
@@ -579,6 +580,7 @@ private[spark] object LogKeys {
   case object OLD_GENERATION_GC extends LogKey
   case object OLD_VALUE extends LogKey
   case object OPEN_COST_IN_BYTES extends LogKey
+  case object OPERATION extends LogKey
   case object OPERATION_HANDLE extends LogKey
   case object OPERATION_HANDLE_ID extends LogKey
   case object OPERATION_ID extends LogKey
@@ -783,6 +785,7 @@ private[spark] object LogKeys {
   case object STAGE_ATTEMPT_ID extends LogKey
   case object STAGE_ID extends LogKey
   case object STAGE_NAME extends LogKey
+  case object STAMP extends LogKey
   case object START_INDEX extends LogKey
   case object START_TIME extends LogKey
   case object STATEMENT_ID extends LogKey
@@ -792,6 +795,7 @@ private[spark] object LogKeys {
   case object STATE_STORE_PROVIDER extends LogKey
   case object STATE_STORE_PROVIDER_ID extends LogKey
   case object STATE_STORE_PROVIDER_IDS extends LogKey
+  case object STATE_STORE_STATE extends LogKey
   case object STATE_STORE_VERSION extends LogKey
   case object STATS extends LogKey
   case object STATUS extends LogKey
