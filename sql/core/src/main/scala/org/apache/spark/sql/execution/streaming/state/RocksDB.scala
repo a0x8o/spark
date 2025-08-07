@@ -37,7 +37,7 @@ import org.rocksdb.CompressionType._
 import org.rocksdb.TickerType._
 
 import org.apache.spark.TaskContext
-import org.apache.spark.internal.{LogEntry, Logging, LogKeys, MDC}
+import org.apache.spark.internal.{LogEntry, Logging, LogKeys}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.util.{NextIterator, Utils}
@@ -75,7 +75,7 @@ class RocksDB(
     enableStateStoreCheckpointIds: Boolean = false,
     partitionId: Int = 0,
     eventForwarder: Option[RocksDBEventForwarder] = None,
-    uniqueId: String = "") extends Logging {
+    uniqueId: Option[String] = None) extends Logging {
 
   import RocksDB._
 
@@ -197,11 +197,12 @@ class RocksDB(
   // This prevents performance impact from querying RocksDB memory too frequently.
   private val memoryUpdateIntervalMs = conf.memoryUpdateIntervalMs
 
-  // Register with RocksDBMemoryManager if we have a unique ID
-  if (uniqueId.nonEmpty) {
-    // Initial registration with zero memory usage
-    RocksDBMemoryManager.updateMemoryUsage(uniqueId, 0L, conf.boundedMemoryUsage)
-  }
+  // Generate a unique ID if not provided to ensure proper memory tracking
+  private val instanceUniqueId = uniqueId.getOrElse(UUID.randomUUID().toString)
+
+  // Register with RocksDBMemoryManager
+  // Initial registration with zero memory usage
+  RocksDBMemoryManager.updateMemoryUsage(instanceUniqueId, 0L, conf.boundedMemoryUsage)
 
   @volatile private var numKeysOnLoadedVersion = 0L
   @volatile private var numKeysOnWritingVersion = 0L
@@ -740,13 +741,13 @@ class RocksDB(
           changelogReader.foreach { case (recordType, key, value) =>
             recordType match {
               case RecordType.PUT_RECORD =>
-                put(key, value, includesPrefix = true)
+                put(key, value, includesPrefix = true, deriveCfName = true)
 
               case RecordType.DELETE_RECORD =>
-                remove(key, includesPrefix = true)
+                remove(key, includesPrefix = true, deriveCfName = true)
 
               case RecordType.MERGE_RECORD =>
-                merge(key, value, includesPrefix = true)
+                merge(key, value, includesPrefix = true, deriveCfName = true)
             }
           }
         } else {
@@ -875,7 +876,8 @@ class RocksDB(
       key: Array[Byte],
       value: Array[Byte],
       cfName: String = StateStore.DEFAULT_COL_FAMILY_NAME,
-      includesPrefix: Boolean = false): Unit = {
+      includesPrefix: Boolean = false,
+      deriveCfName: Boolean = false): Unit = {
     updateMemoryUsageIfNeeded()
     val keyWithPrefix = if (useColumnFamilies && !includesPrefix) {
       encodeStateRowWithPrefix(key, cfName)
@@ -883,7 +885,14 @@ class RocksDB(
       key
     }
 
-    handleMetricsUpdate(keyWithPrefix, cfName, isPutOrMerge = true)
+    val columnFamilyName = if (deriveCfName && useColumnFamilies) {
+      val (_, cfName) = decodeStateRowWithPrefix(keyWithPrefix)
+      cfName
+    } else {
+      cfName
+    }
+
+    handleMetricsUpdate(keyWithPrefix, columnFamilyName, isPutOrMerge = true)
     db.put(writeOptions, keyWithPrefix, value)
     changelogWriter.foreach(_.put(keyWithPrefix, value))
   }
@@ -903,7 +912,8 @@ class RocksDB(
       key: Array[Byte],
       value: Array[Byte],
       cfName: String = StateStore.DEFAULT_COL_FAMILY_NAME,
-      includesPrefix: Boolean = false): Unit = {
+      includesPrefix: Boolean = false,
+      deriveCfName: Boolean = false): Unit = {
     updateMemoryUsageIfNeeded()
     val keyWithPrefix = if (useColumnFamilies && !includesPrefix) {
       encodeStateRowWithPrefix(key, cfName)
@@ -911,7 +921,14 @@ class RocksDB(
       key
     }
 
-    handleMetricsUpdate(keyWithPrefix, cfName, isPutOrMerge = true)
+    val columnFamilyName = if (deriveCfName && useColumnFamilies) {
+      val (_, cfName) = decodeStateRowWithPrefix(keyWithPrefix)
+      cfName
+    } else {
+      cfName
+    }
+
+    handleMetricsUpdate(keyWithPrefix, columnFamilyName, isPutOrMerge = true)
     db.merge(writeOptions, keyWithPrefix, value)
     changelogWriter.foreach(_.merge(keyWithPrefix, value))
   }
@@ -923,7 +940,8 @@ class RocksDB(
   def remove(
       key: Array[Byte],
       cfName: String = StateStore.DEFAULT_COL_FAMILY_NAME,
-      includesPrefix: Boolean = false): Unit = {
+      includesPrefix: Boolean = false,
+      deriveCfName: Boolean = false): Unit = {
     updateMemoryUsageIfNeeded()
     val keyWithPrefix = if (useColumnFamilies && !includesPrefix) {
       encodeStateRowWithPrefix(key, cfName)
@@ -931,7 +949,14 @@ class RocksDB(
       key
     }
 
-    handleMetricsUpdate(keyWithPrefix, cfName, isPutOrMerge = false)
+    val columnFamilyName = if (deriveCfName && useColumnFamilies) {
+      val (_, cfName) = decodeStateRowWithPrefix(keyWithPrefix)
+      cfName
+    } else {
+      cfName
+    }
+
+    handleMetricsUpdate(keyWithPrefix, columnFamilyName, isPutOrMerge = false)
     db.delete(writeOptions, keyWithPrefix)
     changelogWriter.foreach(_.delete(keyWithPrefix))
   }
@@ -939,7 +964,7 @@ class RocksDB(
   /**
    * Get an iterator of all committed and uncommitted key-value pairs.
    */
-  def iterator(): Iterator[ByteArrayPair] = {
+  def iterator(): NextIterator[ByteArrayPair] = {
     updateMemoryUsageIfNeeded()
     val iter = db.newIterator()
     logInfo(log"Getting iterator from version ${MDC(LogKeys.LOADED_VERSION, loadedVersion)}")
@@ -976,7 +1001,7 @@ class RocksDB(
   /**
    * Get an iterator of all committed and uncommitted key-value pairs for the given column family.
    */
-  def iterator(cfName: String): Iterator[ByteArrayPair] = {
+  def iterator(cfName: String): NextIterator[ByteArrayPair] = {
     updateMemoryUsageIfNeeded()
     if (!useColumnFamilies) {
       iterator()
@@ -1026,7 +1051,7 @@ class RocksDB(
 
   def prefixScan(
       prefix: Array[Byte],
-      cfName: String = StateStore.DEFAULT_COL_FAMILY_NAME): Iterator[ByteArrayPair] = {
+      cfName: String = StateStore.DEFAULT_COL_FAMILY_NAME): NextIterator[ByteArrayPair] = {
     updateMemoryUsageIfNeeded()
     val iter = db.newIterator()
     val updatedPrefix = if (useColumnFamilies) {
@@ -1309,14 +1334,12 @@ class RocksDB(
       }
 
       // Unregister from RocksDBMemoryManager
-      if (uniqueId.nonEmpty) {
-        try {
-          RocksDBMemoryManager.unregisterInstance(uniqueId)
-        } catch {
-          case NonFatal(e) =>
-            logWarning(log"Failed to unregister from RocksDBMemoryManager " +
-              log"${MDC(LogKeys.EXCEPTION, e)}")
-        }
+      try {
+        RocksDBMemoryManager.unregisterInstance(instanceUniqueId)
+      } catch {
+        case NonFatal(e) =>
+          logWarning(log"Failed to unregister from RocksDBMemoryManager " +
+            log"${MDC(LogKeys.EXCEPTION, e)}")
       }
 
       silentDeleteRecursively(localRootDir, "closing RocksDB")
@@ -1351,9 +1374,6 @@ class RocksDB(
   private def metrics: RocksDBMetrics = {
     import HistogramType._
     val totalSSTFilesBytes = getDBProperty("rocksdb.total-sst-files-size")
-    val readerMemUsage = getDBProperty("rocksdb.estimate-table-readers-mem")
-    val memTableMemUsage = getDBProperty("rocksdb.size-all-mem-tables")
-    val blockCacheUsage = getDBProperty("rocksdb.block-cache-usage")
     val pinnedBlocksMemUsage = getDBProperty("rocksdb.block-cache-pinned-usage")
     val nativeOpsHistograms = Seq(
       "get" -> DB_GET,
@@ -1387,14 +1407,8 @@ class RocksDB(
       nativeStats.getTickerCount(typ)
     }
 
-    // if bounded memory usage is enabled, we share the block cache across all state providers
-    // running on the same node and account the usage to this single cache. In this case, its not
-    // possible to provide partition level or query level memory usage.
-    val memoryUsage = if (conf.boundedMemoryUsage) {
-      0L
-    } else {
-      readerMemUsage + memTableMemUsage + blockCacheUsage
-    }
+    // Use RocksDBMemoryManager to calculate the memory usage accounting
+    val memoryUsage = RocksDBMemoryManager.getInstanceMemoryUsage(instanceUniqueId, getMemoryUsage)
 
     RocksDBMetrics(
       numKeysOnLoadedVersion,
@@ -1463,7 +1477,6 @@ class RocksDB(
    * This is called from task thread operations, so it's already thread-safe.
    */
   def updateMemoryUsageIfNeeded(): Unit = {
-    if (uniqueId.isEmpty) return // No tracking without unique ID
 
     val currentTime = System.currentTimeMillis()
     val timeSinceLastUpdate = currentTime - lastMemoryUpdateTime.get()
@@ -1474,7 +1487,7 @@ class RocksDB(
         lastMemoryUpdateTime.set(currentTime)
         // Report usage to RocksDBMemoryManager
         RocksDBMemoryManager.updateMemoryUsage(
-          uniqueId,
+          instanceUniqueId,
           usage,
           conf.boundedMemoryUsage)
       } catch {
@@ -1606,9 +1619,8 @@ object RocksDB extends Logging {
 
   val mainMemorySources: Seq[String] = Seq(
     "rocksdb.estimate-table-readers-mem",
-    "rocksdb.cur-size-all-mem-tables",
-    "rocksdb.block-cache-usage",
-    "rocksdb.block-cache-pinned-usage")
+    "rocksdb.size-all-mem-tables",
+    "rocksdb.block-cache-usage")
 
   case class RocksDBSnapshot(
       checkpointDir: File,

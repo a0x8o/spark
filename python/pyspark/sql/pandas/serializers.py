@@ -196,6 +196,15 @@ class ArrowStreamUDTFSerializer(ArrowStreamUDFSerializer):
         return ArrowStreamSerializer.load_stream(self, stream)
 
 
+class ArrowStreamArrowUDTFSerializer(ArrowStreamUDTFSerializer):
+    """
+    Serializer for PyArrow-native UDTFs that work directly with PyArrow RecordBatches and Arrays.
+    """
+
+    # TODO(SPARK-52981): support table arguments
+    ...
+
+
 class ArrowStreamGroupUDFSerializer(ArrowStreamUDFSerializer):
     """
     Serializes pyarrow.RecordBatch data with Arrow streaming format.
@@ -1094,6 +1103,7 @@ class ApplyInPandasWithStateSerializer(ArrowStreamPandasUDFSerializer):
             safecheck,
             assign_cols_by_name,
             int_to_decimal_coercion_enabled=int_to_decimal_coercion_enabled,
+            arrow_cast=True,
         )
         self.pickleSer = CPickleSerializer()
         self.utf8_deserializer = UTF8Deserializer()
@@ -1474,6 +1484,7 @@ class TransformWithStateInPandasSerializer(ArrowStreamPandasUDFSerializer):
             safecheck,
             assign_cols_by_name,
             int_to_decimal_coercion_enabled=int_to_decimal_coercion_enabled,
+            arrow_cast=True,
         )
         self.arrow_max_records_per_batch = arrow_max_records_per_batch
         self.key_offsets = None

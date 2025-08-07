@@ -29,7 +29,7 @@ import org.apache.hadoop.hive.shims.ShimLoader
 
 import org.apache.spark.SparkConf
 import org.apache.spark.deploy.SparkSubmit
-import org.apache.spark.internal.{Logging, MDC}
+import org.apache.spark.internal.Logging
 import org.apache.spark.internal.LogKeys.{FALLBACK_VERSION, HADOOP_VERSION, PATH}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.errors.QueryExecutionErrors
@@ -98,6 +98,7 @@ private[hive] object IsolatedClientLoader extends Logging {
       case (3, 0, _) => Some(hive.v3_0)
       case (3, 1, _) => Some(hive.v3_1)
       case (4, 0, _) => Some(hive.v4_0)
+      case (4, 1, _) => Some(hive.v4_1)
       case _ => None
     }.getOrElse {
       throw QueryExecutionErrors.unsupportedHiveMetastoreVersionError(
