@@ -17,8 +17,7 @@
 
 package org.apache.spark.sql.connect.planner
 
-import java.util.Properties
-import java.util.UUID
+import java.util.{HashMap, Properties, UUID}
 
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
@@ -26,7 +25,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 import com.google.common.base.Throwables
-import com.google.common.collect.{Lists, Maps}
+import com.google.common.collect.Lists
 import com.google.protobuf.{Any => ProtoAny, ByteString}
 import io.grpc.{Context, Status, StatusRuntimeException}
 import io.grpc.stub.StreamObserver
@@ -78,8 +77,8 @@ import org.apache.spark.sql.execution.datasources.v2.python.UserDefinedPythonDat
 import org.apache.spark.sql.execution.python.{UserDefinedPythonFunction, UserDefinedPythonTableFunction}
 import org.apache.spark.sql.execution.python.streaming.PythonForeachWriter
 import org.apache.spark.sql.execution.stat.StatFunctions
-import org.apache.spark.sql.execution.streaming.GroupStateImpl.groupStateTimeoutFromString
-import org.apache.spark.sql.execution.streaming.StreamingQueryWrapper
+import org.apache.spark.sql.execution.streaming.operators.stateful.flatmapgroupswithstate.GroupStateImpl.groupStateTimeoutFromString
+import org.apache.spark.sql.execution.streaming.runtime.StreamingQueryWrapper
 import org.apache.spark.sql.expressions.{Aggregator, ReduceAggregator, SparkUserDefinedFunction, UserDefinedAggregator, UserDefinedFunction}
 import org.apache.spark.sql.streaming.{GroupStateTimeout, OutputMode, StatefulProcessor, StatefulProcessorWithInitialState, StreamingQuery, StreamingQueryListener, StreamingQueryProgress, Trigger}
 import org.apache.spark.sql.types._
@@ -1190,7 +1189,7 @@ class SparkConnectPlanner(
     SimplePythonFunction(
       command = fun.getCommand.toByteArray.toImmutableArraySeq,
       // Empty environment variables
-      envVars = Maps.newHashMap(),
+      envVars = new HashMap[String, String](),
       pythonIncludes = sessionHolder.artifactManager.getPythonIncludes.asJava,
       pythonExec = pythonExec,
       pythonVer = fun.getPythonVer,
@@ -1204,7 +1203,7 @@ class SparkConnectPlanner(
     SimplePythonFunction(
       command = ds.getCommand.toByteArray.toImmutableArraySeq,
       // Empty environment variables
-      envVars = Maps.newHashMap(),
+      envVars = new HashMap[String, String](),
       pythonIncludes = sessionHolder.artifactManager.getPythonIncludes.asJava,
       pythonExec = pythonExec,
       pythonVer = ds.getPythonVer,
@@ -1442,9 +1441,8 @@ class SparkConnectPlanner(
     }
 
     if (rel.hasData) {
-      val (rows, structType) = ArrowConverters.fromBatchWithSchemaIterator(
-        Iterator(rel.getData.toByteArray),
-        TaskContext.get())
+      val (rows, structType) =
+        ArrowConverters.fromIPCStream(rel.getData.toByteArray, TaskContext.get())
       if (structType == null) {
         throw InvalidInputErrors.inputDataForLocalRelationNoSchema()
       }
@@ -2033,7 +2031,7 @@ class SparkConnectPlanner(
     SimplePythonFunction(
       command = fun.getCommand.toByteArray.toImmutableArraySeq,
       // Empty environment variables
-      envVars = Maps.newHashMap(),
+      envVars = new HashMap[String, String](),
       pythonExec = pythonExec,
       // Merge the user specified includes with the includes managed by the artifact manager.
       pythonIncludes = (fun.getAdditionalIncludesList.asScala.toSeq ++
@@ -2651,6 +2649,10 @@ class SparkConnectPlanner(
         Some(transformWriteOperation(command.getWriteOperation))
       case proto.Command.CommandTypeCase.WRITE_OPERATION_V2 =>
         Some(transformWriteOperationV2(command.getWriteOperationV2))
+      case proto.Command.CommandTypeCase.MERGE_INTO_TABLE_COMMAND =>
+        Some(transformMergeIntoTableCommand(command.getMergeIntoTableCommand))
+      case proto.Command.CommandTypeCase.CREATE_DATAFRAME_VIEW =>
+        Some(_ => transformCreateViewCommand(command.getCreateDataframeView))
       case _ =>
         None
     }
@@ -2671,8 +2673,6 @@ class SparkConnectPlanner(
         handleRegisterUserDefinedTableFunction(command.getRegisterTableFunction)
       case proto.Command.CommandTypeCase.REGISTER_DATA_SOURCE =>
         handleRegisterUserDefinedDataSource(command.getRegisterDataSource)
-      case proto.Command.CommandTypeCase.CREATE_DATAFRAME_VIEW =>
-        handleCreateViewCommand(command.getCreateDataframeView)
       case proto.Command.CommandTypeCase.EXTENSION =>
         handleCommandPlugin(command.getExtension)
       case proto.Command.CommandTypeCase.SQL_COMMAND =>
@@ -2700,8 +2700,6 @@ class SparkConnectPlanner(
         handleCheckpointCommand(command.getCheckpointCommand, responseObserver)
       case proto.Command.CommandTypeCase.REMOVE_CACHED_REMOTE_RELATION_COMMAND =>
         handleRemoveCachedRemoteRelationCommand(command.getRemoveCachedRemoteRelationCommand)
-      case proto.Command.CommandTypeCase.MERGE_INTO_TABLE_COMMAND =>
-        handleMergeIntoTableCommand(command.getMergeIntoTableCommand)
       case proto.Command.CommandTypeCase.ML_COMMAND =>
         handleMlCommand(command.getMlCommand, responseObserver)
       case proto.Command.CommandTypeCase.PIPELINE_COMMAND =>
@@ -3061,7 +3059,8 @@ class SparkConnectPlanner(
     executeHolder.eventsManager.postFinished()
   }
 
-  private def handleCreateViewCommand(createView: proto.CreateDataFrameViewCommand): Unit = {
+  private def transformCreateViewCommand(
+      createView: proto.CreateDataFrameViewCommand): LogicalPlan = {
     val viewType = if (createView.getIsGlobal) GlobalTempView else LocalTempView
 
     val tableIdentifier =
@@ -3072,7 +3071,7 @@ class SparkConnectPlanner(
           throw QueryCompilationErrors.invalidViewNameError(createView.getName)
       }
 
-    val plan = CreateViewCommand(
+    CreateViewCommand(
       name = tableIdentifier,
       userSpecifiedColumns = Nil,
       comment = None,
@@ -3083,10 +3082,6 @@ class SparkConnectPlanner(
       allowExisting = false,
       replace = createView.getReplace,
       viewType = viewType)
-
-    val tracker = executeHolder.eventsManager.createQueryPlanningTracker()
-    Dataset.ofRows(session, plan, tracker).queryExecution.commandExecuted
-    executeHolder.eventsManager.postFinished()
   }
 
   /**
@@ -3759,7 +3754,8 @@ class SparkConnectPlanner(
     executeHolder.eventsManager.postFinished()
   }
 
-  private def handleMergeIntoTableCommand(cmd: proto.MergeIntoTableCommand): Unit = {
+  private def transformMergeIntoTableCommand(cmd: proto.MergeIntoTableCommand)(
+      tracker: QueryPlanningTracker): LogicalPlan = {
     def transformActions(actions: java.util.List[proto.Expression]): Seq[MergeAction] =
       actions.asScala.map(transformExpression).map(_.asInstanceOf[MergeAction]).toSeq
 
@@ -3767,7 +3763,7 @@ class SparkConnectPlanner(
     val notMatchedActions = transformActions(cmd.getNotMatchedActionsList)
     val notMatchedBySourceActions = transformActions(cmd.getNotMatchedBySourceActionsList)
 
-    val sourceDs = Dataset.ofRows(session, transformRelation(cmd.getSourceTablePlan))
+    val sourceDs = Dataset.ofRows(session, transformRelation(cmd.getSourceTablePlan), tracker)
     val mergeInto = sourceDs
       .mergeInto(cmd.getTargetTableName, Column(transformExpression(cmd.getMergeCondition)))
       .asInstanceOf[MergeIntoWriter[Row]]
@@ -3777,8 +3773,7 @@ class SparkConnectPlanner(
     if (cmd.getWithSchemaEvolution) {
       mergeInto.withSchemaEvolution()
     }
-    mergeInto.merge()
-    executeHolder.eventsManager.postFinished()
+    mergeInto.mergeCommand()
   }
 
   private val emptyLocalRelation = LocalRelation(
