@@ -60,7 +60,7 @@ import org.apache.spark.sql.execution.aggregate.TypedAggregateExpression
 import org.apache.spark.sql.execution.arrow.{ArrowBatchStreamWriter, ArrowConverters}
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.execution.datasources.LogicalRelationWithTable
-import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2ScanRelation, FileTable}
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2ScanRelation, ExtractV2Table, FileTable}
 import org.apache.spark.sql.execution.python.EvaluatePython
 import org.apache.spark.sql.execution.stat.StatFunctions
 import org.apache.spark.sql.internal.SQLConf
@@ -1544,16 +1544,7 @@ class Dataset[T] private[sql](
     }
   }
 
-  /**
-   * Repartitions the Dataset into the given number of partitions using the specified
-   * partition ID expression.
-   *
-   * @param numPartitions the number of partitions to use.
-   * @param partitionIdExpr the expression to be used as the partition ID. Must be an integer type.
-   *
-   * @group typedrel
-   * @since 4.1.0
-   */
+  /** @inheritdoc */
   def repartitionById(numPartitions: Int, partitionIdExpr: Column): Dataset[T] = {
     val directShufflePartitionIdCol = Column(DirectShufflePartitionID(partitionIdExpr.expr))
     repartitionByExpression(Some(numPartitions), Seq(directShufflePartitionIdCol))
@@ -1742,8 +1733,7 @@ class Dataset[T] private[sql](
         fr.inputFiles
       case r: HiveTableRelation =>
         r.tableMeta.storage.locationUri.map(_.toString).toArray
-      case DataSourceV2ScanRelation(DataSourceV2Relation(table: FileTable, _, _, _, _),
-          _, _, _, _) =>
+      case DataSourceV2ScanRelation(ExtractV2Table(table: FileTable), _, _, _, _) =>
         table.fileIndex.inputFiles
     }.flatten
     files.toSet.toArray
