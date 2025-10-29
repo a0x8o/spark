@@ -922,6 +922,14 @@ object SQLConf {
     .booleanConf
     .createWithDefault(true)
 
+  val ADAPTIVE_EXECUTION_ENABLED_IN_STATELESS_STREAMING =
+    buildConf("spark.sql.adaptive.streaming.stateless.enabled")
+      .doc("When true, enable adaptive query execution for stateless streaming query. To " +
+        "enable this config, `spark.sql.adaptive.enabled` needs to be also enabled.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(true)
+
   val ADAPTIVE_EXECUTION_FORCE_APPLY = buildConf("spark.sql.adaptive.forceApply")
     .internal()
     .doc("Adaptive query execution is skipped when the query does not have exchanges or " +
@@ -3017,6 +3025,13 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val STREAMING_REAL_TIME_MODE_MIN_BATCH_DURATION = buildConf(
+    "spark.sql.streaming.realTimeMode.minBatchDuration")
+    .doc("The minimum long-running batch duration in milliseconds for real-time mode.")
+    .version("4.1.0")
+    .timeConf(TimeUnit.MILLISECONDS)
+    .createWithDefault(5000)
+
   val VARIABLE_SUBSTITUTE_ENABLED =
     buildConf("spark.sql.variable.substitute")
       .doc("This enables substitution using syntax like `${var}`, `${system:var}`, " +
@@ -3857,6 +3872,15 @@ object SQLConf {
       .version("4.1.0")
       .fallbackConf(Python.PYTHON_WORKER_TRACEBACK_DUMP_INTERVAL_SECONDS)
 
+  val PYTHON_WORKER_LOGGING_ENABLED =
+    buildConf("spark.sql.pyspark.worker.logging.enabled")
+      .doc("When set to true, this configuration enables comprehensive logging within " +
+        "Python worker processes that execute User-Defined Functions (UDFs), " +
+        "User-Defined Table Functions (UDTFs), and other Python-based operations in Spark SQL.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val PYSPARK_PLOT_MAX_ROWS =
     buildConf("spark.sql.pyspark.plotting.max_rows")
       .doc("The visual limit on plots. If set to 1000 for top-n-based plots (pie, bar, barh), " +
@@ -3898,9 +3922,7 @@ object SQLConf {
   val ARROW_EXECUTION_MAX_RECORDS_PER_BATCH =
     buildConf("spark.sql.execution.arrow.maxRecordsPerBatch")
       .doc("When using Apache Arrow, limit the maximum number of records that can be written " +
-        "to a single ArrowRecordBatch in memory. This configuration is not effective for the " +
-        "grouping API such as DataFrame(.cogroup).groupby.applyInPandas because each group " +
-        "becomes each ArrowRecordBatch. If set to zero or negative there is no limit. " +
+        "to a single ArrowRecordBatch in memory. If set to zero or negative there is no limit. " +
         "See also spark.sql.execution.arrow.maxBytesPerBatch. If both are set, each batch " +
         "is created when any condition of both is met.")
       .version("2.3.0")
@@ -3943,11 +3965,9 @@ object SQLConf {
     buildConf("spark.sql.execution.arrow.maxBytesPerBatch")
       .internal()
       .doc("When using Apache Arrow, limit the maximum bytes in each batch that can be written " +
-        "to a single ArrowRecordBatch in memory. This configuration is not effective for the " +
-        "grouping API such as DataFrame(.cogroup).groupby.applyInPandas because each group " +
-        "becomes each ArrowRecordBatch. Unlike 'spark.sql.execution.arrow.maxRecordsPerBatch', " +
-        "this configuration does not work for createDataFrame/toPandas with Arrow/pandas " +
-        "instances. " +
+        "to a single ArrowRecordBatch in memory. " +
+        "Unlike 'spark.sql.execution.arrow.maxRecordsPerBatch', this configuration does not " +
+        "work for createDataFrame/toPandas with Arrow/pandas instances. " +
         "See also spark.sql.execution.arrow.maxRecordsPerBatch. If both are set, each batch " +
         "is created when any condition of both is met.")
       .version("4.0.0")
@@ -5422,6 +5442,31 @@ object SQLConf {
       .stringConf
       .createWithDefault("")
 
+  val VARIANT_SHREDDING_MAX_SCHEMA_WIDTH =
+    buildConf("spark.sql.variant.shredding.maxSchemaWidth")
+      .internal()
+      .doc("Maximum number of shredded fields to create when inferring a schema for Variant")
+      .version("4.1.0")
+      .intConf
+      .createWithDefault(300)
+
+  val VARIANT_SHREDDING_MAX_SCHEMA_DEPTH =
+    buildConf("spark.sql.variant.shredding.maxSchemaDepth")
+      .internal()
+      .doc("Maximum depth in Variant value to traverse when inferring a schema. " +
+           "Any array/object below this depth will be shredded as a single binary.")
+      .version("4.1.0")
+      .intConf
+      .createWithDefault(50)
+
+  val VARIANT_INFER_SHREDDING_SCHEMA =
+    buildConf("spark.sql.variant.inferShreddingSchema")
+      .internal()
+      .doc("Infer shredding schema when writing Variant columns in Parquet tables.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val LEGACY_CSV_ENABLE_DATE_TIME_PARSING_FALLBACK =
     buildConf("spark.sql.legacy.csv.enableDateTimeParsingFallback")
       .internal()
@@ -6783,6 +6828,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def adaptiveExecutionEnabled: Boolean = getConf(ADAPTIVE_EXECUTION_ENABLED)
 
+  def adaptiveExecutionEnabledInStatelessStreaming: Boolean =
+    getConf(ADAPTIVE_EXECUTION_ENABLED_IN_STATELESS_STREAMING)
+
   def adaptiveExecutionLogLevel: Level = getConf(ADAPTIVE_EXECUTION_LOG_LEVEL)
 
   def fetchShuffleBlocksInBatch: Boolean = getConf(FETCH_SHUFFLE_BLOCKS_IN_BATCH)
@@ -7243,6 +7291,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def pythonUDFWorkerTracebackDumpIntervalSeconds: Long =
     getConf(PYTHON_UDF_WORKER_TRACEBACK_DUMP_INTERVAL_SECONDS)
+
+  def pythonWorkerLoggingEnabled: Boolean = getConf(PYTHON_WORKER_LOGGING_ENABLED)
 
   def pythonUDFArrowConcurrencyLevel: Option[Int] = getConf(PYTHON_UDF_ARROW_CONCURRENCY_LEVEL)
 
