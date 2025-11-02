@@ -3430,6 +3430,15 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val STREAMING_CHECKPOINT_FILE_CHECKSUM_ENABLED =
+    buildConf("spark.sql.streaming.checkpoint.fileChecksum.enabled")
+      .internal()
+      .doc("When true, checksum would be generated and verified for checkpoint files. " +
+        "This is used to detect file corruption.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(true)
+
   val PARALLEL_FILE_LISTING_IN_STATS_COMPUTATION =
     buildConf("spark.sql.statistics.parallelFileListingInStatsComputation.enabled")
       .internal()
@@ -6486,6 +6495,15 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_INTO_SOURCE_NESTED_TYPE_COERCION_ENABLED =
+    buildConf("spark.sql.merge.source.nested.type.coercion.enabled")
+      .internal()
+      .doc("If enabled, allow MERGE INTO to coerce source nested types if they have less" +
+        "nested fields than the target table's nested types.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(true)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -6718,6 +6736,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
     getConf(STATE_STORE_COORDINATOR_MAX_LAGGING_STORES_TO_REPORT)
 
   def checkpointLocation: Option[String] = getConf(CHECKPOINT_LOCATION)
+
+  def checkpointFileChecksumEnabled: Boolean = getConf(STREAMING_CHECKPOINT_FILE_CHECKSUM_ENABLED)
 
   def isUnsupportedOperationCheckEnabled: Boolean = getConf(UNSUPPORTED_OPERATION_CHECK_ENABLED)
 
@@ -7618,6 +7638,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def legacyXMLParserEnabled: Boolean =
     getConf(SQLConf.LEGACY_XML_PARSER_ENABLED)
+
+  def coerceMergeNestedTypes: Boolean =
+    getConf(SQLConf.MERGE_INTO_SOURCE_NESTED_TYPE_COERCION_ENABLED)
 
   /** ********************** SQLConf functionality methods ************ */
 
