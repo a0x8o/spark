@@ -1585,6 +1585,14 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val PARQUET_ANNOTATE_VARIANT_LOGICAL_TYPE =
+    buildConf("spark.sql.parquet.variant.annotateLogicalType.enabled")
+      .doc("When enabled, Spark annotates the variant groups written to Parquet as the parquet " +
+        "variant logical type.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val PARQUET_FIELD_ID_READ_ENABLED =
     buildConf("spark.sql.parquet.fieldId.read.enabled")
       .doc("Field ID is a native field of the Parquet schema spec. When enabled, Parquet readers " +
@@ -3512,6 +3520,16 @@ object SQLConf {
       .doc("When true, checksum would be generated and verified for checkpoint files. " +
         "This is used to detect file corruption.")
       .version("4.1.0")
+      .booleanConf
+      .createWithDefault(true)
+
+  val STREAMING_CHECKPOINT_FILE_CHECKSUM_SKIP_CREATION_IF_FILE_MISSING_CHECKSUM =
+    buildConf("spark.sql.streaming.checkpoint.fileChecksum.skipCreationIfFileMissingChecksum")
+      .internal()
+      .doc("When true, if a microbatch is retried, if a file already exists but its checksum " +
+        "file does not exist, the file checksum will not be created. This is useful for " +
+        "compatibility with files created before file checksums were enabled.")
+      .version("4.2.0")
       .booleanConf
       .createWithDefault(true)
 
@@ -6107,7 +6125,9 @@ object SQLConf {
       .doc("The chunk size in bytes when splitting ChunkedCachedLocalRelation.data " +
         "into batches. A new chunk is created when either " +
         "spark.sql.session.localRelationChunkSizeBytes " +
-        "or spark.sql.session.localRelationChunkSizeRows is reached.")
+        "or spark.sql.session.localRelationChunkSizeRows is reached. " +
+        "Limited by the spark.sql.session.localRelationBatchOfChunksSizeBytes, " +
+        "a minimum of the two confs is used to determine the chunk size.")
       .version("4.1.0")
       .longConf
       .checkValue(_ > 0, "The chunk size in bytes must be positive")
@@ -6130,6 +6150,21 @@ object SQLConf {
       .version("4.1.0")
       .bytesConf(ByteUnit.BYTE)
       .createWithDefaultString("3GB")
+
+  val LOCAL_RELATION_BATCH_OF_CHUNKS_SIZE_BYTES =
+    buildConf(SqlApiConfHelper.LOCAL_RELATION_BATCH_OF_CHUNKS_SIZE_BYTES_KEY)
+      .internal()
+      .doc("Limit on how much memory the client can use when uploading a local relation to the " +
+        "server. The client collects multiple local relation chunks into a single batch in " +
+        "memory until the limit is reached, then uploads the batch to the server. " +
+        "This helps reduce memory pressure on the client when dealing with very large local " +
+        "relations because the client does not have to materialize all chunks in memory. " +
+        "Limits the spark.sql.session.localRelationChunkSizeBytes, " +
+        "a minimum of the two confs is used to determine the chunk size.")
+      .version("4.1.0")
+      .longConf
+      .checkValue(_ > 0, "The batch size in bytes must be positive")
+      .createWithDefault(1 * 1024 * 1024 * 1024L)
 
   val DECORRELATE_JOIN_PREDICATE_ENABLED =
     buildConf("spark.sql.optimizer.decorrelateJoinPredicate.enabled")
@@ -6854,6 +6889,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def checkpointLocation: Option[String] = getConf(CHECKPOINT_LOCATION)
 
   def checkpointFileChecksumEnabled: Boolean = getConf(STREAMING_CHECKPOINT_FILE_CHECKSUM_ENABLED)
+
+  def checkpointFileChecksumSkipCreationIfFileMissingChecksum: Boolean =
+    getConf(STREAMING_CHECKPOINT_FILE_CHECKSUM_SKIP_CREATION_IF_FILE_MISSING_CHECKSUM)
 
   def isUnsupportedOperationCheckEnabled: Boolean = getConf(UNSUPPORTED_OPERATION_CHECK_ENABLED)
 
@@ -7684,6 +7722,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def parquetFieldIdWriteEnabled: Boolean = getConf(SQLConf.PARQUET_FIELD_ID_WRITE_ENABLED)
 
+  def parquetAnnotateVariantLogicalType: Boolean = getConf(PARQUET_ANNOTATE_VARIANT_LOGICAL_TYPE)
+
   def ignoreMissingParquetFieldId: Boolean = getConf(SQLConf.IGNORE_MISSING_PARQUET_FIELD_ID)
 
   def legacyParquetNanosAsLong: Boolean = getConf(SQLConf.LEGACY_PARQUET_NANOS_AS_LONG)
@@ -7871,6 +7911,12 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
           logWarning("SQL configurations from Hive module is not loaded", e)
       }
     }
+  }
+
+  /** Return the value of Spark SQL configuration property for the given keys. */
+  @throws[NoSuchElementException]("if key is not set")
+  private[spark] def getConfs(keys: util.List[String]): Array[String] = {
+    Array.tabulate(keys.size())(i => this.getConfString(keys.get(i)))
   }
 
   /**
