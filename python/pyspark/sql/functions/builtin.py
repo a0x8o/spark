@@ -3062,56 +3062,6 @@ def floor(col: "ColumnOrName", scale: Optional[Union[Column, int]] = None) -> Co
 
 
 @_try_remote_functions
-def log(col: "ColumnOrName") -> Column:
-    """
-    Computes the natural logarithm of the given value.
-
-    .. versionadded:: 1.4.0
-
-    .. versionchanged:: 3.4.0
-        Supports Spark Connect.
-
-    Parameters
-    ----------
-    col : :class:`~pyspark.sql.Column` or column name
-        column to calculate natural logarithm for.
-
-    Returns
-    -------
-    :class:`~pyspark.sql.Column`
-        natural logarithm of the given value.
-
-    Examples
-    --------
-    Example 1: Compute the natural logarithm of E
-
-    >>> from pyspark.sql import functions as sf
-    >>> spark.range(1).select(sf.log(sf.e())).show()
-    +-------+
-    |ln(E())|
-    +-------+
-    |    1.0|
-    +-------+
-
-    Example 2: Compute the natural logarithm of invalid values
-
-    >>> from pyspark.sql import functions as sf
-    >>> spark.sql(
-    ...     "SELECT * FROM VALUES (-1), (0), (FLOAT('NAN')), (NULL) AS TAB(value)"
-    ... ).select("*", sf.log("value")).show()
-    +-----+---------+
-    |value|ln(value)|
-    +-----+---------+
-    | -1.0|     NULL|
-    |  0.0|     NULL|
-    |  NaN|      NaN|
-    | NULL|     NULL|
-    +-----+---------+
-    """
-    return _invoke_function_over_columns("log", col)
-
-
-@_try_remote_functions
 def log10(col: "ColumnOrName") -> Column:
     """
     Computes the logarithm of the given value in Base 10.
@@ -8342,7 +8292,7 @@ def when(condition: Column, value: Any) -> Column:
     return _invoke_function("when", condition._jc, v)
 
 
-@overload  # type: ignore[no-redef]
+@overload
 def log(arg1: "ColumnOrName") -> Column:
     ...
 
@@ -24956,6 +24906,162 @@ def make_time(hour: "ColumnOrName", minute: "ColumnOrName", second: "ColumnOrNam
     +------------+
     """
     return _invoke_function_over_columns("make_time", hour, minute, second)
+
+
+@_try_remote_functions
+def time_from_seconds(col: "ColumnOrName") -> Column:
+    """
+    Creates a TIME value from seconds since midnight (supports fractional seconds).
+
+    .. versionadded:: 4.2.0
+
+    Parameters
+    ----------
+    col : :class:`~pyspark.sql.Column` or column name
+        Seconds since midnight (0 to 86399.999999).
+
+    Examples
+    --------
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.createDataFrame([(52200.5,)], ['seconds'])
+    >>> df.select(sf.time_from_seconds('seconds')).show()
+    +--------------------------+
+    |time_from_seconds(seconds)|
+    +--------------------------+
+    |                14:30:00.5|
+    +--------------------------+
+    """
+    return _invoke_function_over_columns("time_from_seconds", col)
+
+
+@_try_remote_functions
+def time_from_millis(col: "ColumnOrName") -> Column:
+    """
+    Creates a TIME value from milliseconds since midnight.
+
+    .. versionadded:: 4.2.0
+
+    Parameters
+    ----------
+    col : :class:`~pyspark.sql.Column` or column name
+        Milliseconds since midnight (0 to 86399999).
+
+    Examples
+    --------
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.createDataFrame([(52200500,)], ['millis'])
+    >>> df.select(sf.time_from_millis('millis')).show()
+    +------------------------+
+    |time_from_millis(millis)|
+    +------------------------+
+    |              14:30:00.5|
+    +------------------------+
+    """
+    return _invoke_function_over_columns("time_from_millis", col)
+
+
+@_try_remote_functions
+def time_from_micros(col: "ColumnOrName") -> Column:
+    """
+    Creates a TIME value from microseconds since midnight.
+
+    .. versionadded:: 4.2.0
+
+    Parameters
+    ----------
+    col : :class:`~pyspark.sql.Column` or column name
+        Microseconds since midnight (0 to 86399999999).
+
+    Examples
+    --------
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.createDataFrame([(52200500000,)], ['micros'])
+    >>> df.select(sf.time_from_micros('micros')).show()
+    +------------------------+
+    |time_from_micros(micros)|
+    +------------------------+
+    |              14:30:00.5|
+    +------------------------+
+    """
+    return _invoke_function_over_columns("time_from_micros", col)
+
+
+@_try_remote_functions
+def time_to_seconds(col: "ColumnOrName") -> Column:
+    """
+    Extracts seconds from TIME value (returns DECIMAL to preserve fractional seconds).
+
+    .. versionadded:: 4.2.0
+
+    Parameters
+    ----------
+    col : :class:`~pyspark.sql.Column` or column name
+        TIME value to convert.
+
+    Examples
+    --------
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.sql("SELECT TIME'14:30:00.5' as time")
+    >>> df.select(sf.time_to_seconds('time')).show()
+    +---------------------+
+    |time_to_seconds(time)|
+    +---------------------+
+    |         52200.500000|
+    +---------------------+
+    """
+    return _invoke_function_over_columns("time_to_seconds", col)
+
+
+@_try_remote_functions
+def time_to_millis(col: "ColumnOrName") -> Column:
+    """
+    Extracts milliseconds from TIME value.
+
+    .. versionadded:: 4.2.0
+
+    Parameters
+    ----------
+    col : :class:`~pyspark.sql.Column` or column name
+        TIME value to convert.
+
+    Examples
+    --------
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.sql("SELECT TIME'14:30:00.5' as time")
+    >>> df.select(sf.time_to_millis('time')).show()
+    +--------------------+
+    |time_to_millis(time)|
+    +--------------------+
+    |            52200500|
+    +--------------------+
+    """
+    return _invoke_function_over_columns("time_to_millis", col)
+
+
+@_try_remote_functions
+def time_to_micros(col: "ColumnOrName") -> Column:
+    """
+    Extracts microseconds from TIME value.
+
+    .. versionadded:: 4.2.0
+
+    Parameters
+    ----------
+    col : :class:`~pyspark.sql.Column` or column name
+        TIME value to convert.
+
+    Examples
+    --------
+    >>> from pyspark.sql import functions as sf
+    >>> df = spark.sql("SELECT TIME'14:30:00.5' as time")
+    >>> df.select(sf.time_to_micros('time')).show()
+    +--------------------+
+    |time_to_micros(time)|
+    +--------------------+
+    |         52200500000|
+    +--------------------+
+    """
+    return _invoke_function_over_columns("time_to_micros", col)
 
 
 @overload
