@@ -20,11 +20,11 @@
 FROM ubuntu:jammy-20240911.1
 LABEL org.opencontainers.image.authors="Apache Spark project <dev@spark.apache.org>"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
-LABEL org.opencontainers.image.ref.name="Apache Spark Infra Image For PySpark with Python 3.12"
+LABEL org.opencontainers.image.ref.name="Apache Spark Infra Image For PySpark Classic with Python 3.12"
 # Overwrite this label to avoid exposing the underlying Ubuntu OS version label
 LABEL org.opencontainers.image.version=""
 
-ENV FULL_REFRESH_DATE=20260124
+ENV FULL_REFRESH_DATE=20251224
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DEBCONF_NONINTERACTIVE_SEEN=true
@@ -36,14 +36,27 @@ RUN apt-get update && apt-get install -y \
     gfortran \
     git \
     gnupg \
+    libcurl4-openssl-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    libfribidi-dev \
     libgit2-dev \
+    libharfbuzz-dev \
+    libjpeg-dev \
     liblapack-dev \
     libopenblas-dev \
+    libpng-dev \
+    libpython3-dev \
     libssl-dev \
+    libtiff5-dev \
+    libwebp-dev \
+    libxml2-dev \
     openjdk-17-jdk-headless \
     pkg-config \
+    qpdf \
     tzdata \
     software-properties-common \
+    wget \
     zlib1g-dev
 
 # Install Python 3.12
@@ -55,14 +68,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 
-ARG BASIC_PIP_PKGS="numpy pyarrow>=22.0.0 six==1.16.0 pandas==2.3.3 scipy plotly<6.0.0 mlflow>=2.8.1 coverage matplotlib openpyxl memory-profiler>=0.61.0 scikit-learn>=1.3.2"
-# Python deps for Spark Connect
-ARG CONNECT_PIP_PKGS="grpcio==1.76.0 grpcio-status==1.76.0 protobuf==6.33.0 googleapis-common-protos==1.71.0 zstandard==0.25.0 graphviz==0.20.3"
+ARG BASIC_PIP_PKGS="numpy pyarrow>=22.0.0 pandas==2.3.3 plotly<6.0.0 matplotlib openpyxl memory-profiler>=0.61.0 mlflow>=2.8.1 scipy scikit-learn>=1.3.2"
+ARG TEST_PIP_PKGS="coverage unittest-xml-reporting"
 
 # Install Python 3.12 packages
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 RUN python3.12 -m pip install --ignore-installed 'blinker>=1.6.2' # mlflow needs this
-RUN python3.12 -m pip install $BASIC_PIP_PKGS unittest-xml-reporting $CONNECT_PIP_PKGS lxml && \
+RUN python3.12 -m pip install $BASIC_PIP_PKGS $TEST_PIP_PKGS && \
     python3.12 -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
-    python3.12 -m pip install torcheval && \
+    python3.12 -m pip install deepspeed torcheval && \
     python3.12 -m pip cache purge
