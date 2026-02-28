@@ -206,6 +206,12 @@
     ],
     "sqlState" : "42K03"
   },
+  "BEAN_ENCODER_INTERFACE_NOT_SUPPORTED" : {
+    "message" : [
+      "Bean encoder does not support interface type <className>."
+    ],
+    "sqlState" : "0A000"
+  },
   "BINARY_ARITHMETIC_OVERFLOW" : {
     "message" : [
       "<value1> <symbol> <value2> caused overflow. Use <functionName> to ignore overflow problem and return NULL."
@@ -1672,6 +1678,12 @@
   "EVENT_TIME_IS_NOT_ON_TIMESTAMP_TYPE" : {
     "message" : [
       "The event time <eventName> has the invalid type <eventType>, but expected \"TIMESTAMP\"."
+    ],
+    "sqlState" : "42K09"
+  },
+  "EVENT_TIME_MUST_BE_TOP_LEVEL_COLUMN" : {
+    "message" : [
+      "The event time column <eventExpr> must be a top-level column in the schema."
     ],
     "sqlState" : "42K09"
   },
@@ -5366,7 +5378,7 @@
   },
   "REQUIRES_SINGLE_PART_NAMESPACE" : {
     "message" : [
-      "<sessionCatalog> requires a single-part namespace, but got <namespace>."
+      "<sessionCatalog> requires a single-part namespace, but got identifier <identifier>."
     ],
     "sqlState" : "42K05"
   },
@@ -6300,6 +6312,12 @@
     ],
     "sqlState" : "22000"
   },
+  "THETA_INVALID_INPUT_SKETCH_BUFFER_FAMILY" : {
+    "message" : [
+      "Invalid call to <function>: expected <expectedFamily> sketch family but received <actualFamily>. Only valid Theta sketch buffers (produced by `theta_sketch_agg`) are supported as inputs."
+    ],
+    "sqlState" : "22000"
+  },
   "THETA_LG_NOM_ENTRIES_MUST_BE_CONSTANT" : {
     "message" : [
       "Invalid call to <function>; the `lgNomEntries` value must be a constant value, but got a non-constant expression."
@@ -6347,6 +6365,12 @@
   "TUPLE_INVALID_INPUT_SKETCH_BUFFER" : {
     "message" : [
       "Invalid call to <function>; only valid Tuple sketch buffers are supported as inputs (such as those produced by the corresponding `tuple_sketch_agg_*` function)."
+    ],
+    "sqlState" : "22000"
+  },
+  "TUPLE_INVALID_INPUT_SKETCH_BUFFER_FAMILY" : {
+    "message" : [
+      "Invalid call to <function>: expected <expectedFamily> sketch family but received <actualFamily>. Only valid Tuple sketch buffers (produced by `tuple_sketch_agg_*` functions) are supported as inputs."
     ],
     "sqlState" : "22000"
   },
@@ -7735,6 +7759,12 @@
       "Window function <funcName> requires an OVER clause."
     ],
     "sqlState" : "42601"
+  },
+  "WKB_PARSE_ERROR" : {
+    "message" : [
+      "Error parsing WKB: <parseError> at position <pos>"
+    ],
+    "sqlState" : "22023"
   },
   "WRITE_STREAM_NOT_ALLOWED" : {
     "message" : [
