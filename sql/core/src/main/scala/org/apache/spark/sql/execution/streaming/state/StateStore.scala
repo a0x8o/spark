@@ -171,8 +171,29 @@ trait ReadStateStore {
       prefixKey: UnsafeRow,
       colFamilyName: String = StateStore.DEFAULT_COL_FAMILY_NAME): StateStoreIterator[UnsafeRowPair]
 
+  /**
+   * Return an iterator containing all the (key, value) pairs which are matched with
+   * the given prefix key.
+   *
+   * It is expected to throw exception if Spark calls this method without proper key encoding spec.
+   * It is also expected to throw exception if Spark calls this method without setting
+   * multipleValuesPerKey as true for the column family.
+   */
+  def prefixScanWithMultiValues(
+      prefixKey: UnsafeRow,
+      colFamilyName: String = StateStore.DEFAULT_COL_FAMILY_NAME): StateStoreIterator[UnsafeRowPair]
+
   /** Return an iterator containing all the key-value pairs in the StateStore. */
   def iterator(
+      colFamilyName: String = StateStore.DEFAULT_COL_FAMILY_NAME): StateStoreIterator[UnsafeRowPair]
+
+  /**
+   * Return an iterator containing all the key-value pairs in the StateStore.
+   *
+   * It is expected to throw exception if Spark calls this method without setting
+   * multipleValuesPerKey as true for the column family.
+   */
+  def iteratorWithMultiValues(
       colFamilyName: String = StateStore.DEFAULT_COL_FAMILY_NAME): StateStoreIterator[UnsafeRowPair]
 
   /**
@@ -266,7 +287,6 @@ trait StateStore extends ReadStateStore {
    * Delete all keys in the range [beginKey, endKey).
    * Uses RocksDB's native deleteRange for efficient bulk deletion.
    *
-   * @note This operation is NOT recorded in the changelog.
    * @param beginKey      The start key of the range (inclusive)
    * @param endKey        The end key of the range (exclusive)
    * @param colFamilyName The column family name
@@ -384,6 +404,17 @@ class WrappedReadStateStore(store: StateStore) extends ReadStateStore {
   }
 
   override def allColumnFamilyNames: Set[String] = store.allColumnFamilyNames
+
+  override def prefixScanWithMultiValues(
+      prefixKey: UnsafeRow,
+      colFamilyName: String): StateStoreIterator[UnsafeRowPair] = {
+    store.prefixScanWithMultiValues(prefixKey, colFamilyName)
+  }
+
+  override def iteratorWithMultiValues(
+      colFamilyName: String): StateStoreIterator[UnsafeRowPair] = {
+    store.iteratorWithMultiValues(colFamilyName)
+  }
 }
 
 /**
